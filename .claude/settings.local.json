@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install numpy pytest --quiet)",
+      "Bash(python -m pytest backlight_sim/tests/test_tracer.py -v)",
+      "Bash(pip install PySide6 pyqtgraph PyOpenGL --quiet)",
+      "Bash(python -c \":*)",
+      "Bash(python -c \"open\\(''backlight_sim/gui/main_window.py''\\).read\\(\\); print\\(''readable''\\)\")",
+      "Bash(python:*)",
+      "Bash(python3 -c \":*)",
+      "Bash(python3:*)",
+      "Bash(echo $SHELL)",
+      "Bash(bash --version)",
+      "Bash(echo test_heredoc:*)"
+    ]
+  }
+}
