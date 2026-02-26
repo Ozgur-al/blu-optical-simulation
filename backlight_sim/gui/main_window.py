@@ -21,6 +21,7 @@ from backlight_sim.gui.properties_panel import PropertiesPanel
 from backlight_sim.gui.viewport_3d import Viewport3D
 from backlight_sim.gui.heatmap_panel import HeatmapPanel
 from backlight_sim.gui.angular_distribution_panel import AngularDistributionPanel
+from backlight_sim.gui.measurement_dialog import MeasurementDialog
 from backlight_sim.io.angular_distributions import merge_default_profiles
 
 
@@ -148,6 +149,21 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda _checked=False, m=mode: self._set_view_mode(m))
             self._view_mode_group.addAction(action)
 
+        vm.addSeparator()
+        preset_menu = vm.addMenu("Preset Views")
+        for label, preset in (
+            ("XY+", "xy+"),
+            ("XY-", "xy-"),
+            ("YZ+", "yz+"),
+            ("YZ-", "yz-"),
+            ("XZ+", "xz+"),
+            ("XZ-", "xz-"),
+        ):
+            preset_menu.addAction(label, lambda p=preset: self._set_view_preset(p))
+
+        tm = mb.addMenu("&Tools")
+        tm.addAction("Measure...", self._open_measure_dialog)
+
     def _connect_signals(self):
         self._tree.object_selected.connect(self._on_object_selected)
         self._tree.add_requested.connect(self._add_object)
@@ -159,10 +175,30 @@ class MainWindow(QMainWindow):
         self._viewport.set_view_mode(mode)
         self.statusBar().showMessage(f"3D view mode: {mode}", 2000)
 
+    def _set_view_preset(self, preset: str):
+        self._viewport.set_camera_preset(preset)
+        self.statusBar().showMessage(f"Camera view: {preset}", 2000)
+
     def _clear_selected_object(self):
         self._selected_group = None
         self._selected_name = None
         self._viewport.clear_selection(redraw=False)
+
+    def _selected_object_center(self):
+        if self._selected_group == "Sources":
+            obj = next((s for s in self._project.sources if s.name == self._selected_name), None)
+            return obj.position if obj is not None else None
+        if self._selected_group == "Surfaces":
+            obj = next((s for s in self._project.surfaces if s.name == self._selected_name), None)
+            return obj.center if obj is not None else None
+        if self._selected_group == "Detectors":
+            obj = next((d for d in self._project.detectors if d.name == self._selected_name), None)
+            return obj.center if obj is not None else None
+        return None
+
+    def _open_measure_dialog(self):
+        dlg = MeasurementDialog(self._selected_object_center, self)
+        dlg.exec()
 
     def _new_project(self):
         if self._sim_thread and self._sim_thread.isRunning():

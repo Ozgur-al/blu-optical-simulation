@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QSignalBlocker, Qt, Signal
+from PySide6.QtCore import QSignalBlocker, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,

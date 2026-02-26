@@ -14,12 +14,12 @@ class Viewport3D(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._view = gl.GLViewWidget()
-        self._view.setCameraPosition(distance=80, elevation=30, azimuth=45)
+        self._view.setCameraPosition(distance=180, elevation=30, azimuth=45)
         layout.addWidget(self._view)
 
         grid = gl.GLGridItem()
-        grid.setSize(200, 200)
-        grid.setSpacing(10, 10)
+        grid.setSize(2000, 2000)
+        grid.setSpacing(50, 50)
         self._view.addItem(grid)
         self._add_reference_axes()
 
@@ -29,9 +29,10 @@ class Viewport3D(QWidget):
         self._selected_group: str | None = None
         self._selected_name: str | None = None
         self._view_mode = "wireframe"
+        self._default_distance = 180
 
     def _add_reference_axes(self):
-        axis_len = 25.0
+        axis_len = 120.0
         axes = [
             (np.array([[-axis_len, 0, 0], [axis_len, 0, 0]], dtype=float), (1.0, 0.25, 0.25, 1.0)),
             (np.array([[0, -axis_len, 0], [0, axis_len, 0]], dtype=float), (0.25, 1.0, 0.25, 1.0)),
@@ -47,6 +48,20 @@ class Viewport3D(QWidget):
         self._view_mode = mode
         if self._last_project is not None:
             self.refresh(self._last_project)
+
+    def set_camera_preset(self, preset: str):
+        presets = {
+            "xy+": (90, 0),
+            "xy-": (-90, 0),
+            "yz+": (0, 0),
+            "yz-": (0, 180),
+            "xz+": (0, 90),
+            "xz-": (0, -90),
+        }
+        if preset not in presets:
+            return
+        elevation, azimuth = presets[preset]
+        self._view.setCameraPosition(distance=self._default_distance, elevation=elevation, azimuth=azimuth)
 
     def set_selected(self, group: str | None, name: str | None, redraw: bool = True):
         self._selected_group = group

@@ -1,18 +1,25 @@
-"""Geometry builder dialog — generates cavity + LED grid from high-level params."""
+"""Geometry builder dialog - generates cavity + LED grid from high-level params."""
 
 from __future__ import annotations
 
 import numpy as np
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QGroupBox, QDoubleSpinBox, QSpinBox, QComboBox,
-    QLabel, QPushButton, QDialogButtonBox, QCheckBox,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QGroupBox,
+    QLabel,
     QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
 )
-from PySide6.QtCore import Qt
 
-from backlight_sim.core.materials import Material
 from backlight_sim.core.detectors import DetectorSurface
+from backlight_sim.core.materials import Material
 from backlight_sim.core.project_model import Project
 from backlight_sim.io.geometry_builder import build_cavity, build_led_grid
 
@@ -39,66 +46,84 @@ class GeometryBuilderDialog(QDialog):
     def __init__(self, project: Project, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Geometry Builder")
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(460)
         self._project = project
 
         root = QVBoxLayout(self)
 
-        # ---- Cavity group ----
         cav = QGroupBox("Cavity Dimensions")
         cf = QFormLayout(cav)
-        self._cav_w   = _dspin(120.0, 1.0, 5000.0, 1, 10.0)
-        self._cav_h   = _dspin(60.0,  1.0, 5000.0, 1, 10.0)
-        self._cav_d   = _dspin(10.0,  0.5, 1000.0, 1, 1.0)
-        self._wall_a  = _dspin(0.0,   -60.0, 60.0, 1, 1.0)
-        cf.addRow("Width (W):",        self._cav_w)
-        cf.addRow("Height (H):",       self._cav_h)
-        cf.addRow("Depth (D):",        self._cav_d)
-        cf.addRow("Wall Angle (°):",   self._wall_a)
+        self._cav_w = _dspin(120.0, 1.0, 5000.0, 1, 10.0)
+        self._cav_h = _dspin(60.0, 1.0, 5000.0, 1, 10.0)
+        self._cav_d = _dspin(10.0, 0.5, 1000.0, 1, 1.0)
+        self._wall_angle_x = _dspin(0.0, -60.0, 60.0, 1, 1.0)
+        self._wall_angle_y = _dspin(0.0, -60.0, 60.0, 1, 1.0)
+        cf.addRow("Width (W):", self._cav_w)
+        cf.addRow("Height (H):", self._cav_h)
+        cf.addRow("Depth (D):", self._cav_d)
+        cf.addRow("Wall Angle Left/Right (deg):", self._wall_angle_x)
+        cf.addRow("Wall Angle Front/Back (deg):", self._wall_angle_y)
         root.addWidget(cav)
 
-        # ---- Material group ----
         mat = QGroupBox("Surface Materials")
         mf = QFormLayout(mat)
         self._floor_ref = _dspin(0.92, 0.0, 1.0, 3, 0.01)
-        self._wall_ref  = _dspin(0.92, 0.0, 1.0, 3, 0.01)
+        self._wall_ref = _dspin(0.92, 0.0, 1.0, 3, 0.01)
         self._wall_diff = QComboBox()
         self._wall_diff.addItems(["Diffuse (Lambertian)", "Specular"])
         mf.addRow("Floor Reflectance:", self._floor_ref)
-        mf.addRow("Wall Reflectance:",  self._wall_ref)
-        mf.addRow("Wall Type:",         self._wall_diff)
+        mf.addRow("Wall Reflectance:", self._wall_ref)
+        mf.addRow("Wall Type:", self._wall_diff)
         root.addWidget(mat)
 
-        # ---- Detector group ----
         det = QGroupBox("Output Detector")
         df = QFormLayout(det)
-        self._add_det  = QCheckBox("Add output detector")
+        self._add_det = QCheckBox("Add output detector")
         self._add_det.setChecked(True)
-        self._det_rx   = _ispin(120, 10, 1000)
-        self._det_ry   = _ispin(60,  10, 1000)
+        self._det_rx = _ispin(120, 10, 1000)
+        self._det_ry = _ispin(60, 10, 1000)
         df.addRow("", self._add_det)
         df.addRow("Resolution X:", self._det_rx)
         df.addRow("Resolution Y:", self._det_ry)
         root.addWidget(det)
 
-        # ---- LED Grid group ----
         led = QGroupBox("LED Grid")
         lf = QFormLayout(led)
-        self._pitch_x  = _dspin(20.0, 0.1, 1000.0, 1, 1.0)
-        self._pitch_y  = _dspin(20.0, 0.1, 1000.0, 1, 1.0)
-        self._edge_x   = _dspin(10.0, 0.0, 500.0,  1, 1.0)
-        self._edge_y   = _dspin(10.0, 0.0, 500.0,  1, 1.0)
+        self._use_count = QCheckBox("Specify number of LEDs (auto pitch)")
+        self._use_count.setChecked(False)
+        self._use_count.toggled.connect(self._preview_count)
+        lf.addRow("", self._use_count)
+
+        self._count_x = _ispin(4, 1, 999)
+        self._count_y = _ispin(2, 1, 999)
+        self._count_x.valueChanged.connect(self._preview_count)
+        self._count_y.valueChanged.connect(self._preview_count)
+        lf.addRow("Count X:", self._count_x)
+        lf.addRow("Count Y:", self._count_y)
+
+        self._pitch_x = _dspin(20.0, 0.1, 1000.0, 1, 1.0)
+        self._pitch_y = _dspin(20.0, 0.1, 1000.0, 1, 1.0)
+        self._pitch_x.valueChanged.connect(self._preview_count)
+        self._pitch_y.valueChanged.connect(self._preview_count)
+        lf.addRow("Pitch X:", self._pitch_x)
+        lf.addRow("Pitch Y:", self._pitch_y)
+        self._pitch_lbl = QLabel("(or set Count X/Y and check 'Specify number of LEDs' to auto-calculate)")
+        self._pitch_lbl.setStyleSheet("color: gray; font-size: 9px;")
+        lf.addRow("", self._pitch_lbl)
+
+        self._edge_x = _dspin(10.0, 0.0, 500.0, 1, 1.0)
+        self._edge_y = _dspin(10.0, 0.0, 500.0, 1, 1.0)
+        self._edge_x.valueChanged.connect(self._preview_count)
+        self._edge_y.valueChanged.connect(self._preview_count)
+        lf.addRow("Edge Offset X:", self._edge_x)
+        lf.addRow("Edge Offset Y:", self._edge_y)
         self._led_flux = _dspin(100.0, 0.0, 1e6, 1, 10.0)
-        self._led_dist = QComboBox()
-        self._led_dist.addItems(["lambertian", "isotropic"])
-        self._led_z    = _dspin(0.5, 0.0, 100.0, 2, 0.1)
-        lf.addRow("Pitch X:",           self._pitch_x)
-        lf.addRow("Pitch Y:",           self._pitch_y)
-        lf.addRow("Edge Offset X:",     self._edge_x)
-        lf.addRow("Edge Offset Y:",     self._edge_y)
         lf.addRow("LED Flux (per LED):", self._led_flux)
-        lf.addRow("Distribution:",      self._led_dist)
-        lf.addRow("Z Offset:",          self._led_z)
+        self._led_dist = QComboBox()
+        self._refresh_distributions()
+        self._led_z = _dspin(0.5, 0.0, 100.0, 2, 0.1)
+        lf.addRow("Distribution:", self._led_dist)
+        lf.addRow("Z Offset:", self._led_z)
 
         self._count_lbl = QLabel("LED count: ?")
         lf.addRow("", self._count_lbl)
@@ -107,7 +132,6 @@ class GeometryBuilderDialog(QDialog):
         lf.addRow("", self._btn_preview)
         root.addWidget(led)
 
-        # ---- Buttons ----
         bbox = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -117,23 +141,51 @@ class GeometryBuilderDialog(QDialog):
 
         self._preview_count()
 
+    def _refresh_distributions(self):
+        current = self._led_dist.currentText()
+        names = ["lambertian", "isotropic"] + sorted(self._project.angular_distributions.keys())
+        unique = []
+        seen = set()
+        for name in names:
+            if name in seen:
+                continue
+            seen.add(name)
+            unique.append(name)
+        self._led_dist.clear()
+        self._led_dist.addItems(unique)
+        if current and current in unique:
+            self._led_dist.setCurrentText(current)
+
     def _preview_count(self):
         from backlight_sim.io.geometry_builder import _grid_positions
-        xs = _grid_positions(-self._cav_w.value()/2, self._cav_w.value()/2,
-                             self._pitch_x.value(), self._edge_x.value())
-        ys = _grid_positions(-self._cav_h.value()/2, self._cav_h.value()/2,
-                             self._pitch_y.value(), self._edge_y.value())
+
+        w = self._cav_w.value()
+        h = self._cav_h.value()
+        ex = self._edge_x.value()
+        ey = self._edge_y.value()
+        if self._use_count.isChecked():
+            cx = max(1, self._count_x.value())
+            cy = max(1, self._count_y.value())
+            span_x = w - 2.0 * ex
+            span_y = h - 2.0 * ey
+            pitch_x = span_x / max(cx - 1, 1) if span_x > 0 else 0.0
+            pitch_y = span_y / max(cy - 1, 1) if span_y > 0 else 0.0
+        else:
+            pitch_x = self._pitch_x.value()
+            pitch_y = self._pitch_y.value()
+        xs = _grid_positions(-w / 2, w / 2, pitch_x, ex)
+        ys = _grid_positions(-h / 2, h / 2, pitch_y, ey)
         self._count_lbl.setText(f"LED count: {len(xs) * len(ys)}")
 
     def _on_accept(self):
-        W = self._cav_w.value()
-        H = self._cav_h.value()
-        D = self._cav_d.value()
-        θ = self._wall_a.value()
+        w = self._cav_w.value()
+        h = self._cav_h.value()
+        d = self._cav_d.value()
+        wall_x = self._wall_angle_x.value()
+        wall_y = self._wall_angle_y.value()
 
-        # Ensure materials exist
         floor_mat_name = "cavity_floor"
-        wall_mat_name  = "cavity_wall"
+        wall_mat_name = "cavity_wall"
         self._project.materials[floor_mat_name] = Material(
             name=floor_mat_name,
             surface_type="reflector",
@@ -150,29 +202,40 @@ class GeometryBuilderDialog(QDialog):
             is_diffuse=not is_specular,
         )
 
-        # Build cavity surfaces
-        build_cavity(self._project, W, H, D, θ,
-                     floor_material=floor_mat_name,
-                     wall_material=wall_mat_name,
-                     replace_existing=True)
+        build_cavity(
+            self._project,
+            w,
+            h,
+            d,
+            wall_angle_x_deg=wall_x,
+            wall_angle_y_deg=wall_y,
+            floor_material=floor_mat_name,
+            wall_material=wall_mat_name,
+            replace_existing=True,
+        )
 
-        # Add output detector
         if self._add_det.isChecked():
-            # Remove existing detectors first
             self._project.detectors.clear()
-            top_w = W + 2 * D * float(np.tan(np.radians(θ))) if θ != 0 else W
-            top_h = H + 2 * D * float(np.tan(np.radians(θ))) if θ != 0 else H
+            top_w = w + 2 * d * float(np.tan(np.radians(wall_x)))
+            top_h = h + 2 * d * float(np.tan(np.radians(wall_y)))
             self._project.detectors.append(
                 DetectorSurface.axis_aligned(
-                    "Output Plane", [0.0, 0.0, D],
-                    (top_w, top_h), 2, 1.0,
+                    "Output Plane",
+                    [0.0, 0.0, d],
+                    (top_w, top_h),
+                    2,
+                    1.0,
                     (self._det_rx.value(), self._det_ry.value()),
                 )
             )
 
-        # Build LED grid
+        use_count = self._use_count.isChecked()
+        count_x = self._count_x.value() if use_count else None
+        count_y = self._count_y.value() if use_count else None
         n = build_led_grid(
-            self._project, W, H,
+            self._project,
+            w,
+            h,
             pitch_x=self._pitch_x.value(),
             pitch_y=self._pitch_y.value(),
             edge_offset_x=self._edge_x.value(),
@@ -181,12 +244,13 @@ class GeometryBuilderDialog(QDialog):
             distribution=self._led_dist.currentText(),
             z_offset=self._led_z.value(),
             replace_existing=True,
+            count_x=count_x,
+            count_y=count_y,
         )
 
         QMessageBox.information(
-            self, "Geometry Built",
-            f"Created {len(self._project.surfaces)} surfaces, "
-            f"{n} LEDs, "
-            f"{len(self._project.detectors)} detector(s)."
+            self,
+            "Geometry Built",
+            f"Created {len(self._project.surfaces)} surfaces, {n} LEDs, {len(self._project.detectors)} detector(s).",
         )
         self.accept()

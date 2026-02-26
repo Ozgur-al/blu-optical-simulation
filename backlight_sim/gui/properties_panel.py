@@ -42,21 +42,52 @@ def _dspin(lo=-9999.0, hi=9999.0, dec=2, val=0.0, step=0.1):
     return w
 
 
-def _build_basis_from_normal(normal: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    normal = np.asarray(normal, dtype=float)
-    ln = np.linalg.norm(normal)
-    if ln <= 0:
-        normal = np.array([0.0, 0.0, 1.0], dtype=float)
+def _rotation_matrix_xyz(rx_deg: float, ry_deg: float, rz_deg: float) -> np.ndarray:
+    rx, ry, rz = np.radians([rx_deg, ry_deg, rz_deg])
+    cx, sx = np.cos(rx), np.sin(rx)
+    cy, sy = np.cos(ry), np.sin(ry)
+    cz, sz = np.cos(rz), np.sin(rz)
+    rx_m = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]], dtype=float)
+    ry_m = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]], dtype=float)
+    rz_m = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]], dtype=float)
+    return rz_m @ ry_m @ rx_m
+
+
+def _euler_xyz_from_matrix(r: np.ndarray) -> tuple[float, float, float]:
+    sy = -r[2, 0]
+    sy = np.clip(sy, -1.0, 1.0)
+    ry = np.arcsin(sy)
+    cy = np.cos(ry)
+    if abs(cy) > 1e-8:
+        rx = np.arctan2(r[2, 1], r[2, 2])
+        rz = np.arctan2(r[1, 0], r[0, 0])
     else:
-        normal = normal / ln
-    if abs(normal[0]) < 0.9:
-        ref = np.array([1.0, 0.0, 0.0], dtype=float)
-    else:
-        ref = np.array([0.0, 1.0, 0.0], dtype=float)
-    u = np.cross(normal, ref)
-    u = u / np.linalg.norm(u)
-    v = np.cross(normal, u)
+        rx = np.arctan2(-r[1, 2], r[1, 1])
+        rz = 0.0
+    return tuple(np.degrees([rx, ry, rz]))
+
+
+def _face_basis(face_key: tuple[int, float]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    u0, v0 = _AXIS_MAP[face_key]
+    n0 = np.cross(u0, v0)
+    return u0, v0, n0
+
+
+def _axes_from_face_and_rotation(face_key: tuple[int, float], rx: float, ry: float, rz: float) -> tuple[np.ndarray, np.ndarray]:
+    u0, v0, _ = _face_basis(face_key)
+    r = _rotation_matrix_xyz(rx, ry, rz)
+    u = r @ u0
+    v = r @ v0
     return u, v
+
+
+def _rotation_from_axes(face_key: tuple[int, float], u: np.ndarray, v: np.ndarray) -> tuple[float, float, float]:
+    u0, v0, n0 = _face_basis(face_key)
+    n = np.cross(u, v)
+    a = np.column_stack([u, v, n])
+    b = np.column_stack([u0, v0, n0])
+    r = a @ b.T
+    return _euler_xyz_from_matrix(r)
 
 
 class PropertiesPanel(QStackedWidget):
@@ -64,7 +95,7 @@ class PropertiesPanel(QStackedWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumWidth(260)
+        self.setMinimumWidth(280)
 
         empty = QLabel("Select an object to edit")
         empty.setStyleSheet("color: gray; padding: 8px;")
@@ -188,56 +219,33 @@ class SurfaceForm(QWidget):
         self._cz = _dspin()
         self._sw = _dspin(0.01, 9999, 2, 10.0)
         self._sh = _dspin(0.01, 9999, 2, 10.0)
-        self._orientation = QComboBox()
-        self._orientation.addItems(["Axis aligned", "Custom normal"])
         self._face = QComboBox()
         self._face.addItems(["+X face", "-X face", "+Y face", "-Y face", "+Z face", "-Z face"])
-        self._nx = _dspin(-1.0, 1.0, 4, 0.0, 0.05)
-        self._ny = _dspin(-1.0, 1.0, 4, 0.0, 0.05)
-        self._nz = _dspin(-1.0, 1.0, 4, 1.0, 0.05)
+        self._rx = _dspin(-180.0, 180.0, 2, 0.0, 1.0)
+        self._ry = _dspin(-180.0, 180.0, 2, 0.0, 1.0)
+        self._rz = _dspin(-180.0, 180.0, 2, 0.0, 1.0)
         self._mat = QComboBox()
         self._normal_lbl = QLabel("normal: ?")
         self._normal_lbl.setStyleSheet("color: gray; font-size: 11px;")
-
         fl.addRow("Name:", self._name)
         fl.addRow("Center X:", self._cx)
         fl.addRow("Center Y:", self._cy)
         fl.addRow("Center Z:", self._cz)
         fl.addRow("Width:", self._sw)
         fl.addRow("Height:", self._sh)
-        fl.addRow("Orientation:", self._orientation)
         fl.addRow("Face direction:", self._face)
-        fl.addRow("Normal X:", self._nx)
-        fl.addRow("Normal Y:", self._ny)
-        fl.addRow("Normal Z:", self._nz)
+        fl.addRow("Rotate X (deg):", self._rx)
+        fl.addRow("Rotate Y (deg):", self._ry)
+        fl.addRow("Rotate Z (deg):", self._rz)
         fl.addRow("Material:", self._mat)
         fl.addRow("", self._normal_lbl)
-
         self._surf = None
         self._loading = False
-        for w in (self._cx, self._cy, self._cz, self._sw, self._sh):
+        for w in (self._cx, self._cy, self._cz, self._sw, self._sh, self._rx, self._ry, self._rz):
             w.valueChanged.connect(self._apply)
-        self._orientation.currentIndexChanged.connect(self._on_orientation_changed)
         self._face.currentIndexChanged.connect(self._apply)
-        self._nx.valueChanged.connect(self._apply)
-        self._ny.valueChanged.connect(self._apply)
-        self._nz.valueChanged.connect(self._apply)
         self._mat.currentIndexChanged.connect(self._apply)
         self._name.editingFinished.connect(self._apply)
-        self._set_orientation_widgets()
-
-    def _set_orientation_widgets(self):
-        custom = self._orientation.currentIndex() == 1
-        self._face.setEnabled(not custom)
-        self._nx.setEnabled(custom)
-        self._ny.setEnabled(custom)
-        self._nz.setEnabled(custom)
-
-    def _on_orientation_changed(self):
-        if self._loading:
-            return
-        self._set_orientation_widgets()
-        self._apply()
 
     def load(self, surf: Rectangle, mat_names: list[str]):
         self._loading = True
@@ -249,11 +257,10 @@ class SurfaceForm(QWidget):
             QSignalBlocker(self._cz),
             QSignalBlocker(self._sw),
             QSignalBlocker(self._sh),
-            QSignalBlocker(self._orientation),
             QSignalBlocker(self._face),
-            QSignalBlocker(self._nx),
-            QSignalBlocker(self._ny),
-            QSignalBlocker(self._nz),
+            QSignalBlocker(self._rx),
+            QSignalBlocker(self._ry),
+            QSignalBlocker(self._rz),
             QSignalBlocker(self._mat),
         ]
         self._name.setText(surf.name)
@@ -265,18 +272,16 @@ class SurfaceForm(QWidget):
         key = (surf.dominant_normal_axis, surf.dominant_normal_sign)
         idx = self._FACE_KEYS.index(key) if key in self._FACE_KEYS else 4
         self._face.setCurrentIndex(idx)
-        n = surf.normal
-        axis_aligned = np.isclose(np.abs(n).max(), 1.0, atol=1e-4) and np.sum(np.abs(n) > 1e-4) == 1
-        self._orientation.setCurrentIndex(0 if axis_aligned else 1)
-        self._nx.setValue(float(n[0]))
-        self._ny.setValue(float(n[1]))
-        self._nz.setValue(float(n[2]))
-        self._set_orientation_widgets()
+        rx, ry, rz = _rotation_from_axes(self._FACE_KEYS[self._face.currentIndex()], surf.u_axis, surf.v_axis)
+        self._rx.setValue(float(rx))
+        self._ry.setValue(float(ry))
+        self._rz.setValue(float(rz))
         self._mat.clear()
         self._mat.addItems(mat_names)
         midx = self._mat.findText(surf.material_name)
         if midx >= 0:
             self._mat.setCurrentIndex(midx)
+        n = surf.normal
         self._normal_lbl.setText(f"normal: ({n[0]:.2f}, {n[1]:.2f}, {n[2]:.2f})")
         self._loading = False
         del blockers
@@ -287,14 +292,8 @@ class SurfaceForm(QWidget):
         self._surf.name = self._name.text()
         self._surf.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
         self._surf.size = (self._sw.value(), self._sh.value())
-        if self._orientation.currentIndex() == 0:
-            key = self._FACE_KEYS[self._face.currentIndex()]
-            u, v = _AXIS_MAP[key]
-        else:
-            n = np.array([self._nx.value(), self._ny.value(), self._nz.value()], dtype=float)
-            if np.linalg.norm(n) <= 1e-8:
-                n = np.array([0.0, 0.0, 1.0], dtype=float)
-            u, v = _build_basis_from_normal(n)
+        key = self._FACE_KEYS[self._face.currentIndex()]
+        u, v = _axes_from_face_and_rotation(key, self._rx.value(), self._ry.value(), self._rz.value())
         self._surf.u_axis = u.copy()
         self._surf.v_axis = v.copy()
         if self._mat.currentText():
@@ -363,8 +362,7 @@ class MaterialForm(QWidget):
         r = int(round(self._color[0] * 255))
         g = int(round(self._color[1] * 255))
         b = int(round(self._color[2] * 255))
-        text = f"#{r:02X}{g:02X}{b:02X}"
-        self._color_btn.setText(text)
+        self._color_btn.setText(f"#{r:02X}{g:02X}{b:02X}")
         self._color_btn.setStyleSheet(f"background-color: rgb({r}, {g}, {b});")
 
     def _pick_color(self):
@@ -405,59 +403,38 @@ class DetectorForm(QWidget):
         self._cz = _dspin(val=5.0)
         self._sw = _dspin(0.01, 9999, 2, 10.0)
         self._sh = _dspin(0.01, 9999, 2, 10.0)
-        self._orientation = QComboBox()
-        self._orientation.addItems(["Axis aligned", "Custom normal"])
         self._face = QComboBox()
         self._face.addItems(["+X face", "-X face", "+Y face", "-Y face", "+Z face", "-Z face"])
         self._face.setCurrentIndex(4)
-        self._nx = _dspin(-1.0, 1.0, 4, 0.0, 0.05)
-        self._ny = _dspin(-1.0, 1.0, 4, 0.0, 0.05)
-        self._nz = _dspin(-1.0, 1.0, 4, 1.0, 0.05)
-        self._rx = QSpinBox()
-        self._rx.setRange(10, 2000)
-        self._rx.setValue(100)
-        self._ry = QSpinBox()
-        self._ry.setRange(10, 2000)
-        self._ry.setValue(100)
+        self._rx = _dspin(-180.0, 180.0, 2, 0.0, 1.0)
+        self._ry = _dspin(-180.0, 180.0, 2, 0.0, 1.0)
+        self._rz = _dspin(-180.0, 180.0, 2, 0.0, 1.0)
+        self._rx_res = QSpinBox()
+        self._rx_res.setRange(10, 2000)
+        self._rx_res.setValue(100)
+        self._ry_res = QSpinBox()
+        self._ry_res.setRange(10, 2000)
+        self._ry_res.setValue(100)
         fl.addRow("Name:", self._name)
         fl.addRow("Center X:", self._cx)
         fl.addRow("Center Y:", self._cy)
         fl.addRow("Center Z:", self._cz)
         fl.addRow("Width:", self._sw)
         fl.addRow("Height:", self._sh)
-        fl.addRow("Orientation:", self._orientation)
         fl.addRow("Face direction:", self._face)
-        fl.addRow("Normal X:", self._nx)
-        fl.addRow("Normal Y:", self._ny)
-        fl.addRow("Normal Z:", self._nz)
-        fl.addRow("Resolution X:", self._rx)
-        fl.addRow("Resolution Y:", self._ry)
+        fl.addRow("Rotate X (deg):", self._rx)
+        fl.addRow("Rotate Y (deg):", self._ry)
+        fl.addRow("Rotate Z (deg):", self._rz)
+        fl.addRow("Resolution X:", self._rx_res)
+        fl.addRow("Resolution Y:", self._ry_res)
         self._det = None
         self._loading = False
-        for w in (self._cx, self._cy, self._cz, self._sw, self._sh):
+        for w in (self._cx, self._cy, self._cz, self._sw, self._sh, self._rx, self._ry, self._rz):
             w.valueChanged.connect(self._apply)
-        self._orientation.currentIndexChanged.connect(self._on_orientation_changed)
         self._face.currentIndexChanged.connect(self._apply)
-        self._nx.valueChanged.connect(self._apply)
-        self._ny.valueChanged.connect(self._apply)
-        self._nz.valueChanged.connect(self._apply)
-        self._rx.valueChanged.connect(self._apply)
-        self._ry.valueChanged.connect(self._apply)
+        self._rx_res.valueChanged.connect(self._apply)
+        self._ry_res.valueChanged.connect(self._apply)
         self._name.editingFinished.connect(self._apply)
-        self._set_orientation_widgets()
-
-    def _set_orientation_widgets(self):
-        custom = self._orientation.currentIndex() == 1
-        self._face.setEnabled(not custom)
-        self._nx.setEnabled(custom)
-        self._ny.setEnabled(custom)
-        self._nz.setEnabled(custom)
-
-    def _on_orientation_changed(self):
-        if self._loading:
-            return
-        self._set_orientation_widgets()
-        self._apply()
 
     def load(self, det: DetectorSurface):
         self._loading = True
@@ -469,13 +446,12 @@ class DetectorForm(QWidget):
             QSignalBlocker(self._cz),
             QSignalBlocker(self._sw),
             QSignalBlocker(self._sh),
-            QSignalBlocker(self._orientation),
             QSignalBlocker(self._face),
-            QSignalBlocker(self._nx),
-            QSignalBlocker(self._ny),
-            QSignalBlocker(self._nz),
             QSignalBlocker(self._rx),
             QSignalBlocker(self._ry),
+            QSignalBlocker(self._rz),
+            QSignalBlocker(self._rx_res),
+            QSignalBlocker(self._ry_res),
         ]
         self._name.setText(det.name)
         self._cx.setValue(det.center[0])
@@ -486,15 +462,12 @@ class DetectorForm(QWidget):
         key = (det.dominant_normal_axis, det.dominant_normal_sign)
         idx = self._FACE_KEYS.index(key) if key in self._FACE_KEYS else 4
         self._face.setCurrentIndex(idx)
-        n = det.normal
-        axis_aligned = np.isclose(np.abs(n).max(), 1.0, atol=1e-4) and np.sum(np.abs(n) > 1e-4) == 1
-        self._orientation.setCurrentIndex(0 if axis_aligned else 1)
-        self._nx.setValue(float(n[0]))
-        self._ny.setValue(float(n[1]))
-        self._nz.setValue(float(n[2]))
-        self._set_orientation_widgets()
-        self._rx.setValue(det.resolution[0])
-        self._ry.setValue(det.resolution[1])
+        rx, ry, rz = _rotation_from_axes(self._FACE_KEYS[self._face.currentIndex()], det.u_axis, det.v_axis)
+        self._rx.setValue(float(rx))
+        self._ry.setValue(float(ry))
+        self._rz.setValue(float(rz))
+        self._rx_res.setValue(det.resolution[0])
+        self._ry_res.setValue(det.resolution[1])
         self._loading = False
         del blockers
 
@@ -504,17 +477,11 @@ class DetectorForm(QWidget):
         self._det.name = self._name.text()
         self._det.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
         self._det.size = (self._sw.value(), self._sh.value())
-        if self._orientation.currentIndex() == 0:
-            key = self._FACE_KEYS[self._face.currentIndex()]
-            u, v = _AXIS_MAP[key]
-        else:
-            n = np.array([self._nx.value(), self._ny.value(), self._nz.value()], dtype=float)
-            if np.linalg.norm(n) <= 1e-8:
-                n = np.array([0.0, 0.0, 1.0], dtype=float)
-            u, v = _build_basis_from_normal(n)
+        key = self._FACE_KEYS[self._face.currentIndex()]
+        u, v = _axes_from_face_and_rotation(key, self._rx.value(), self._ry.value(), self._rz.value())
         self._det.u_axis = u.copy()
         self._det.v_axis = v.copy()
-        self._det.resolution = (self._rx.value(), self._ry.value())
+        self._det.resolution = (self._rx_res.value(), self._ry_res.value())
         self.changed.emit()
 
 

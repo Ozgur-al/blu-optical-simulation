@@ -96,3 +96,52 @@ Use each `Session ID` like a lightweight commit message reference.
 ### Validation
 - `py_compile` passed for all changed modules
 - `pytest backlight_sim/tests -p no:cacheprovider -q` -> `8 passed`
+
+---
+
+## Session ID: S2026-02-24-04
+**Title:** Extend distributions + rotation UX + wall-angle controls + measurement and view presets  
+**Status:** Completed
+
+### What was done (simple)
+- Added default angular profile CSV files:
+  - `isotropic.csv`
+  - `lambertian.csv`
+  - `batwing.csv`
+- Added profile loader/merger so these defaults are always present in projects.
+- Upgraded angular distribution tab:
+  - table-based manual point editing (`theta_deg`, `intensity`)
+  - apply edited table back to profile
+  - duplicate profile
+  - import/export CSV
+- Changed object orientation editing model:
+  - replaced custom-normal UI with rotation angles around X/Y/Z
+  - kept face direction and applied Euler rotations to surfaces/detectors
+- Updated geometry builder:
+  - separate wall angles for Left/Right and Front/Back
+  - detector top-size now uses each axis angle independently
+  - LED distribution list now includes project distributions
+- Expanded 3D reference grid and axis guides for larger designs.
+- Added camera preset views:
+  - `XY+`, `XY-`, `YZ+`, `YZ-`, `XZ+`, `XZ-`
+- Added measurement tool dialog:
+  - point A and point B
+  - `dX`, `dY`, `dZ`, and direct distance
+  - quick fill from selected object center
+
+### Files touched
+- `backlight_sim/io/angular_distributions.py` (new)
+- `backlight_sim/data/angular_distributions/isotropic.csv` (new)
+- `backlight_sim/data/angular_distributions/lambertian.csv` (new)
+- `backlight_sim/data/angular_distributions/batwing.csv` (new)
+- `backlight_sim/gui/angular_distribution_panel.py`
+- `backlight_sim/gui/properties_panel.py`
+- `backlight_sim/io/geometry_builder.py`
+- `backlight_sim/gui/geometry_builder.py`
+- `backlight_sim/gui/measurement_dialog.py` (new)
+- `backlight_sim/gui/viewport_3d.py`
+- `backlight_sim/gui/main_window.py`
+
+### Validation
+- `py_compile` passed for changed modules
+- `pytest backlight_sim/tests -p no:cacheprovider -q` -> `8 passed`

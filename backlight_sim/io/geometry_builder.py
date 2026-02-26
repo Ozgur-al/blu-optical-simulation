@@ -1,4 +1,4 @@
-"""Cavity geometry builder — pure logic, no GUI."""
+"""Cavity geometry builder - pure logic, no GUI."""
 
 from __future__ import annotations
 
@@ -14,95 +14,99 @@ def build_cavity(
     height: float,
     depth: float,
     wall_angle_deg: float = 0.0,
+    wall_angle_x_deg: float | None = None,
+    wall_angle_y_deg: float | None = None,
     floor_material: str = "default_reflector",
     wall_material: str = "default_reflector",
     replace_existing: bool = True,
 ) -> None:
     """Generate floor + 4 walls and add them to *project.surfaces*.
 
-    wall_angle_deg > 0 → cavity is wider at the top (output side).
-    This is the typical concentrating reflector shape for backlight design.
-
-    replace_existing=True clears existing surfaces before building.
+    `wall_angle_x_deg` controls left/right wall tilt.
+    `wall_angle_y_deg` controls front/back wall tilt.
+    If not provided, each falls back to `wall_angle_deg` for compatibility.
     """
     if replace_existing:
         project.surfaces.clear()
 
-    θ = np.radians(wall_angle_deg)
-    sinθ, cosθ = float(np.sin(θ)), float(np.cos(θ))
-    tanθ = float(np.tan(θ))
-    D = float(depth)
-    W, H = float(width), float(height)
-    half_w, half_h = W / 2.0, H / 2.0
+    if wall_angle_x_deg is None:
+        wall_angle_x_deg = wall_angle_deg
+    if wall_angle_y_deg is None:
+        wall_angle_y_deg = wall_angle_deg
 
-    # Floor — always axis-aligned
+    tx = np.radians(float(wall_angle_x_deg))
+    ty = np.radians(float(wall_angle_y_deg))
+    sin_tx, cos_tx = float(np.sin(tx)), float(np.cos(tx))
+    sin_ty, cos_ty = float(np.sin(ty)), float(np.cos(ty))
+    tan_tx, tan_ty = float(np.tan(tx)), float(np.tan(ty))
+
+    d = float(depth)
+    w, h = float(width), float(height)
+    half_w, half_h = w / 2.0, h / 2.0
+
     project.surfaces.append(
-        Rectangle.axis_aligned("Floor", [0.0, 0.0, 0.0], (W, H), 2, -1.0, floor_material)
+        Rectangle.axis_aligned("Floor", [0.0, 0.0, 0.0], (w, h), 2, -1.0, floor_material)
     )
 
-    if wall_angle_deg == 0.0:
-        # Vertical walls — simple axis-aligned
+    if abs(wall_angle_x_deg) < 1e-9 and abs(wall_angle_y_deg) < 1e-9:
+        # Left/Right walls: normal ±X, u=Y v=Z → size (extent Y, extent Z) = (h, d)
+        # Back/Front walls: normal ±Y, u=Z v=X → size (extent Z, extent X) = (d, w)
         project.surfaces += [
-            Rectangle.axis_aligned("Wall Right", [ half_w, 0.0, D/2], (H, D), 0,  1.0, wall_material),
-            Rectangle.axis_aligned("Wall Left",  [-half_w, 0.0, D/2], (H, D), 0, -1.0, wall_material),
-            Rectangle.axis_aligned("Wall Back",  [0.0,  half_h, D/2], (W, D), 1,  1.0, wall_material),
-            Rectangle.axis_aligned("Wall Front", [0.0, -half_h, D/2], (W, D), 1, -1.0, wall_material),
+            Rectangle.axis_aligned("Wall Right", [half_w, 0.0, d / 2], (h, d), 0, 1.0, wall_material),
+            Rectangle.axis_aligned("Wall Left", [-half_w, 0.0, d / 2], (h, d), 0, -1.0, wall_material),
+            Rectangle.axis_aligned("Wall Back", [0.0, half_h, d / 2], (d, w), 1, 1.0, wall_material),
+            Rectangle.axis_aligned("Wall Front", [0.0, -half_h, d / 2], (d, w), 1, -1.0, wall_material),
         ]
         return
 
-    # Tilted walls — general orientation
-    wall_h = D / cosθ           # surface height along the wall
-    d_out  = D * tanθ / 2.0    # extra x/y offset of wall centre vs cavity edge
+    wall_h_x = d / max(cos_tx, 1e-9)
+    wall_h_y = d / max(cos_ty, 1e-9)
+    d_out_x = d * tan_tx / 2.0
+    d_out_y = d * tan_ty / 2.0
 
-    # Right wall  (outward normal = +x and slightly -z)
-    # v_axis (bottom-to-top along wall): (sinθ, 0, cosθ)
-    # u_axis: (0, -1, 0)  → cross((0,-1,0),(sinθ,0,cosθ)) = (-cosθ, 0, sinθ) but we need outward for right
-    # Instead use u=(0,1,0) flipped: cross((0,1,0),(sinθ,0,cosθ)) = (cosθ,0,-sinθ) = outward right ✓
-    project.surfaces.append(Rectangle(
-        name="Wall Right",
-        center=np.array([half_w + d_out, 0.0, D / 2.0]),
-        u_axis=np.array([0.0, 1.0, 0.0]),
-        v_axis=np.array([sinθ, 0.0, cosθ]),
-        size=(H, wall_h),
-        material_name=wall_material,
-    ))
+    project.surfaces.append(
+        Rectangle(
+            name="Wall Right",
+            center=np.array([half_w + d_out_x, 0.0, d / 2.0]),
+            u_axis=np.array([0.0, 1.0, 0.0]),
+            v_axis=np.array([sin_tx, 0.0, cos_tx]),
+            size=(h, wall_h_x),
+            material_name=wall_material,
+        )
+    )
 
-    # Left wall  (outward normal = -x and slightly -z)
-    # cross((0,-1,0),(-sinθ,0,cosθ)) = (-cosθ,0,-sinθ) … still need to check sign
-    # Use u=(0,-1,0), v=(-sinθ,0,cosθ) → cross = (-cosθ,0,-sinθ) → outward left ✓
-    project.surfaces.append(Rectangle(
-        name="Wall Left",
-        center=np.array([-(half_w + d_out), 0.0, D / 2.0]),
-        u_axis=np.array([0.0, -1.0, 0.0]),
-        v_axis=np.array([-sinθ, 0.0, cosθ]),
-        size=(H, wall_h),
-        material_name=wall_material,
-    ))
+    project.surfaces.append(
+        Rectangle(
+            name="Wall Left",
+            center=np.array([-(half_w + d_out_x), 0.0, d / 2.0]),
+            u_axis=np.array([0.0, -1.0, 0.0]),
+            v_axis=np.array([-sin_tx, 0.0, cos_tx]),
+            size=(h, wall_h_x),
+            material_name=wall_material,
+        )
+    )
 
-    # Back wall  (outward normal = +y and slightly -z)
-    # u=(1,0,0), v=(0,sinθ,cosθ) → cross=(0*cosθ-0*sinθ, 0*0-1*cosθ, 1*sinθ-0*0)=(0,-cosθ,sinθ) — wrong sign
-    # Try u=(-1,0,0), v=(0,sinθ,cosθ) → cross=(0*cosθ-cosθ*sinθ... let me be explicit:
-    # cross((-1,0,0),(0,sinθ,cosθ))=(0*cosθ-0*sinθ, 0*0-(-1)*cosθ, (-1)*sinθ-0*0)=(0,cosθ,-sinθ) = outward back ✓
-    project.surfaces.append(Rectangle(
-        name="Wall Back",
-        center=np.array([0.0, half_h + d_out, D / 2.0]),
-        u_axis=np.array([-1.0, 0.0, 0.0]),
-        v_axis=np.array([0.0, sinθ, cosθ]),
-        size=(W, wall_h),
-        material_name=wall_material,
-    ))
+    project.surfaces.append(
+        Rectangle(
+            name="Wall Back",
+            center=np.array([0.0, half_h + d_out_y, d / 2.0]),
+            u_axis=np.array([-1.0, 0.0, 0.0]),
+            v_axis=np.array([0.0, sin_ty, cos_ty]),
+            size=(w, wall_h_y),
+            material_name=wall_material,
+        )
+    )
 
-    # Front wall  (outward normal = -y and slightly -z)
-    # u=(1,0,0), v=(0,-sinθ,cosθ) → cross=(0*cosθ-cosθ*(-sinθ), cosθ*0-1*cosθ... explicit:
-    # cross((1,0,0),(0,-sinθ,cosθ))=(0*cosθ-0*(-sinθ), 0*0-1*cosθ, 1*(-sinθ)-0*0)=(0,-cosθ,-sinθ) = outward front ✓
-    project.surfaces.append(Rectangle(
-        name="Wall Front",
-        center=np.array([0.0, -(half_h + d_out), D / 2.0]),
-        u_axis=np.array([1.0, 0.0, 0.0]),
-        v_axis=np.array([0.0, -sinθ, cosθ]),
-        size=(W, wall_h),
-        material_name=wall_material,
-    ))
+    project.surfaces.append(
+        Rectangle(
+            name="Wall Front",
+            center=np.array([0.0, -(half_h + d_out_y), d / 2.0]),
+            u_axis=np.array([1.0, 0.0, 0.0]),
+            v_axis=np.array([0.0, -sin_ty, cos_ty]),
+            size=(w, wall_h_y),
+            material_name=wall_material,
+        )
+    )
 
 
 def build_led_grid(
@@ -117,13 +121,25 @@ def build_led_grid(
     distribution: str,
     z_offset: float = 0.5,
     replace_existing: bool = True,
+    count_x: int | None = None,
+    count_y: int | None = None,
 ) -> int:
     """Create a uniform LED grid and add PointSources to *project*.
+
+    If count_x and count_y are given, pitch_x and pitch_y are ignored and
+    computed so that that many LEDs fit with the given edge offsets:
+    pitch = (span - 2*offset) / max(count - 1, 1).
 
     Returns the number of LEDs created.
     """
     if replace_existing:
         project.sources.clear()
+
+    if count_x is not None and count_y is not None and count_x >= 1 and count_y >= 1:
+        span_x = width - 2.0 * edge_offset_x
+        span_y = height - 2.0 * edge_offset_y
+        pitch_x = span_x / max(count_x - 1, 1) if span_x > 0 else pitch_x
+        pitch_y = span_y / max(count_y - 1, 1) if span_y > 0 else pitch_y
 
     xs = _grid_positions(-width / 2, width / 2, pitch_x, edge_offset_x)
     ys = _grid_positions(-height / 2, height / 2, pitch_y, edge_offset_y)
@@ -133,13 +149,16 @@ def build_led_grid(
         for col, x in enumerate(xs):
             count += 1
             from backlight_sim.core.sources import PointSource
-            project.sources.append(PointSource(
-                name=f"LED_r{row+1}_c{col+1}",
-                position=np.array([x, y, z_offset]),
-                flux=led_flux,
-                direction=np.array([0.0, 0.0, 1.0]),
-                distribution=distribution,
-            ))
+
+            project.sources.append(
+                PointSource(
+                    name=f"LED_r{row+1}_c{col+1}",
+                    position=np.array([x, y, z_offset]),
+                    flux=led_flux,
+                    direction=np.array([0.0, 0.0, 1.0]),
+                    distribution=distribution,
+                )
+            )
     return count
 
 
