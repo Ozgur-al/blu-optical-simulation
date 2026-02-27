@@ -7,7 +7,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QComboBox, QLabel, QGroupBox, QPushButton, QFileDialog,
+    QComboBox, QDoubleSpinBox, QLabel, QGroupBox, QPushButton, QFileDialog,
 )
 
 from backlight_sim.core.detectors import DetectorResult, SimulationResult
@@ -30,6 +30,26 @@ def _uniformity_in_center(grid: np.ndarray, fraction: float) -> tuple[float, flo
     mn  = float(roi.min())
     mx  = float(roi.max())
     return (mn / avg if avg > 0 else 0.0, mn / mx if mx > 0 else 0.0)
+
+
+def _corner_ratio(grid: np.ndarray, corner_frac: float = 0.1) -> float:
+    """Average of the four corner patches divided by the full-grid average.
+
+    Each corner patch is *corner_frac* × the grid dimensions (clamped to ≥1 px).
+    Returns 0.0 when the grid average is zero.
+    """
+    ny, nx = grid.shape
+    ch = max(1, int(ny * corner_frac))
+    cw = max(1, int(nx * corner_frac))
+    corners = np.concatenate([
+        grid[:ch,   :cw  ].ravel(),
+        grid[:ch,  -cw:  ].ravel(),
+        grid[-ch:,  :cw  ].ravel(),
+        grid[-ch:, -cw:  ].ravel(),
+    ])
+    full_avg   = float(grid.mean())
+    corner_avg = float(corners.mean())
+    return corner_avg / full_avg if full_avg > 0 else 0.0
 
 
 def _edge_center_ratio(grid: np.ndarray) -> float:
@@ -104,17 +124,21 @@ class HeatmapPanel(QWidget):
         self._lbl_std    = _lbl(); self._lbl_cv    = _lbl()
         self._lbl_hot    = _lbl(); self._lbl_ecr   = _lbl()
         self._lbl_rmse   = _lbl(); self._lbl_mad   = _lbl()
+        self._lbl_corner = _lbl()
 
-        sg.addWidget(QLabel("Avg:"),         0, 0); sg.addWidget(self._lbl_avg,  0, 1)
-        sg.addWidget(QLabel("Peak:"),        0, 2); sg.addWidget(self._lbl_peak, 0, 3)
-        sg.addWidget(QLabel("Min:"),         0, 4); sg.addWidget(self._lbl_min,  0, 5)
-        sg.addWidget(QLabel("Hits:"),        0, 6); sg.addWidget(self._lbl_hits, 0, 7)
-        sg.addWidget(QLabel("Std Dev:"),     1, 0); sg.addWidget(self._lbl_std,  1, 1)
-        sg.addWidget(QLabel("CV:"),          1, 2); sg.addWidget(self._lbl_cv,   1, 3)
-        sg.addWidget(QLabel("Hotspot:"),     1, 4); sg.addWidget(self._lbl_hot,  1, 5)
-        sg.addWidget(QLabel("Edge/Ctr:"),    1, 6); sg.addWidget(self._lbl_ecr,  1, 7)
-        sg.addWidget(QLabel("RMSE/avg:"),    2, 0); sg.addWidget(self._lbl_rmse, 2, 1)
-        sg.addWidget(QLabel("MAD/avg:"),     2, 2); sg.addWidget(self._lbl_mad,  2, 3)
+        sg.addWidget(QLabel("Avg:"),         0, 0); sg.addWidget(self._lbl_avg,    0, 1)
+        sg.addWidget(QLabel("Peak:"),        0, 2); sg.addWidget(self._lbl_peak,   0, 3)
+        sg.addWidget(QLabel("Min:"),         0, 4); sg.addWidget(self._lbl_min,    0, 5)
+        sg.addWidget(QLabel("Hits:"),        0, 6); sg.addWidget(self._lbl_hits,   0, 7)
+        sg.addWidget(QLabel("Std Dev:"),     1, 0); sg.addWidget(self._lbl_std,    1, 1)
+        sg.addWidget(QLabel("CV:"),          1, 2); sg.addWidget(self._lbl_cv,     1, 3)
+        sg.addWidget(QLabel("Hotspot:"),     1, 4); sg.addWidget(self._lbl_hot,    1, 5)
+        sg.addWidget(QLabel("Edge/Ctr:"),    1, 6); sg.addWidget(self._lbl_ecr,    1, 7)
+        sg.addWidget(QLabel("RMSE/avg:"),    2, 0); sg.addWidget(self._lbl_rmse,   2, 1)
+        sg.addWidget(QLabel("MAD/avg:"),     2, 2); sg.addWidget(self._lbl_mad,    2, 3)
+        corner_lbl = QLabel("Corner/avg:")
+        corner_lbl.setToolTip("Average of the 4 corner patches (10 % of grid size each) / full avg")
+        sg.addWidget(corner_lbl,             2, 4); sg.addWidget(self._lbl_corner, 2, 5)
 
         layout.addWidget(stats_box, stretch=0)
 
@@ -143,6 +167,33 @@ class HeatmapPanel(QWidget):
         eg.addWidget(QLabel("Escaped:"),     1, 2); eg.addWidget(self._lbl_esc,    1, 3)
         layout.addWidget(energy_box, stretch=0)
 
+        # ---- weighted design score ----
+        score_box = QGroupBox("Design Score")
+        score_box.setToolTip(
+            "Weighted composite score ∈ [0, 1]\n"
+            "score = (w_eff × η + w_uni × U(1/4 min/avg) + w_hot × 1/hotspot) "
+            "/ (w_eff + w_uni + w_hot)")
+        sg2 = QGridLayout(score_box)
+        sg2.setVerticalSpacing(2)
+
+        def _wspin(default=0.33):
+            s = QDoubleSpinBox()
+            s.setRange(0.0, 1.0)
+            s.setSingleStep(0.05)
+            s.setDecimals(2)
+            s.setValue(default)
+            return s
+
+        self._w_eff  = _wspin(1/3); self._w_uni = _wspin(1/3); self._w_hot = _wspin(1/3)
+        self._lbl_score = _lbl()
+        for w in (self._w_eff, self._w_uni, self._w_hot):
+            w.valueChanged.connect(self._update_score)
+        sg2.addWidget(QLabel("w_eff:"),   0, 0); sg2.addWidget(self._w_eff,    0, 1)
+        sg2.addWidget(QLabel("w_uni:"),   0, 2); sg2.addWidget(self._w_uni,    0, 3)
+        sg2.addWidget(QLabel("w_hot:"),   0, 4); sg2.addWidget(self._w_hot,    0, 5)
+        sg2.addWidget(QLabel("Score:"),   0, 6); sg2.addWidget(self._lbl_score, 0, 7)
+        layout.addWidget(score_box, stretch=0)
+
         # ---- export buttons ----
         btn_row = QHBoxLayout()
         btn_png  = QPushButton("Export PNG")
@@ -159,6 +210,10 @@ class HeatmapPanel(QWidget):
 
         self._sim_result: SimulationResult | None = None
         self._current_result: DetectorResult | None = None
+        # Latest KPIs cached for the weighted score widget
+        self._last_eff_pct: float = 0.0
+        self._last_u14: float = 0.0
+        self._last_hot: float = 1.0
 
     # ------------------------------------------------------------------
     # Public API
@@ -195,8 +250,9 @@ class HeatmapPanel(QWidget):
         ecr  = _edge_center_ratio(grid)
 
         # Normalised error metrics vs ideal uniform field
-        rmse_norm = std / avg if avg > 0 else 0.0   # RMSE vs uniform = std dev / avg
-        mad_norm  = float(np.mean(np.abs(grid - avg))) / avg if avg > 0 else 0.0
+        rmse_norm  = std / avg if avg > 0 else 0.0   # RMSE vs uniform = std dev / avg
+        mad_norm   = float(np.mean(np.abs(grid - avg))) / avg if avg > 0 else 0.0
+        corner_r   = _corner_ratio(grid)
 
         self._lbl_avg.setText(f"{avg:.4g}")
         self._lbl_peak.setText(f"{peak:.4g}")
@@ -208,12 +264,18 @@ class HeatmapPanel(QWidget):
         self._lbl_ecr.setText(f"{ecr:.3f}")
         self._lbl_rmse.setText(f"{rmse_norm:.4f}")
         self._lbl_mad.setText(f"{mad_norm:.4f}")
+        self._lbl_corner.setText(f"{corner_r:.3f}")
 
+        u14, _ = _uniformity_in_center(grid, 0.25)
         for label, frac in _FRACTIONS:
             u_avg, u_max = _uniformity_in_center(grid, frac)
             la, lm = self._uni_labels[label]
             la.setText(f"{u_avg:.3f}")
             lm.setText(f"{u_max:.3f}")
+
+        # Cache KPIs for weighted score
+        self._last_u14 = u14
+        self._last_hot = hot
 
         # Energy balance — only if simulation-level data is available
         if self._sim_result and self._sim_result.total_emitted_flux > 0:
@@ -227,20 +289,46 @@ class HeatmapPanel(QWidget):
             self._lbl_eff.setText(f"{eff_pct:.1f} %")
             self._lbl_absorb.setText(f"{abs_pct:.1f} %")
             self._lbl_esc.setText(f"{esc_pct:.1f} %")
+            self._last_eff_pct = eff_pct
             self._lbl_leds.setText(str(self._sim_result.source_count))
         else:
+            self._last_eff_pct = 0.0
             for lbl in (self._lbl_eff, self._lbl_absorb, self._lbl_esc, self._lbl_leds):
                 lbl.setText("--")
+
+        self._update_score()
+
+    def _update_score(self, _=None):
+        """Recompute the weighted design score from cached KPIs and weight spinboxes."""
+        if self._current_result is None:
+            self._lbl_score.setText("--")
+            return
+        w_e = self._w_eff.value()
+        w_u = self._w_uni.value()
+        w_h = self._w_hot.value()
+        total_w = w_e + w_u + w_h
+        if total_w <= 0:
+            self._lbl_score.setText("--")
+            return
+        eta_norm = self._last_eff_pct / 100.0   # 0–1
+        uni_norm = self._last_u14                # 0–1
+        hot_norm = 1.0 / self._last_hot if self._last_hot > 0 else 0.0  # close to 1 = good
+        score = (w_e * eta_norm + w_u * uni_norm + w_h * hot_norm) / total_w
+        self._lbl_score.setText(f"{score:.3f}")
 
     def clear(self):
         self._img.clear()
         self._selector.clear()
         self._sim_result = None
         self._current_result = None
+        self._last_eff_pct = 0.0
+        self._last_u14 = 0.0
+        self._last_hot = 1.0
+        self._lbl_score.setText("--")
         _all = [
             self._lbl_avg, self._lbl_peak, self._lbl_min, self._lbl_hits,
             self._lbl_std, self._lbl_cv, self._lbl_hot, self._lbl_ecr,
-            self._lbl_rmse, self._lbl_mad,
+            self._lbl_rmse, self._lbl_mad, self._lbl_corner,
             self._lbl_eff, self._lbl_leds, self._lbl_absorb, self._lbl_esc,
         ]
         for lbl in _all:
@@ -279,8 +367,9 @@ class HeatmapPanel(QWidget):
         hot  = peak / avg if avg > 0 else 0.0
         ecr  = _edge_center_ratio(grid)
 
-        rmse_norm = std / avg if avg > 0 else 0.0
-        mad_norm  = float(np.mean(np.abs(grid - avg))) / avg if avg > 0 else 0.0
+        rmse_norm  = std / avg if avg > 0 else 0.0
+        mad_norm   = float(np.mean(np.abs(grid - avg))) / avg if avg > 0 else 0.0
+        corner_r   = _corner_ratio(grid)
 
         rows = [
             ("Metric", "Value"),
@@ -292,6 +381,7 @@ class HeatmapPanel(QWidget):
             ("CV (std/avg)", f"{cv:.4f}"),
             ("Hotspot ratio (peak/avg)", f"{hot:.4f}"),
             ("Edge/Center ratio", f"{ecr:.4f}"),
+            ("Corner/avg ratio (10 %)", f"{corner_r:.4f}"),
             ("RMSE/avg (vs uniform)", f"{rmse_norm:.4f}"),
             ("MAD/avg (vs uniform)", f"{mad_norm:.4f}"),
         ]

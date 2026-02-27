@@ -5,13 +5,15 @@ from __future__ import annotations
 import copy
 
 import numpy as np
+import pyqtgraph as pg
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QComboBox, QDoubleSpinBox, QSpinBox, QLabel,
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QSplitter,
+    QComboBox, QDoubleSpinBox, QSpinBox, QLabel, QWidget,
     QPushButton, QProgressBar, QTableWidget, QTableWidgetItem,
     QHeaderView, QMessageBox,
 )
+from PySide6.QtCore import Qt
 
 from backlight_sim.core.project_model import Project
 from backlight_sim.core.detectors import SimulationResult
@@ -148,7 +150,9 @@ class ParameterSweepDialog(QDialog):
         self._progress.setValue(0)
         layout.addWidget(self._progress)
 
-        # ── Results table ─────────────────────────────────────────────────
+        # ── Table + plot in a horizontal splitter ─────────────────────────
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
         self._table = QTableWidget(0, 4)
         self._table.setHorizontalHeaderLabels(
             ["Value", "Efficiency %", "U(1/4) min/avg", "Hotspot (pk/avg)"]
@@ -157,7 +161,33 @@ class ParameterSweepDialog(QDialog):
             QHeaderView.ResizeMode.Stretch)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
-        layout.addWidget(self._table)
+        splitter.addWidget(self._table)
+
+        # KPI vs parameter plot
+        plot_widget = QVBoxLayout()
+        kpi_row = QHBoxLayout()
+        kpi_row.addWidget(QLabel("Plot:"))
+        self._plot_kpi_cb = QComboBox()
+        self._plot_kpi_cb.addItems(["Efficiency %", "U(1/4) min/avg", "Hotspot"])
+        self._plot_kpi_cb.currentIndexChanged.connect(self._refresh_plot)
+        kpi_row.addWidget(self._plot_kpi_cb)
+        kpi_row.addStretch()
+        pw = pg.PlotWidget()
+        pw.showGrid(x=True, y=True, alpha=0.25)
+        pw.setLabel("bottom", "Parameter value")
+        pw.setLabel("left", "KPI")
+        self._plot_widget = pw
+        plot_container = QWidget()
+        pvl = QVBoxLayout(plot_container)
+        pvl.setContentsMargins(0, 0, 0, 0)
+        pvl.addLayout(kpi_row)
+        pvl.addWidget(pw)
+        splitter.addWidget(plot_container)
+        layout.addWidget(splitter, stretch=1)
+
+        # Accumulated sweep data for plot refresh
+        self._sweep_values: list[float] = []
+        self._sweep_kpis: list[tuple[float, float, float]] = []
 
         # ── Close ─────────────────────────────────────────────────────────
         close_row = QHBoxLayout()
@@ -190,6 +220,9 @@ class ParameterSweepDialog(QDialog):
             return
 
         self._table.setRowCount(0)
+        self._sweep_values.clear()
+        self._sweep_kpis.clear()
+        self._plot_widget.clear()
         name = self._param_cb.currentText()
         key, _, _ = _PARAMS[name]
         start  = self._start_spin.value()
@@ -218,6 +251,8 @@ class ParameterSweepDialog(QDialog):
     def _on_step_done(self, idx: int, value: float, result: SimulationResult):
         self._progress.setValue(idx + 1)
         eff, u14, hot = _kpis(result)
+        self._sweep_values.append(value)
+        self._sweep_kpis.append((eff, u14, hot))
         row = self._table.rowCount()
         self._table.insertRow(row)
         for col, text in enumerate([
@@ -228,6 +263,22 @@ class ParameterSweepDialog(QDialog):
         ]):
             self._table.setItem(row, col, QTableWidgetItem(text))
         self._table.scrollToBottom()
+        self._refresh_plot()
+
+    def _refresh_plot(self, _=None):
+        """Redraw the KPI vs parameter value plot from cached sweep data."""
+        self._plot_widget.clear()
+        if not self._sweep_values:
+            return
+        xs = np.array(self._sweep_values)
+        idx = self._plot_kpi_cb.currentIndex()   # 0=eff, 1=u14, 2=hot
+        ys = np.array([k[idx] for k in self._sweep_kpis])
+        self._plot_widget.setLabel("left", self._plot_kpi_cb.currentText())
+        self._plot_widget.plot(
+            xs, ys,
+            pen=pg.mkPen((80, 160, 255), width=2),
+            symbol="o", symbolSize=6, symbolBrush=(80, 160, 255),
+        )
 
     def _on_sweep_finished(self):
         self._run_btn.setEnabled(True)
