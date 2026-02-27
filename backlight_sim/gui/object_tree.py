@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QMenu
 from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QColor
 
 
 # Top-level group names
@@ -44,7 +45,12 @@ class ObjectTree(QTreeWidget):
             parent = self._group_items[group_name]
             parent.takeChildren()
             for name in names:
-                QTreeWidgetItem(parent, [name])
+                child = QTreeWidgetItem(parent, [name])
+                if group_name == "Sources":
+                    src = next((s for s in project.sources if s.name == name), None)
+                    if src and not src.enabled:
+                        child.setForeground(0, QColor(150, 150, 150))
+                        child.setToolTip(0, "Disabled")
 
     def _on_selection_changed(self, current, _previous):
         if current is None or current.parent() is None:

@@ -7,6 +7,7 @@ from PySide6.QtCore import QSignalBlocker, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QColorDialog,
@@ -156,7 +157,10 @@ class SourceForm(QWidget):
         self._flux = _dspin(0, 1e7, 1, 100.0, 10.0)
         self._dist = QComboBox()
         self._dist.addItems(["isotropic", "lambertian"])
+        self._enabled = QCheckBox()
+        self._enabled.setChecked(True)
         fl.addRow("Name:", self._name)
+        fl.addRow("Enabled:", self._enabled)
         fl.addRow("X:", self._px)
         fl.addRow("Y:", self._py)
         fl.addRow("Z:", self._pz)
@@ -168,6 +172,7 @@ class SourceForm(QWidget):
             w.valueChanged.connect(self._apply)
         self._dist.currentIndexChanged.connect(self._apply)
         self._name.editingFinished.connect(self._apply)
+        self._enabled.toggled.connect(self._apply)
 
     def load(self, src, distribution_names=None):
         self._loading = True
@@ -179,8 +184,10 @@ class SourceForm(QWidget):
             QSignalBlocker(self._pz),
             QSignalBlocker(self._flux),
             QSignalBlocker(self._dist),
+            QSignalBlocker(self._enabled),
         ]
         self._name.setText(src.name)
+        self._enabled.setChecked(src.enabled)
         self._px.setValue(src.position[0])
         self._py.setValue(src.position[1])
         self._pz.setValue(src.position[2])
@@ -199,6 +206,7 @@ class SourceForm(QWidget):
         if self._src is None or self._loading:
             return
         self._src.name = self._name.text()
+        self._src.enabled = self._enabled.isChecked()
         self._src.position = np.array([self._px.value(), self._py.value(), self._pz.value()])
         self._src.flux = self._flux.value()
         self._src.distribution = self._dist.currentText()

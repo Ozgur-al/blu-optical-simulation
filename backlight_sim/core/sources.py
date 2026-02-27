@@ -13,6 +13,7 @@ class PointSource:
     flux: float = 100.0  # total emitted power (arbitrary units)
     direction: np.ndarray = None  # (3,) forward direction for lambertian
     distribution: str = "isotropic"  # "isotropic" or "lambertian"
+    enabled: bool = True  # when False the tracer skips this source
 
     def __post_init__(self):
         self.position = np.asarray(self.position, dtype=float)

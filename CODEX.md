@@ -175,3 +175,35 @@ Use each `Session ID` like a lightweight commit message reference.
 ### Validation
 - `py_compile` passed for all changed modules
 - `pytest backlight_sim/tests -q` -> `8 passed`
+
+---
+
+## Session ID: S2026-02-27-02
+**Title:** LED enable/disable, normalization, variant cloning, parameter sweep, error metrics
+**Status:** Completed
+
+### What was done
+- **#12** `PointSource.enabled: bool = True` — tracer filters disabled sources; Enabled checkbox in Source properties panel; disabled sources appear grey in Scene tree.
+- **#28** "Norm: Peak=1" button in Angular Dist. panel — scales intensities so max = 1.
+- **#29** "Norm: Flux=1" button — divides by ∫I(θ)·sin(θ)dθ (trapezoid rule).
+- **#30** "Norm: [0,1]" button — min-max rescales intensities to [0, 1].
+- **#6** Variant cloning — "File → Clone as Variant…" saves a named deep-copy; "Variants" menu lists and reloads saved variants; "Clear All Variants" wipes the list.
+- **#80/#81** Parameter Sweep dialog (`gui/parameter_sweep_dialog.py`, new file) — sweeps source flux, reflector reflectance, diffuser transmittance, max bounces, or rays per source over a linspace range; runs sequentially in a QThread; live-updates a results table (Value, Efficiency %, U(1/4) min/avg, Hotspot); cancellable.
+- **#106** Error metrics — normalised RMSE/avg and MAD/avg vs ideal-uniform field added to Grid Statistics in Heatmap panel and exported in KPI CSV.
+- Updated `PLAN_TASKS.md`: tasks 6, 12, 28, 29, 30, 80, 81, 106 marked **Done** (plus #82 Partial). Summary counts updated (Done: 76, Partial: 6, Not done: 27).
+
+### Files touched
+- `backlight_sim/core/sources.py`
+- `backlight_sim/io/project_io.py`
+- `backlight_sim/sim/tracer.py`
+- `backlight_sim/gui/properties_panel.py`
+- `backlight_sim/gui/object_tree.py`
+- `backlight_sim/gui/angular_distribution_panel.py`
+- `backlight_sim/gui/heatmap_panel.py`
+- `backlight_sim/gui/main_window.py`
+- `backlight_sim/gui/parameter_sweep_dialog.py` (new)
+- `PLAN_TASKS.md`
+
+### Validation
+- `py_compile` passed for all changed modules
+- `pytest backlight_sim/tests -q` -> `8 passed`
