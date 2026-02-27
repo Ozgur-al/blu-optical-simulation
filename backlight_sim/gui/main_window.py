@@ -57,6 +57,8 @@ class MainWindow(QMainWindow):
         self._last_save_path = None
         self._selected_group = None
         self._selected_name = None
+        self._variants: dict[str, "Project"] = {}
+        self._variants_menu = None
 
         self._setup_ui()
         self._setup_menu()
@@ -128,6 +130,8 @@ class MainWindow(QMainWindow):
         fm.addAction("Save",           self._save_project)
         fm.addAction("Save As...",     self._save_project_as)
         fm.addSeparator()
+        fm.addAction("Clone as Variant...", self._clone_as_variant)
+        fm.addSeparator()
         fm.addAction("Exit",           self.close)
 
         pm = mb.addMenu("&Presets")
@@ -144,10 +148,15 @@ class MainWindow(QMainWindow):
         bm = mb.addMenu("&Build")
         bm.addAction("Geometry Builder...", self._open_geometry_builder)
 
+        self._variants_menu = mb.addMenu("&Variants")
+        self._refresh_variants_menu()
+
         sm = mb.addMenu("&Simulation")
         sm.addAction("Settings",       self._show_settings)
         sm.addAction("Run",            self._run_simulation)
         sm.addAction("Cancel",         self._cancel_simulation)
+        sm.addSeparator()
+        sm.addAction("Parameter Sweep...", self._open_parameter_sweep)
 
         vm = mb.addMenu("&View")
         self._view_mode_group = QActionGroup(self)
@@ -368,6 +377,70 @@ class MainWindow(QMainWindow):
         self._clear_selected_object()
         self._properties.clear_selection()
         self._refresh_all()
+
+    # ------------------------------------------------------------------
+    # Variant management (#6)
+    # ------------------------------------------------------------------
+
+    def _clone_as_variant(self):
+        import copy
+        from PySide6.QtWidgets import QInputDialog
+        default = f"{self._project.name}_v{len(self._variants) + 1}"
+        name, ok = QInputDialog.getText(
+            self, "Clone as Variant", "Variant name:", text=default)
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        self._variants[name] = copy.deepcopy(self._project)
+        self._refresh_variants_menu()
+        self._log(f"Variant saved: '{name}'")
+
+    def _refresh_variants_menu(self):
+        self._variants_menu.clear()
+        if not self._variants:
+            a = self._variants_menu.addAction("No variants saved")
+            a.setEnabled(False)
+        else:
+            for vname in self._variants:
+                self._variants_menu.addAction(
+                    vname, lambda _=False, n=vname: self._load_variant(n))
+            self._variants_menu.addSeparator()
+            self._variants_menu.addAction("Clear All Variants", self._clear_variants)
+
+    def _load_variant(self, name: str):
+        import copy
+        v = self._variants.get(name)
+        if v is None:
+            return
+        if QMessageBox.question(
+            self, "Load Variant",
+            f"Load variant '{name}'?\nUnsaved changes to the current project will be lost.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self._project = copy.deepcopy(v)
+        merge_default_profiles(self._project)
+        self._counter = {k: 0 for k in self._counter}
+        self._last_save_path = None
+        self._clear_selected_object()
+        self._ang_dist.set_project(self._project)
+        self._properties.clear_selection()
+        self._heatmap.clear()
+        self._viewport.clear_ray_paths()
+        self._refresh_all()
+        self.setWindowTitle(f"Blu Optical Simulation - {self._project.name} [variant: {name}]")
+        self._log(f"Loaded variant: '{name}'")
+
+    def _clear_variants(self):
+        self._variants.clear()
+        self._refresh_variants_menu()
+
+    # ------------------------------------------------------------------
+
+    def _open_parameter_sweep(self):
+        from backlight_sim.gui.parameter_sweep_dialog import ParameterSweepDialog
+        dlg = ParameterSweepDialog(self._project, self)
+        dlg.exec()
 
     def _show_settings(self):
         self._clear_selected_object()

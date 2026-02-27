@@ -80,6 +80,21 @@ class AngularDistributionPanel(QWidget):
         self._duplicate_btn = QPushButton("Duplicate As...")
         self._duplicate_btn.clicked.connect(self._duplicate_distribution)
         eg.addWidget(self._duplicate_btn, 1, 3)
+
+        # Normalization buttons
+        norm_peak_btn = QPushButton("Norm: Peak=1")
+        norm_peak_btn.setToolTip("Scale intensities so the maximum value equals 1.0")
+        norm_peak_btn.clicked.connect(lambda: self._normalize("peak"))
+        eg.addWidget(norm_peak_btn, 2, 0)
+        norm_flux_btn = QPushButton("Norm: Flux=1")
+        norm_flux_btn.setToolTip("Scale so ∫I(θ)·sin(θ)dθ = 1  (unit solid-angle flux)")
+        norm_flux_btn.clicked.connect(lambda: self._normalize("flux"))
+        eg.addWidget(norm_flux_btn, 2, 1)
+        norm_range_btn = QPushButton("Norm: [0,1]")
+        norm_range_btn.setToolTip("Min-max rescale intensities to [0, 1]")
+        norm_range_btn.clicked.connect(lambda: self._normalize("range"))
+        eg.addWidget(norm_range_btn, 2, 2)
+
         layout.addWidget(edit_box, 1)
 
     def set_project(self, project):
@@ -253,6 +268,43 @@ class AngularDistributionPanel(QWidget):
         }
         self.refresh()
         self._selector.setCurrentText(new_name)
+        self.distributions_changed.emit()
+
+    def _normalize(self, mode: str):
+        """Normalize the currently selected distribution in-place."""
+        if self._project is None:
+            return
+        name = self._selector.currentText()
+        if not name:
+            return
+        dist = self._project.angular_distributions.get(name)
+        if not dist:
+            return
+        theta = np.asarray(dist.get("theta_deg", []), dtype=float)
+        intensity = np.asarray(dist.get("intensity", []), dtype=float)
+        if intensity.size == 0:
+            return
+
+        if mode == "peak":
+            peak = float(intensity.max())
+            if peak > 0:
+                intensity = intensity / peak
+        elif mode == "flux":
+            # ∫I(θ)·sin(θ)·dθ  (trapezoid rule)
+            theta_rad = np.radians(theta)
+            total = float(np.trapz(intensity * np.sin(theta_rad), theta_rad))
+            if total > 0:
+                intensity = intensity / total
+        elif mode == "range":
+            mn, mx = float(intensity.min()), float(intensity.max())
+            if mx > mn:
+                intensity = (intensity - mn) / (mx - mn)
+
+        self._project.angular_distributions[name] = {
+            "theta_deg": theta.tolist(),
+            "intensity": intensity.tolist(),
+        }
+        self._plot_distribution(name)
         self.distributions_changed.emit()
 
     def _on_selection_changed(self, name: str):

@@ -22,7 +22,7 @@ Status: **Done** | **Partial** | **Not done** | **Cannot do** (out of scope / ph
 | 3 | Unit settings (mm, lm, cd, degree) | **Partial** (`distance_unit` in settings; lm/cd/degree not explicit) |
 | 4 | Project presets (e.g. automotive cluster direct-lit) | **Done** (Presets menu: Simple Box, Automotive Cluster) |
 | 5 | Project comparison | **Not done** |
-| 6 | Variant cloning (A/B design comparison) | **Not done** |
+| 6 | Variant cloning (A/B design comparison) | **Done** — "File → Clone as Variant…" saves a deep-copy with a user name; "Variants" menu lists all saved variants and lets you reload any one; "Clear All Variants" wipes the list. |
 | 7 | Design history snapshots | **Not done** |
 
 ---
@@ -35,7 +35,7 @@ Status: **Done** | **Partial** | **Not done** | **Cannot do** (out of scope / ph
 | 9 | LED layout: grid placement | **Done** |
 | 10 | LED layout: pitch X/Y | **Done** |
 | 11 | LED layout: edge offsets | **Done** |
-| 12 | LED layout: enable/disable individual LEDs | **Not done** |
+| 12 | LED layout: enable/disable individual LEDs | **Done** — `PointSource.enabled` flag; tracer skips disabled sources; checkbox in Source properties panel; disabled sources shown in grey in the Scene tree. |
 | 13 | Reflector: wall angle | **Done** (incl. separate X/Y wall angles) |
 | 14 | Reflector: wall reflectance | **Done** (floor + wall materials in builder) |
 | 15 | Reflector: surface type (simplified) | **Done** (diffuse vs specular in materials) |
@@ -58,9 +58,9 @@ Status: **Done** | **Partial** | **Not done** | **Cannot do** (out of scope / ph
 | 25 | Source: total luminous flux (lm) | **Done** (flux in PointSource + properties) |
 | 26 | Source: peak intensity (optional mode) | **Not done** |
 | 27 | Source: position / orientation / tilt | **Done** (position + direction; rotation in Surface form) |
-| 28 | Normalization: normalize to peak | **Not done** |
-| 29 | Normalization: normalize to total flux | **Not done** |
-| 30 | Normalization: normalize to 1.0 | **Not done** |
+| 28 | Normalization: normalize to peak | **Done** — "Norm: Peak=1" button in Angular Dist. panel scales max(I) → 1. |
+| 29 | Normalization: normalize to total flux | **Done** — "Norm: Flux=1" button divides by ∫I(θ)·sin(θ)dθ (trapezoid). |
+| 30 | Normalization: normalize to 1.0 | **Done** — "Norm: [0,1]" button min-max rescales intensities to [0, 1]. |
 | 31 | IES / LDT import | **Not done** |
 | 32 | LED bin/tolerance variation | **Not done** |
 | 33 | Current-dependent flux scaling | **Not done** |
@@ -154,9 +154,9 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 
 | # | Task | Status |
 |---|------|--------|
-| 80 | Single-parameter sweep (pitch, depth, angle, reflectance, diffuser dist.) | **Not done** |
-| 81 | Batch run queue | **Not done** |
-| 82 | Results table + sort/filter, KPI vs parameter plots | **Not done** |
+| 80 | Single-parameter sweep (pitch, depth, angle, reflectance, diffuser dist.) | **Done** — "Simulation → Parameter Sweep…" dialog sweeps: source flux, reflector reflectance, diffuser transmittance, max bounces, rays per source. |
+| 81 | Batch run queue | **Done** — Sweep runs N steps sequentially in a background QThread; results fill a live-updating table; sweep can be cancelled mid-run. |
+| 82 | Results table + sort/filter, KPI vs parameter plots | **Partial** — Results table shows Value, Efficiency %, U(1/4) min/avg, Hotspot per step; no sort/filter or plot yet. |
 | 83 | Multi-parameter sweep, optimization, Pareto | **Not done** |
 
 ---
@@ -201,7 +201,7 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 | # | Task | Status |
 |---|------|--------|
 | 105 | Reference case comparison, compare to measurement/LightTools/Zemax | **Not done** |
-| 106 | Error metrics (RMSE, MAE, center–edge deviation) | **Not done** |
+| 106 | Error metrics (RMSE, MAE, center–edge deviation) | **Done** — Normalised RMSE/avg and MAD/avg vs ideal-uniform field displayed in Grid Statistics section of Heatmap panel; also exported in KPI CSV. |
 | 107 | Calibration fitting, material tuning, calibrated profiles | **Not done** |
 
 ---
@@ -219,13 +219,13 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 
 | Status         | Count |
 |----------------|-------|
-| **Done**       | 66    |
-| **Partial**    | 5     |
-| **Not done**   | 38    |
+| **Done**       | 76    |
+| **Partial**    | 6     |
+| **Not done**   | 27    |
 | **Cannot do**  | 1     |
 | **Need more info** | 0  |
 
-*(Updated after session S2026-02-27-01: tasks 55, 57, 59, 60, 61, 70, 74, 75, 76, 78, 92, 97, 101, 102 completed.)*
+*(Updated after session S2026-02-27-02: tasks 6, 12, 28, 29, 30, 80, 81, 106 completed; tasks 28–30 done as normalization buttons in Angular Dist. panel.)*
 
 ---
 

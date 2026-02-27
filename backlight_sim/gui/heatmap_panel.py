@@ -103,6 +103,7 @@ class HeatmapPanel(QWidget):
         self._lbl_min    = _lbl(); self._lbl_hits  = _lbl()
         self._lbl_std    = _lbl(); self._lbl_cv    = _lbl()
         self._lbl_hot    = _lbl(); self._lbl_ecr   = _lbl()
+        self._lbl_rmse   = _lbl(); self._lbl_mad   = _lbl()
 
         sg.addWidget(QLabel("Avg:"),         0, 0); sg.addWidget(self._lbl_avg,  0, 1)
         sg.addWidget(QLabel("Peak:"),        0, 2); sg.addWidget(self._lbl_peak, 0, 3)
@@ -112,6 +113,8 @@ class HeatmapPanel(QWidget):
         sg.addWidget(QLabel("CV:"),          1, 2); sg.addWidget(self._lbl_cv,   1, 3)
         sg.addWidget(QLabel("Hotspot:"),     1, 4); sg.addWidget(self._lbl_hot,  1, 5)
         sg.addWidget(QLabel("Edge/Ctr:"),    1, 6); sg.addWidget(self._lbl_ecr,  1, 7)
+        sg.addWidget(QLabel("RMSE/avg:"),    2, 0); sg.addWidget(self._lbl_rmse, 2, 1)
+        sg.addWidget(QLabel("MAD/avg:"),     2, 2); sg.addWidget(self._lbl_mad,  2, 3)
 
         layout.addWidget(stats_box, stretch=0)
 
@@ -191,6 +194,10 @@ class HeatmapPanel(QWidget):
         hot  = peak / avg if avg > 0 else 0.0
         ecr  = _edge_center_ratio(grid)
 
+        # Normalised error metrics vs ideal uniform field
+        rmse_norm = std / avg if avg > 0 else 0.0   # RMSE vs uniform = std dev / avg
+        mad_norm  = float(np.mean(np.abs(grid - avg))) / avg if avg > 0 else 0.0
+
         self._lbl_avg.setText(f"{avg:.4g}")
         self._lbl_peak.setText(f"{peak:.4g}")
         self._lbl_min.setText(f"{mn:.4g}")
@@ -199,6 +206,8 @@ class HeatmapPanel(QWidget):
         self._lbl_cv.setText(f"{cv:.3f}")
         self._lbl_hot.setText(f"{hot:.3f}")
         self._lbl_ecr.setText(f"{ecr:.3f}")
+        self._lbl_rmse.setText(f"{rmse_norm:.4f}")
+        self._lbl_mad.setText(f"{mad_norm:.4f}")
 
         for label, frac in _FRACTIONS:
             u_avg, u_max = _uniformity_in_center(grid, frac)
@@ -231,6 +240,7 @@ class HeatmapPanel(QWidget):
         _all = [
             self._lbl_avg, self._lbl_peak, self._lbl_min, self._lbl_hits,
             self._lbl_std, self._lbl_cv, self._lbl_hot, self._lbl_ecr,
+            self._lbl_rmse, self._lbl_mad,
             self._lbl_eff, self._lbl_leds, self._lbl_absorb, self._lbl_esc,
         ]
         for lbl in _all:
@@ -269,6 +279,9 @@ class HeatmapPanel(QWidget):
         hot  = peak / avg if avg > 0 else 0.0
         ecr  = _edge_center_ratio(grid)
 
+        rmse_norm = std / avg if avg > 0 else 0.0
+        mad_norm  = float(np.mean(np.abs(grid - avg))) / avg if avg > 0 else 0.0
+
         rows = [
             ("Metric", "Value"),
             ("Detector", r.detector_name),
@@ -279,6 +292,8 @@ class HeatmapPanel(QWidget):
             ("CV (std/avg)", f"{cv:.4f}"),
             ("Hotspot ratio (peak/avg)", f"{hot:.4f}"),
             ("Edge/Center ratio", f"{ecr:.4f}"),
+            ("RMSE/avg (vs uniform)", f"{rmse_norm:.4f}"),
+            ("MAD/avg (vs uniform)", f"{mad_norm:.4f}"),
         ]
         for label, frac in _FRACTIONS:
             u_avg, u_max = _uniformity_in_center(grid, frac)

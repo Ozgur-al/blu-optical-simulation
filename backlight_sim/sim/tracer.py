@@ -32,7 +32,7 @@ class RayTracer:
     def run(self, progress_callback: Callable[[float], None] | None = None) -> SimulationResult:
         self._cancelled = False
         settings = self.project.settings
-        sources = self.project.sources
+        sources = [s for s in self.project.sources if s.enabled]
         surfaces = self.project.surfaces
         detectors = self.project.detectors
         materials = self.project.materials

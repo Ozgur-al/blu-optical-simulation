@@ -59,6 +59,7 @@ def _src_to_dict(s: PointSource) -> dict:
         "flux": s.flux,
         "direction": _v(s.direction),
         "distribution": s.distribution,
+        "enabled": s.enabled,
     }
 
 
@@ -132,6 +133,7 @@ def _dict_to_src(d: dict) -> PointSource:
         flux=d.get("flux", 100.0),
         direction=_a(d.get("direction", [0, 0, 1])),
         distribution=d.get("distribution", "isotropic"),
+        enabled=d.get("enabled", True),
     )
 
 
