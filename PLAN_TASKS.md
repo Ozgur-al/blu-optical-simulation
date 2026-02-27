@@ -9,7 +9,7 @@ Status: **Done** | **Partial** | **Not done** | **Cannot do** (out of scope / ph
 | # | Task | Status |
 |---|------|--------|
 | B1 | **Simple Box preset**: Sides are vertical instead of horizontal; box is not enclosed. Fix preset so the cavity is a properly enclosed box (correct wall orientation/sizes or add top). | **Done** — Fixed front/back wall size in `build_cavity`: use `(d, w)` for normal ±Y (was `(w, d)`), so cavity is properly enclosed. |
-| B2 | **Geometry Builder — LED grid input**: Builder currently takes pitch X/Y and edge offsets. Often the user has **number of LEDs** and offset; pitch should be derived. Add option: input count X, count Y (and optionally offsets) and auto-calculate pitch from cavity width/height. | **Done** — Checkbox “Specify number of LEDs (auto pitch)” + Count X/Y spinboxes; pitch = (span − 2×offset) / max(count−1, 1). |
+| B2 | **Geometry Builder — LED grid input**: Builder currently takes pitch X/Y and edge offsets. Often the user has **number of LEDs** and offset; pitch should be derived. Add option: input count X, count Y (and optionally offsets) and auto-calculate pitch from cavity width/height. | **Done** — Checkbox "Specify number of LEDs (auto pitch)" + Count X/Y spinboxes; pitch = (span − 2×offset) / max(count−1, 1). |
 
 ---
 
@@ -39,7 +39,7 @@ Status: **Done** | **Partial** | **Not done** | **Cannot do** (out of scope / ph
 | 13 | Reflector: wall angle | **Done** (incl. separate X/Y wall angles) |
 | 14 | Reflector: wall reflectance | **Done** (floor + wall materials in builder) |
 | 15 | Reflector: surface type (simplified) | **Done** (diffuse vs specular in materials) |
-| 16 | Optical stack: LED top → diffuser distance | **Partial** (z_offset for LEDs; no explicit “diffuser distance” in builder) |
+| 16 | Optical stack: LED top → diffuser distance | **Partial** (z_offset for LEDs; no explicit "diffuser distance" in builder) |
 | 17 | Optical stack: additional film placeholder distances | **Not done** |
 | 18 | Surface material assignment (reflective / absorptive / transmissive) | **Done** (materials + floor/wall assignment) |
 | 19 | Non-rectangular geometry | **Not done** |
@@ -99,13 +99,13 @@ Status: **Done** | **Partial** | **Not done** | **Cannot do** (out of scope / ph
 | 52 | Energy threshold / Russian roulette | **Done** (threshold; no RR) |
 | 53 | Random seed (repeatable runs) | **Done** |
 | 54 | Detector resolution (e.g. 100×100, 300×300) | **Done** |
-| 55 | Quality presets (Quick / Standard / High) | **Not done** (only raw numeric settings) |
+| 55 | Quality presets (Quick / Standard / High) | **Done** — Quick (1k/20), Standard (10k/50), High (100k/100) buttons in Simulation Settings panel. |
 | 56 | Output heatmap (relative irradiance / pseudo-luminance) | **Done** (Heatmap tab) |
-| 57 | Total extracted energy / efficiency proxy | **Partial** (total_flux; no explicit “efficiency” ratio UI) |
+| 57 | Total extracted energy / efficiency proxy | **Done** — Extraction efficiency % shown in Heatmap panel Energy Balance section; logged at end of run. |
 | 58 | Uniformity metrics | **Done** (min/avg, min/max for center fractions) |
-| 59 | Hotspot indicators | **Not done** |
-| 60 | Edge–center ratio | **Not done** |
-| 61 | Loss breakdown (absorbed / trapped / leaked) | **Not done** |
+| 59 | Hotspot indicators | **Done** — Hotspot ratio (peak/avg) displayed in Grid Statistics; exported in KPI CSV. |
+| 60 | Edge–center ratio | **Done** — Edge/Center ratio (outer-15%-strip avg / inner-25%-region avg) displayed in Grid Statistics. |
+| 61 | Loss breakdown (absorbed / trapped / leaked) | **Done** — `SimulationResult` tracks `escaped_flux`; Heatmap panel shows Absorbed %, Escaped % derived from energy balance. |
 | 62 | Multiprocessing | **Not done** |
 | 63 | Numba acceleration | **Not done** |
 | 64 | Adaptive / importance sampling, BVH | **Not done** |
@@ -129,8 +129,8 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 | 66 | Output detector grid | **Done** |
 | 67 | Adjustable detector resolution | **Done** |
 | 68 | Heatmap visualization | **Done** |
-| 69 | ROI/region stats: center, edge, corner, custom | **Partial** (center-fraction uniformity only; no explicit ROI/corner/edge) |
-| 70 | Exportable detector map data | **Not done** (data in memory only; no export in GUI) |
+| 69 | ROI/region stats: center, edge, corner, custom | **Partial** (center-fraction uniformity only; no explicit ROI/corner/edge selection) |
+| 70 | Exportable detector map data | **Done** — "Export Grid CSV" button in Heatmap panel saves raw (ny×nx) flux grid. |
 | 71 | Far-field / angular detector | **Not done** |
 | 72 | Observer cone, ISO legibility, compare to reference | **Not done** |
 
@@ -141,11 +141,11 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 | # | Task | Status |
 |---|------|--------|
 | 73 | Uniformity: min/max, min/avg | **Done** (Heatmap panel) |
-| 74 | Uniformity: standard deviation, coefficient of variation | **Not done** |
-| 75 | Efficiency proxy: extracted / emitted | **Partial** (total_flux available; no dashboard ratio) |
-| 76 | LED count (cost proxy) | **Partial** (trivial from tree; not in KPI view) |
+| 74 | Uniformity: standard deviation, coefficient of variation | **Done** — Std Dev and CV displayed in Grid Statistics section of Heatmap panel. |
+| 75 | Efficiency proxy: extracted / emitted | **Done** — Efficiency % = detected_flux / emitted_flux shown in Energy Balance section. |
+| 76 | LED count (cost proxy) | **Done** — LED count shown in Energy Balance section of Heatmap panel after each run. |
 | 77 | Weighted design score (user-defined weights) | **Not done** |
-| 78 | Dedicated KPI dashboard | **Not done** (stats only in Heatmap panel) |
+| 78 | Dedicated KPI dashboard | **Done** — Heatmap panel expanded into a full KPI panel: Grid Statistics (avg/peak/min/std/CV/hotspot/edge-center), Uniformity (3 fractions), Energy Balance (efficiency/absorbed/escaped/LED count). |
 | 79 | Power/thermal proxy, Pareto, sensitivity, tolerance robustness | **Not done** |
 
 ---
@@ -173,13 +173,13 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 | 89 | Main view: Plot tab | **Partial** (angular dist. plot in Angular Dist. tab) |
 | 90 | Properties panel (right) | **Done** |
 | 91 | Bottom: simulation progress | **Done** (progress bar in status bar) |
-| 92 | Bottom: logs, warnings/errors | **Not done** |
+| 92 | Bottom: logs, warnings/errors | **Done** — Log dock panel at bottom of window; logs simulation start params, finish stats (efficiency/absorbed/escaped), and cancel events. |
 | 93 | Forms for geometry/material/source inputs | **Done** |
 | 94 | LED angular distribution preview plot | **Done** |
 | 95 | Start/stop simulation, progress bar | **Done** |
 | 96 | Save/load project | **Done** |
-| 97 | Export CSV/PNG | **Partial** (angular dist. Export CSV only; no heatmap/KPI export) |
-| 98 | Results heatmap and KPI view | **Done** (heatmap + basic stats) |
+| 97 | Export CSV/PNG | **Done** — Heatmap panel: Export PNG (heatmap image), Export KPI CSV (full stats table), Export Grid CSV (raw flux grid). |
+| 98 | Results heatmap and KPI view | **Done** (full KPI panel with stats, uniformity, energy balance) |
 | 99 | Drag-and-drop LED, side-by-side comparison, variant manager, interactive ROI | **Not done** |
 
 ---
@@ -189,8 +189,8 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 | # | Task | Status |
 |---|------|--------|
 | 100 | Import LED angular CSV/TXT | **Done** |
-| 101 | Export KPI table (CSV) | **Not done** |
-| 102 | Export heatmap image (PNG) | **Not done** |
+| 101 | Export KPI table (CSV) | **Done** — "Export KPI CSV" button in Heatmap panel; includes all grid stats, uniformity, efficiency, absorbed, escaped, LED count. |
+| 102 | Export heatmap image (PNG) | **Done** — "Export PNG" button in Heatmap panel saves the heatmap plot widget as PNG. |
 | 103 | Save/load project config (JSON/YAML) | **Done** (JSON only) |
 | 104 | IES/LDT, DXF, Excel/PDF report, batch packaging | **Not done** |
 
@@ -219,13 +219,13 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 
 | Status         | Count |
 |----------------|-------|
-| **Done**       | 54    |
-| **Partial**    | 12    |
-| **Not done**   | 44    |
+| **Done**       | 66    |
+| **Partial**    | 5     |
+| **Not done**   | 38    |
 | **Cannot do**  | 1     |
 | **Need more info** | 0  |
 
-*(B1 and B2 marked Done. Includes 2 bug-fix / improvement items.)*
+*(Updated after session S2026-02-27-01: tasks 55, 57, 59, 60, 61, 70, 74, 75, 76, 78, 92, 97, 101, 102 completed.)*
 
 ---
 

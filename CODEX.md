@@ -145,3 +145,33 @@ Use each `Session ID` like a lightweight commit message reference.
 ### Validation
 - `py_compile` passed for changed modules
 - `pytest backlight_sim/tests -p no:cacheprovider -q` -> `8 passed`
+
+---
+
+## Session ID: S2026-02-27-01
+**Title:** KPI dashboard, energy balance, export, quality presets, log panel
+**Status:** Completed
+
+### What was done (simple)
+- Extended `SimulationResult` with `total_emitted_flux`, `escaped_flux`, `source_count` fields.
+- Updated `RayTracer.run()` to track escaped flux (rays that miss all geometry) and set emitted flux / source count on the result.
+- Expanded Heatmap panel into a full KPI dashboard:
+  - **Grid Statistics**: avg, peak, min, hits, std dev, CV, hotspot ratio (peak/avg), edge-center ratio.
+  - **Uniformity**: three center-area fractions (unchanged, now in own group box).
+  - **Energy Balance**: extraction efficiency %, absorbed %, escaped %, LED count.
+- Added three export buttons to Heatmap panel: Export PNG, Export KPI CSV, Export Grid CSV.
+- Added Quick / Standard / High quality preset buttons to the Simulation Settings form.
+- Added a Log dock panel (bottom of main window) that logs simulation start parameters and finish summary (efficiency, escaped, absorbed).
+- Updated `PLAN_TASKS.md`: tasks 55, 57, 59, 60, 61, 70, 74, 75, 76, 78, 92, 97, 101, 102 marked **Done**. Summary counts updated (Done: 66, Partial: 5, Not done: 38).
+
+### Files touched
+- `backlight_sim/core/detectors.py`
+- `backlight_sim/sim/tracer.py`
+- `backlight_sim/gui/heatmap_panel.py`
+- `backlight_sim/gui/properties_panel.py`
+- `backlight_sim/gui/main_window.py`
+- `PLAN_TASKS.md`
+
+### Validation
+- `py_compile` passed for all changed modules
+- `pytest backlight_sim/tests -q` -> `8 passed`

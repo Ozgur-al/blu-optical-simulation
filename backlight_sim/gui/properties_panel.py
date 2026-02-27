@@ -485,12 +485,36 @@ class DetectorForm(QWidget):
         self.changed.emit()
 
 
+_QUALITY_PRESETS = {
+    "Quick":    dict(rays=1_000,   bounces=20,  rec=50),
+    "Standard": dict(rays=10_000,  bounces=50,  rec=200),
+    "High":     dict(rays=100_000, bounces=100, rec=500),
+}
+
+
 class SettingsForm(QWidget):
     changed = Signal()
 
     def __init__(self):
+        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout
         super().__init__()
-        fl = QFormLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        # Quality preset row
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Quality:"))
+        for name, vals in _QUALITY_PRESETS.items():
+            btn = QPushButton(name)
+            btn.setFixedHeight(24)
+            btn.clicked.connect(lambda _=False, v=vals: self._apply_preset(v))
+            preset_row.addWidget(btn)
+        preset_row.addStretch()
+        outer.addLayout(preset_row)
+
+        fl = QFormLayout()
+        outer.addLayout(fl)
+
         self._rays = QSpinBox()
         self._rays.setRange(100, 10_000_000)
         self._rays.setValue(10_000)
@@ -543,6 +567,12 @@ class SettingsForm(QWidget):
             self._unit.setCurrentIndex(idx)
         self._loading = False
         del blockers
+
+    def _apply_preset(self, vals: dict):
+        self._rays.setValue(vals["rays"])
+        self._bounce.setValue(vals["bounces"])
+        self._rec.setValue(vals["rec"])
+        # _apply fires automatically via valueChanged signals
 
     def _apply(self):
         if self._s is None or self._loading:
