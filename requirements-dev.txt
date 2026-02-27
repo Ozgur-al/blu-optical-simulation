@@ -1,0 +1,6 @@
+# Development and build dependencies
+# Install with: pip install -r requirements-dev.txt
+-r requirements.txt
+
+# Packaging — build the Windows executable
+pyinstaller>=6.0
