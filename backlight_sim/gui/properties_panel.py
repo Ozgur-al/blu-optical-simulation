@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QColorDialog,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -165,6 +166,27 @@ class SourceForm(QWidget):
         fl.addRow("Y:", self._py)
         fl.addRow("Z:", self._pz)
         fl.addRow("Flux:", self._flux)
+
+        # Peak intensity helper (read/convert) ──────────────────────────
+        peak_row = QHBoxLayout()
+        self._peak_spin = _dspin(0.01, 1e8, 3, 31.83, 10.0)
+        self._peak_spin.setToolTip(
+            "Peak intensity in cd.\n"
+            "Lambertian: flux = π × cd\n"
+            "Isotropic:  flux = 4π × cd\n"
+            "Editing this field updates Flux automatically."
+        )
+        self._peak_set_btn = QPushButton("→ Flux")
+        self._peak_set_btn.setToolTip("Apply peak cd value and update Flux")
+        self._peak_set_btn.setFixedWidth(56)
+        self._peak_set_btn.clicked.connect(self._apply_peak)
+        peak_row.addWidget(self._peak_spin)
+        peak_row.addWidget(self._peak_set_btn)
+        self._peak_lbl = QLabel("")          # holds the formatted estimate
+        self._peak_lbl.setStyleSheet("color: gray; font-size: 10px;")
+        fl.addRow("Peak cd:", peak_row)
+        # ────────────────────────────────────────────────────────────────
+
         fl.addRow("Distribution:", self._dist)
         self._src = None
         self._loading = False
@@ -201,6 +223,41 @@ class SourceForm(QWidget):
         self._dist.setCurrentText(src.distribution)
         self._loading = False
         del blockers
+        self._update_peak_display()
+
+    # ── peak intensity helpers ─────────────────────────────────────────
+
+    def _flux_to_peak(self, flux: float, dist: str) -> float:
+        import math
+        return flux / (math.pi if "lambertian" in dist else 4 * math.pi)
+
+    def _peak_to_flux(self, peak: float, dist: str) -> float:
+        import math
+        return peak * (math.pi if "lambertian" in dist else 4 * math.pi)
+
+    def _update_peak_display(self):
+        flux = self._flux.value()
+        dist = self._dist.currentText()
+        peak = self._flux_to_peak(flux, dist)
+        # Update the spinbox without triggering any connected slot
+        self._peak_spin.blockSignals(True)
+        self._peak_spin.setValue(peak)
+        self._peak_spin.blockSignals(False)
+
+    def _apply_peak(self):
+        """Convert the peak cd spinbox value back to flux and apply."""
+        if self._src is None or self._loading:
+            return
+        dist = self._dist.currentText()
+        flux = self._peak_to_flux(self._peak_spin.value(), dist)
+        self._flux.blockSignals(True)
+        self._flux.setValue(flux)
+        self._flux.blockSignals(False)
+        self._src.flux = flux
+        self._src.distribution = dist
+        self.changed.emit()
+
+    # ──────────────────────────────────────────────────────────────────
 
     def _apply(self):
         if self._src is None or self._loading:
@@ -210,6 +267,7 @@ class SourceForm(QWidget):
         self._src.position = np.array([self._px.value(), self._py.value(), self._pz.value()])
         self._src.flux = self._flux.value()
         self._src.distribution = self._dist.currentText()
+        self._update_peak_display()
         self.changed.emit()
 
 

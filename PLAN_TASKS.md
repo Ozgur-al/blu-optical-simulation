@@ -23,7 +23,7 @@ Status: **Done** | **Partial** | **Not done** | **Cannot do** (out of scope / ph
 | 4 | Project presets (e.g. automotive cluster direct-lit) | **Done** (Presets menu: Simple Box, Automotive Cluster) |
 | 5 | Project comparison | **Not done** |
 | 6 | Variant cloning (A/B design comparison) | **Done** — "File → Clone as Variant…" saves a deep-copy with a user name; "Variants" menu lists all saved variants and lets you reload any one; "Clear All Variants" wipes the list. |
-| 7 | Design history snapshots | **Not done** |
+| 7 | Design history snapshots | **Done** — Auto-snapshot saved on every successful simulation run (timestamped HH:MM:SS, capped at 20 entries); "History" menu lists all snapshots; clicking one restores that project state; "Clear History" wipes the list. |
 
 ---
 
@@ -56,7 +56,7 @@ Status: **Done** | **Partial** | **Not done** | **Cannot do** (out of scope / ph
 | 23 | Angular distribution import (CSV/TXT) | **Done** (Angular Dist. tab: Import CSV/TXT) |
 | 24 | Angle vs relative intensity format (`theta`, `I(theta)`) | **Done** |
 | 25 | Source: total luminous flux (lm) | **Done** (flux in PointSource + properties) |
-| 26 | Source: peak intensity (optional mode) | **Not done** |
+| 26 | Source: peak intensity (optional mode) | **Done** — "Peak cd" spinbox in Source properties panel; "→ Flux" button converts peak_cd → flux using Lambertian (÷π) or isotropic (÷4π) formula; flux field auto-updates peak display. |
 | 27 | Source: position / orientation / tilt | **Done** (position + direction; rotation in Surface form) |
 | 28 | Normalization: normalize to peak | **Done** — "Norm: Peak=1" button in Angular Dist. panel scales max(I) → 1. |
 | 29 | Normalization: normalize to total flux | **Done** — "Norm: Flux=1" button divides by ∫I(θ)·sin(θ)dθ (trapezoid). |
@@ -129,7 +129,7 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 | 66 | Output detector grid | **Done** |
 | 67 | Adjustable detector resolution | **Done** |
 | 68 | Heatmap visualization | **Done** |
-| 69 | ROI/region stats: center, edge, corner, custom | **Partial** (center-fraction uniformity only; no explicit ROI/corner/edge selection) |
+| 69 | ROI/region stats: center, edge, corner, custom | **Partial** (center-fraction uniformity + corner/avg ratio (10 % patches) added; no interactive custom ROI selector) |
 | 70 | Exportable detector map data | **Done** — "Export Grid CSV" button in Heatmap panel saves raw (ny×nx) flux grid. |
 | 71 | Far-field / angular detector | **Not done** |
 | 72 | Observer cone, ISO legibility, compare to reference | **Not done** |
@@ -144,7 +144,7 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 | 74 | Uniformity: standard deviation, coefficient of variation | **Done** — Std Dev and CV displayed in Grid Statistics section of Heatmap panel. |
 | 75 | Efficiency proxy: extracted / emitted | **Done** — Efficiency % = detected_flux / emitted_flux shown in Energy Balance section. |
 | 76 | LED count (cost proxy) | **Done** — LED count shown in Energy Balance section of Heatmap panel after each run. |
-| 77 | Weighted design score (user-defined weights) | **Not done** |
+| 77 | Weighted design score (user-defined weights) | **Done** — "Design Score" panel in Heatmap tab: three weight spinboxes (w_eff, w_uni, w_hot); score = weighted average of efficiency%, U(1/4 min/avg), 1/hotspot; auto-updates when weights change. |
 | 78 | Dedicated KPI dashboard | **Done** — Heatmap panel expanded into a full KPI panel: Grid Statistics (avg/peak/min/std/CV/hotspot/edge-center), Uniformity (3 fractions), Energy Balance (efficiency/absorbed/escaped/LED count). |
 | 79 | Power/thermal proxy, Pareto, sensitivity, tolerance robustness | **Not done** |
 
@@ -156,7 +156,7 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 |---|------|--------|
 | 80 | Single-parameter sweep (pitch, depth, angle, reflectance, diffuser dist.) | **Done** — "Simulation → Parameter Sweep…" dialog sweeps: source flux, reflector reflectance, diffuser transmittance, max bounces, rays per source. |
 | 81 | Batch run queue | **Done** — Sweep runs N steps sequentially in a background QThread; results fill a live-updating table; sweep can be cancelled mid-run. |
-| 82 | Results table + sort/filter, KPI vs parameter plots | **Partial** — Results table shows Value, Efficiency %, U(1/4) min/avg, Hotspot per step; no sort/filter or plot yet. |
+| 82 | Results table + sort/filter, KPI vs parameter plots | **Partial** — Results table + live KPI plot (Efficiency %, U(1/4) min/avg, or Hotspot vs parameter value) in sweep dialog; no sort/filter yet. |
 | 83 | Multi-parameter sweep, optimization, Pareto | **Not done** |
 
 ---
@@ -219,13 +219,13 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 
 | Status         | Count |
 |----------------|-------|
-| **Done**       | 76    |
+| **Done**       | 81    |
 | **Partial**    | 6     |
-| **Not done**   | 27    |
+| **Not done**   | 22    |
 | **Cannot do**  | 1     |
 | **Need more info** | 0  |
 
-*(Updated after session S2026-02-27-02: tasks 6, 12, 28, 29, 30, 80, 81, 106 completed; tasks 28–30 done as normalization buttons in Angular Dist. panel.)*
+*(Updated after session S2026-02-27-03: tasks 7, 26, 69(corner metric), 77, 82(plot) completed.)*
 
 ---
 

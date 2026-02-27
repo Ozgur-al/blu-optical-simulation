@@ -207,3 +207,28 @@ Use each `Session ID` like a lightweight commit message reference.
 ### Validation
 - `py_compile` passed for all changed modules
 - `pytest backlight_sim/tests -q` -> `8 passed`
+
+---
+
+## Session ID: S2026-02-27-03
+**Title:** Corner ROI, peak-cd helper, design score, sweep plot, history snapshots
+**Status:** Completed
+
+### What was done
+- **#7** Design history snapshots — auto-snapshot (deep-copy, timestamped HH:MM:SS) saved on each successful simulation run (capped at 20); "History" menu lists all snapshots and allows restoring; "Clear History" wipes the list.
+- **#26** Source peak intensity — "Peak cd" spinbox + "→ Flux" button in Source properties panel; Lambertian (flux = π × cd) and isotropic (flux = 4π × cd) conversion; flux spinbox auto-updates peak display.
+- **#69** Corner/avg ratio — `_corner_ratio()` helper; "Corner/avg:" metric (10 % corner patches / full avg) added to Grid Statistics and KPI CSV.
+- **#77** Weighted design score — "Design Score" QGroupBox in Heatmap tab; w_eff/w_uni/w_hot spinboxes; score = weighted average of efficiency%, U(1/4 min/avg), 1/hotspot; auto-updates on weight change and after each simulation.
+- **#82** KPI plot in sweep dialog — pyqtgraph plot panel alongside results table in ParameterSweepDialog; user selects which KPI to plot; updates live as each step completes.
+- Updated `PLAN_TASKS.md`: tasks 7, 26, 77 marked **Done**; 82 updated Partial; 69 Partial note updated. Summary counts updated (Done: 81, Not done: 22).
+
+### Files touched
+- `backlight_sim/gui/heatmap_panel.py`
+- `backlight_sim/gui/properties_panel.py`
+- `backlight_sim/gui/parameter_sweep_dialog.py`
+- `backlight_sim/gui/main_window.py`
+- `PLAN_TASKS.md`
+
+### Validation
+- `py_compile` passed for all changed modules
+- `pytest backlight_sim/tests -q` -> `8 passed`

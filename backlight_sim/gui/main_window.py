@@ -59,6 +59,9 @@ class MainWindow(QMainWindow):
         self._selected_name = None
         self._variants: dict[str, "Project"] = {}
         self._variants_menu = None
+        # Design history: list of (label, Project) — newest first, capped at 20
+        self._history: list[tuple[str, "Project"]] = []
+        self._history_menu = None
 
         self._setup_ui()
         self._setup_menu()
@@ -150,6 +153,9 @@ class MainWindow(QMainWindow):
 
         self._variants_menu = mb.addMenu("&Variants")
         self._refresh_variants_menu()
+
+        self._history_menu = mb.addMenu("&History")
+        self._refresh_history_menu()
 
         sm = mb.addMenu("&Simulation")
         sm.addAction("Settings",       self._show_settings)
@@ -436,6 +442,62 @@ class MainWindow(QMainWindow):
         self._refresh_variants_menu()
 
     # ------------------------------------------------------------------
+    # Design history auto-snapshots (#7)
+    # ------------------------------------------------------------------
+
+    _MAX_HISTORY = 20
+
+    def _snapshot_history(self):
+        """Save a timestamped deep-copy of the current project to history."""
+        import copy
+        from datetime import datetime
+        label = datetime.now().strftime("%H:%M:%S")
+        self._history.insert(0, (label, copy.deepcopy(self._project)))
+        if len(self._history) > self._MAX_HISTORY:
+            self._history = self._history[: self._MAX_HISTORY]
+        self._refresh_history_menu()
+
+    def _refresh_history_menu(self):
+        self._history_menu.clear()
+        if not self._history:
+            a = self._history_menu.addAction("No history yet")
+            a.setEnabled(False)
+        else:
+            for label, _ in self._history:
+                self._history_menu.addAction(
+                    label, lambda _=False, lbl=label: self._restore_history(lbl))
+            self._history_menu.addSeparator()
+            self._history_menu.addAction("Clear History", self._clear_history)
+
+    def _restore_history(self, label: str):
+        import copy
+        snap = next((p for lbl, p in self._history if lbl == label), None)
+        if snap is None:
+            return
+        if QMessageBox.question(
+            self, "Restore from History",
+            f"Restore project snapshot '{label}'?\nCurrent unsaved changes will be lost.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self._project = copy.deepcopy(snap)
+        merge_default_profiles(self._project)
+        self._counter = {k: 0 for k in self._counter}
+        self._last_save_path = None
+        self._clear_selected_object()
+        self._ang_dist.set_project(self._project)
+        self._properties.clear_selection()
+        self._heatmap.clear()
+        self._viewport.clear_ray_paths()
+        self._refresh_all()
+        self.setWindowTitle(f"Blu Optical Simulation - {self._project.name} [history: {label}]")
+        self._log(f"Restored history snapshot: {label}")
+
+    def _clear_history(self):
+        self._history.clear()
+        self._refresh_history_menu()
+
+    # ------------------------------------------------------------------
 
     def _open_parameter_sweep(self):
         from backlight_sim.gui.parameter_sweep_dialog import ParameterSweepDialog
@@ -504,3 +566,5 @@ class MainWindow(QMainWindow):
             )
         else:
             self._log("Simulation complete.")
+
+        self._snapshot_history()
