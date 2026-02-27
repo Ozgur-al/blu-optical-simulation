@@ -47,12 +47,19 @@ class RayTracer:
                 detector_name=det.name, grid=grid
             )
 
+        total_emitted_flux = sum(s.flux for s in sources)
+
         if not sources or (not surfaces and not detectors):
-            return SimulationResult(detectors=det_results)
+            return SimulationResult(
+                detectors=det_results,
+                total_emitted_flux=total_emitted_flux,
+                source_count=len(sources),
+            )
 
         total_rays = len(sources) * settings.rays_per_source
         rays_processed = 0
         all_paths: list[list[np.ndarray]] = []
+        escaped_flux = 0.0
 
         for src_idx, source in enumerate(sources):
             if self._cancelled:
@@ -124,6 +131,8 @@ class RayTracer:
 
                 # Rays that escape
                 missed = best_t == np.inf
+                if missed.any():
+                    escaped_flux += float(weights[active_idx[missed]].sum())
                 alive[active_idx[missed]] = False
 
                 # Detector hits
@@ -160,7 +169,13 @@ class RayTracer:
             if progress_callback:
                 progress_callback(rays_processed / total_rays)
 
-        return SimulationResult(detectors=det_results, ray_paths=all_paths)
+        return SimulationResult(
+            detectors=det_results,
+            ray_paths=all_paths,
+            total_emitted_flux=total_emitted_flux,
+            escaped_flux=escaped_flux,
+            source_count=len(sources),
+        )
 
     # ------------------------------------------------------------------
 

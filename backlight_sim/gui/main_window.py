@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import datetime
 import numpy as np
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QTabWidget,
     QProgressBar, QStatusBar, QMessageBox, QFileDialog, QPushButton,
+    QDockWidget, QTextEdit,
 )
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QActionGroup
@@ -89,6 +91,19 @@ class MainWindow(QMainWindow):
         main_split.addWidget(self._properties)
         main_split.setSizes([200, 820, 300])
 
+        # ---- log dock ----
+        self._log_edit = QTextEdit()
+        self._log_edit.setReadOnly(True)
+        self._log_edit.setMaximumHeight(140)
+        self._log_edit.setStyleSheet("font-family: monospace; font-size: 11px;")
+        log_dock = QDockWidget("Log")
+        log_dock.setWidget(self._log_edit)
+        log_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable |
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, log_dock)
+
         status = QStatusBar()
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
@@ -170,6 +185,10 @@ class MainWindow(QMainWindow):
         self._tree.delete_requested.connect(self._delete_object)
         self._properties.properties_changed.connect(self._on_properties_changed)
         self._ang_dist.distributions_changed.connect(self._on_distributions_changed)
+
+    def _log(self, msg: str):
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        self._log_edit.append(f"[{ts}] {msg}")
 
     def _set_view_mode(self, mode: str):
         self._viewport.set_view_mode(mode)
@@ -370,6 +389,14 @@ class MainWindow(QMainWindow):
         self._run_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
 
+        s = self._project.settings
+        self._log(
+            f"Simulation started — {len(self._project.sources)} source(s), "
+            f"{len(self._project.surfaces)} surface(s), "
+            f"{len(self._project.detectors)} detector(s) | "
+            f"{s.rays_per_source:,} rays/src, {s.max_bounces} max bounces"
+        )
+
         self._sim_thread = SimulationThread(self._project)
         self._sim_thread.progress.connect(lambda f: self._progress.setValue(int(f * 100)))
         self._sim_thread.finished_sim.connect(self._on_sim_finished)
@@ -380,13 +407,27 @@ class MainWindow(QMainWindow):
             self._sim_thread.cancel()
             self.statusBar().showMessage("Cancelling...")
             self._cancel_btn.setEnabled(False)
+            self._log("Simulation cancelled.")
 
     def _on_sim_finished(self, result):
         self._progress.setVisible(False)
         self._run_btn.setEnabled(True)
         self._cancel_btn.setEnabled(False)
         self.statusBar().showMessage("Simulation complete.", 5000)
-        self._heatmap.update_results(result.detectors)
+        self._heatmap.update_results(result)
         self._center_tabs.setCurrentWidget(self._heatmap)
         if result.ray_paths:
             self._viewport.show_ray_paths(result.ray_paths)
+
+        # Log summary
+        det_flux = sum(dr.total_flux for dr in result.detectors.values())
+        if result.total_emitted_flux > 0:
+            eff = det_flux / result.total_emitted_flux * 100.0
+            esc = result.escaped_flux / result.total_emitted_flux * 100.0
+            self._log(
+                f"Simulation complete — efficiency: {eff:.1f} %, "
+                f"escaped: {esc:.1f} %, "
+                f"absorbed: {max(0, 100 - eff - esc):.1f} %"
+            )
+        else:
+            self._log("Simulation complete.")

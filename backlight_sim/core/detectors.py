@@ -79,3 +79,8 @@ class SimulationResult:
     detectors: dict[str, DetectorResult] = field(default_factory=dict)
     ray_paths: list[list[np.ndarray]] = field(default_factory=list)
     # ray_paths: each element is a list of 3-D waypoints for one recorded ray
+
+    # Energy accounting
+    total_emitted_flux: float = 0.0    # sum of all source flux values
+    escaped_flux: float = 0.0          # flux that left geometry without hitting anything
+    source_count: int = 0              # number of light sources simulated
