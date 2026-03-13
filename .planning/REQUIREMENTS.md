@@ -1,0 +1,118 @@
+# Requirements: Blu Optical Simulation — Phase 2
+
+**Defined:** 2025-07-11
+**Core Value:** Engineers can iterate on both direct-lit and edge-lit BLU designs with physically accurate, wavelength-aware simulation — fast enough for real workloads.
+
+## v1 Requirements
+
+Requirements for Phase 2 release. Each maps to roadmap phases.
+
+### Edge-Lit / LGP
+
+- [ ] **LGP-01**: User can define an LGP slab as a solid box with independent optical properties per face
+- [ ] **LGP-02**: Tracer computes Snell's law refraction, Fresnel reflection/transmission, and TIR at dielectric interfaces
+- [ ] **LGP-03**: User can see edge coupling efficiency (flux-through-edge / total-emitted) as a KPI after simulation
+
+### Spectral Simulation
+
+- [ ] **SPEC-01**: Each ray carries a sampled wavelength and material interactions are wavelength-dependent
+- [ ] **SPEC-02**: Detector accumulates flux per wavelength bin into a spectral grid
+- [ ] **SPEC-03**: User can view detector result as a CIE XYZ / sRGB color image
+- [ ] **SPEC-04**: Material reflectance and transmittance can be defined as wavelength-dependent tables
+- [ ] **SPEC-05**: User can see color uniformity KPIs (delta-CCx, delta-CCy) after spectral simulation
+
+### 3D Solid Geometry
+
+- [ ] **GEOM-01**: User can create a box solid body with 6 faces, each with independent optical properties
+- [ ] **GEOM-02**: User can create cylinder solid body primitives
+- [ ] **GEOM-03**: User can create prism solid body primitives
+
+### Performance
+
+- [ ] **PERF-01**: Ray-surface intersection and accumulation inner loops are Numba JIT-compiled for 10-50x speedup
+- [ ] **PERF-02**: BVH spatial acceleration is used for scenes with 50+ surfaces
+- [ ] **PERF-03**: Adaptive sampling stops ray generation per source when detector variance is below threshold
+
+### BRDF
+
+- [ ] **BRDF-01**: User can import tabulated BRDF data (measured goniophotometer CSV) and assign it to surfaces
+
+### Detectors
+
+- [ ] **DET-01**: User can add a far-field angular detector that outputs candela distribution and exports as IES file
+
+## v2 Requirements
+
+Deferred to future release. Tracked but not in current roadmap.
+
+### Edge-Lit / LGP
+
+- **LGP-04**: Extraction dot pattern (per-region scatter/transmittance map on bottom face)
+- **LGP-05**: Wedge LGP (tapered thickness geometry)
+- **LGP-06**: LGP dot pattern design tool (density gradient calculator from target uniformity)
+
+### Spectral
+
+- **SPEC-06**: Wavelength-dependent refractive index (dispersion via Cauchy/Sellmeier coefficients)
+- **SPEC-07**: Spectral + uniformity co-optimization in parameter sweep
+
+### 3D Geometry
+
+- **GEOM-04**: Triangle mesh import (STL/OBJ via trimesh)
+- **GEOM-05**: CAD/DXF import for LED layouts and LGP patterns (ezdxf)
+
+### Renderer
+
+- **REND-01**: VTK/PyVista 3D renderer replacing pyqtgraph.opengl for CAD-quality solid body rendering
+
+### BRDF
+
+- **BRDF-02**: GGX microfacet BRDF model (single roughness parameter for polished/satin surfaces)
+
+### Materials
+
+- **MAT-01**: Temperature-dependent optical property LUTs per material
+
+## Out of Scope
+
+| Feature | Reason |
+|---------|--------|
+| Polarization state tracking (Jones/Mueller) | ~2x memory overhead, niche within BLU work; Phase 3 candidate |
+| FDTD / wave optics for thin-film effects | Category confusion in a ray tracer; use dedicated tools |
+| GPU/CUDA acceleration | Packaging complexity with PyInstaller; Numba CPU covers target speedup |
+| Full micro-optics LGP dot simulation | Impractical compute cost; use stochastic extraction probability map |
+| CAD solid modeling / history tree | Engineers already have CAD tools; import from STL/OBJ instead |
+| Bayesian/Optuna optimization | Current Pareto sweep sufficient; Nelder-Mead via scipy if needed |
+| STEP/IGES import | 500MB OCC dependency, fragile PyInstaller packaging |
+
+## Traceability
+
+Which phases cover which requirements. Updated during roadmap creation.
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| LGP-01 | — | Pending |
+| LGP-02 | — | Pending |
+| LGP-03 | — | Pending |
+| SPEC-01 | — | Pending |
+| SPEC-02 | — | Pending |
+| SPEC-03 | — | Pending |
+| SPEC-04 | — | Pending |
+| SPEC-05 | — | Pending |
+| GEOM-01 | — | Pending |
+| GEOM-02 | — | Pending |
+| GEOM-03 | — | Pending |
+| PERF-01 | — | Pending |
+| PERF-02 | — | Pending |
+| PERF-03 | — | Pending |
+| BRDF-01 | — | Pending |
+| DET-01 | — | Pending |
+
+**Coverage:**
+- v1 requirements: 16 total
+- Mapped to phases: 0
+- Unmapped: 16 ⚠️
+
+---
+*Requirements defined: 2025-07-11*
+*Last updated: 2025-07-11 after initial definition*
