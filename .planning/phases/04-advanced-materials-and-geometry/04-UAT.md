@@ -1,5 +1,5 @@
 ---
-status: complete
+status: diagnosed
 phase: 04-advanced-materials-and-geometry
 source: [04-01-SUMMARY.md, 04-02-SUMMARY.md, 04-03-SUMMARY.md, 04-04-SUMMARY.md]
 started: 2026-03-15T00:00:00Z
@@ -92,52 +92,76 @@ skipped: 5
   reason: "User reported: there is no such selection"
   severity: major
   test: 1
-  root_cause: ""
-  artifacts: []
-  missing: []
+  root_cause: "main_window.py toolbar quick-add buttons (lines 364-373) only list 'Add SolidBox'. Handler code for 'Solid Bodies:cylinder' exists at line 772 but no toolbar/menu entry triggers it."
+  artifacts:
+    - path: "backlight_sim/gui/main_window.py"
+      issue: "Missing 'Add Cylinder' toolbar button entry at line 369"
+  missing:
+    - "Add ('Add Cylinder', 'Solid Bodies:cylinder') to quick-add toolbar buttons"
   debug_session: ""
 - truth: "Scene menu has 'Add Prism' option that creates a prism in the object tree and 3D viewport"
   status: failed
   reason: "User reported: obviously dont have add prism either"
   severity: major
   test: 2
-  root_cause: ""
-  artifacts: []
-  missing: []
+  root_cause: "Same as test 1 — main_window.py toolbar quick-add buttons missing 'Add Prism'. Handler code for 'Solid Bodies:prism' exists at line 786 but no toolbar/menu entry."
+  artifacts:
+    - path: "backlight_sim/gui/main_window.py"
+      issue: "Missing 'Add Prism' toolbar button entry at line 369"
+  missing:
+    - "Add ('Add Prism', 'Solid Bodies:prism') to quick-add toolbar buttons"
   debug_session: ""
 - truth: "A 'BSDF' tab is visible in the center tab area with profile list and Import CSV/Delete buttons"
   status: failed
   reason: "User reported: no bsdf either"
   severity: major
   test: 5
-  root_cause: ""
-  artifacts: []
-  missing: []
+  root_cause: "BSDF dock is hidden by default (main_window.py lines 189-192). dock.hide() called at init. Only accessible via View > Panels > BSDF menu which user didn't discover."
+  artifacts:
+    - path: "backlight_sim/gui/main_window.py"
+      issue: "BSDF dock hidden at startup (line 192), not auto-shown when relevant"
+  missing:
+    - "Remove bsdf_dock from _floating_docks set so it remains visible as a tab"
   debug_session: ""
 - truth: "Far-field polar plot shows C-plane results with KPIs after simulation; 3D receiver shows results; polar plot should be fixed (not moveable/zoomable); far-field should not require radius"
   status: failed
   reason: "User reported: polar plot does not work it does not have any results, 3d receiver also dont have any results. live view does show blue shape in the middle of the receiver though. also polar plot is moveable zoomable, it should be fixed. also if i choose far-field receiver i should have to select a radius"
   severity: major
   test: 8
-  root_cause: ""
-  artifacts: []
-  missing: []
+  root_cause: "Multiple issues: (1) Far-field dock hidden by default (line 189-192), show_result() writes data but dock never shown/raised — only heatmap dock is shown at line 1054. (2) Polar plot uses pyqtgraph PlotWidget with default mouse interaction enabled — needs setMouseEnabled(False, False). (3) SphereDetector form shows radius field for far-field mode where it's irrelevant (direction-based). (4) 3D receiver panel likely doesn't handle far-field data display."
+  artifacts:
+    - path: "backlight_sim/gui/main_window.py"
+      issue: "Far-field dock not shown/raised after simulation (line 1044 calls show_result but doesn't show dock)"
+    - path: "backlight_sim/gui/far_field_panel.py"
+      issue: "PlotWidget allows mouse pan/zoom — should be fixed for polar display"
+    - path: "backlight_sim/gui/properties_panel.py"
+      issue: "SphereDetectorForm shows radius for far-field mode"
+  missing:
+    - "Show and raise far-field dock when far-field results arrive"
+    - "Disable mouse interaction on polar plot (setMouseEnabled(False, False))"
+    - "Hide radius field when mode is far-field in SphereDetectorForm"
   debug_session: ""
 - truth: "3D intensity lobe has cool-to-warm color gradient (blue low to red high) based on candela values"
   status: failed
   reason: "User reported: it does not have a gradient but it works by varying in direction"
   severity: minor
   test: 9
-  root_cause: ""
-  artifacts: []
-  missing: []
+  root_cause: "Colormap code in viewport_3d.py _draw_farfield_lobe (lines 378-398) is correct but GLMeshItem with smooth=True may not properly render per-face colors. Also, with a lambertian source the candela values may cluster in a narrow range making the gradient appear uniform blue."
+  artifacts:
+    - path: "backlight_sim/gui/viewport_3d.py"
+      issue: "GLMeshItem smooth=True may interfere with faceColors rendering; consider smooth=False"
+  missing:
+    - "Try smooth=False on the lobe GLMeshItem for per-face color to render correctly"
   debug_session: ""
 - truth: "BSDF dropdown greys out manual fields when a profile is selected and re-enables when '(None)' is selected"
   status: failed
   reason: "User reported: there is dropdown, cant approve the rest (no BSDF profiles to test grey-out behavior — blocked by test 5, no BSDF panel to import)"
   severity: minor
   test: 6
-  root_cause: ""
-  artifacts: []
-  missing: []
+  root_cause: "Cascade of test 5 — BSDF panel dock hidden, so user cannot import profiles to test the dropdown grey-out behavior. The dropdown code itself may work correctly once profiles are importable."
+  artifacts:
+    - path: "backlight_sim/gui/main_window.py"
+      issue: "BSDF panel hidden prevents importing profiles to test dropdown"
+  missing:
+    - "Fix test 5 (show BSDF dock) to unblock this test"
   debug_session: ""
