@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 from backlight_sim.core.detectors import DetectorResult, SimulationResult
 from backlight_sim.gui.widgets.collapsible_section import CollapsibleSection
+from backlight_sim.gui.theme import ACCENT, TEXT_MUTED, KPI_GREEN, KPI_ORANGE, KPI_RED
 
 # Available colormaps
 COLORMAPS = ['viridis', 'plasma', 'inferno', 'magma', 'CET-L1']
@@ -99,18 +100,18 @@ def _threshold_color(value: float, green_thresh: float, yellow_thresh: float,
     """Return CSS color string for green/yellow/red threshold styling."""
     if higher_is_better:
         if value >= green_thresh:
-            return "color: #4caf50;"    # green
+            return f"color: {KPI_GREEN};"
         elif value >= yellow_thresh:
-            return "color: #ff9800;"   # orange
+            return f"color: {KPI_ORANGE};"
         else:
-            return "color: #f44336;"   # red
+            return f"color: {KPI_RED};"
     else:
         if value <= green_thresh:
-            return "color: #4caf50;"
+            return f"color: {KPI_GREEN};"
         elif value <= yellow_thresh:
-            return "color: #ff9800;"
+            return f"color: {KPI_ORANGE};"
         else:
-            return "color: #f44336;"
+            return f"color: {KPI_RED};"
 
 
 class HeatmapPanel(QWidget):
@@ -123,9 +124,13 @@ class HeatmapPanel(QWidget):
         top = QHBoxLayout()
         top.addWidget(QLabel("Detector:"))
         self._selector = QComboBox()
+        self._selector.setAccessibleName("Detector selector")
+        self._selector.setToolTip("Select which detector to display results for")
         self._selector.currentTextChanged.connect(self._on_detector_changed)
         top.addWidget(self._selector)
         self._color_mode = QComboBox()
+        self._color_mode.setAccessibleName("Display mode")
+        self._color_mode.setToolTip("Switch between intensity, RGB, or spectral color display")
         self._color_mode.addItems(["Intensity (mono)", "Color (RGB)", "Spectral Color"])
         self._color_mode.currentIndexChanged.connect(self._on_color_mode_changed)
         top.addWidget(QLabel("Display:"))
@@ -133,6 +138,8 @@ class HeatmapPanel(QWidget):
         # ---- colormap selector ----
         top.addWidget(QLabel("Colormap:"))
         self._colormap_combo = QComboBox()
+        self._colormap_combo.setAccessibleName("Colormap")
+        self._colormap_combo.setToolTip("Choose the color palette for the heatmap display")
         self._colormap_combo.addItems(COLORMAPS)
         self._colormap_combo.setCurrentText('inferno')
         self._colormap_combo.currentTextChanged.connect(self._apply_colormap)
@@ -150,7 +157,7 @@ class HeatmapPanel(QWidget):
         # Click to inspect per-pixel spectrum
         self._img.mouseClickEvent = self._on_image_clicked
         # Interactive ROI for custom region stats (teal accent)
-        self._roi = pg.RectROI([10, 10], [30, 30], pen=pg.mkPen('#00bcd4', width=2))
+        self._roi = pg.RectROI([10, 10], [30, 30], pen=pg.mkPen(ACCENT, width=2))
         self._roi.addScaleHandle([1, 1], [0, 0])
         self._roi.addScaleHandle([0, 0], [1, 1])
         self._plot.addItem(self._roi)
@@ -163,9 +170,9 @@ class HeatmapPanel(QWidget):
 
         # Crosshair cursor
         self._crosshair_v = pg.InfiniteLine(angle=90, movable=False,
-                                             pen=pg.mkPen('#888888', width=1))
+                                             pen=pg.mkPen(TEXT_MUTED, width=1))
         self._crosshair_h = pg.InfiniteLine(angle=0, movable=False,
-                                             pen=pg.mkPen('#888888', width=1))
+                                             pen=pg.mkPen(TEXT_MUTED, width=1))
         self._plot.addItem(self._crosshair_v, ignoreBounds=True)
         self._plot.addItem(self._crosshair_h, ignoreBounds=True)
         self._crosshair_v.hide()
@@ -179,24 +186,26 @@ class HeatmapPanel(QWidget):
         # ---- spectral mode status ----
         self._spectral_status = QLabel()
         self._spectral_status.setStyleSheet(
-            "color: orange; font-style: italic; padding: 2px 4px;"
+            f"color: {KPI_ORANGE}; font-style: italic; padding: 2px 4px;"
         )
         self._spectral_status.hide()
         layout.addWidget(self._spectral_status)
 
         # ---- cursor label ----
         self._cursor_lbl = QLabel("Cursor: --")
-        self._cursor_lbl.setStyleSheet("font-family: monospace; color: #888888;")
+        self._cursor_lbl.setStyleSheet(f"font-family: monospace; color: {TEXT_MUTED};")
         layout.addWidget(self._cursor_lbl)
 
         # ---- ROI stats ----
         roi_row = QHBoxLayout()
         self._roi_toggle = QPushButton("Show ROI")
+        self._roi_toggle.setAccessibleName("Toggle region of interest")
+        self._roi_toggle.setToolTip("Show/hide a draggable region-of-interest rectangle with live statistics")
         self._roi_toggle.setCheckable(True)
         self._roi_toggle.toggled.connect(self._toggle_roi)
         roi_row.addWidget(self._roi_toggle)
         self._roi_lbl = QLabel("ROI: --")
-        self._roi_lbl.setStyleSheet("font-family: monospace; color: cyan;")
+        self._roi_lbl.setStyleSheet(f"font-family: monospace; color: {ACCENT};")
         roi_row.addWidget(self._roi_lbl, 1)
         layout.addLayout(roi_row)
 
@@ -219,16 +228,21 @@ class HeatmapPanel(QWidget):
         self._lbl_rmse   = _lbl(); self._lbl_mad   = _lbl()
         self._lbl_corner = _lbl()
 
-        sg.addWidget(QLabel("Avg:"),         0, 0); sg.addWidget(self._lbl_avg,    0, 1)
-        sg.addWidget(QLabel("Peak:"),        0, 2); sg.addWidget(self._lbl_peak,   0, 3)
-        sg.addWidget(QLabel("Min:"),         0, 4); sg.addWidget(self._lbl_min,    0, 5)
-        sg.addWidget(QLabel("Hits:"),        0, 6); sg.addWidget(self._lbl_hits,   0, 7)
-        sg.addWidget(QLabel("Std Dev:"),     1, 0); sg.addWidget(self._lbl_std,    1, 1)
-        sg.addWidget(QLabel("CV:"),          1, 2); sg.addWidget(self._lbl_cv,     1, 3)
-        sg.addWidget(QLabel("Hotspot:"),     1, 4); sg.addWidget(self._lbl_hot,    1, 5)
-        sg.addWidget(QLabel("Edge/Ctr:"),    1, 6); sg.addWidget(self._lbl_ecr,    1, 7)
-        sg.addWidget(QLabel("RMSE/avg:"),    2, 0); sg.addWidget(self._lbl_rmse,   2, 1)
-        sg.addWidget(QLabel("MAD/avg:"),     2, 2); sg.addWidget(self._lbl_mad,    2, 3)
+        def _tlbl(text, tip):
+            l = QLabel(text)
+            l.setToolTip(tip)
+            return l
+
+        sg.addWidget(_tlbl("Avg:",      "Mean flux across all grid pixels"),           0, 0); sg.addWidget(self._lbl_avg,    0, 1)
+        sg.addWidget(_tlbl("Peak:",     "Maximum flux value in the grid"),             0, 2); sg.addWidget(self._lbl_peak,   0, 3)
+        sg.addWidget(_tlbl("Min:",      "Minimum flux value in the grid"),             0, 4); sg.addWidget(self._lbl_min,    0, 5)
+        sg.addWidget(_tlbl("Hits:",     "Total number of ray hits on this detector"),  0, 6); sg.addWidget(self._lbl_hits,   0, 7)
+        sg.addWidget(_tlbl("Std Dev:",  "Standard deviation of flux values"),          1, 0); sg.addWidget(self._lbl_std,    1, 1)
+        sg.addWidget(_tlbl("CV:",       "Coefficient of variation (std/avg) — lower is more uniform"),  1, 2); sg.addWidget(self._lbl_cv,     1, 3)
+        sg.addWidget(_tlbl("Hotspot:",  "Peak-to-average ratio — closer to 1.0 is better"),             1, 4); sg.addWidget(self._lbl_hot,    1, 5)
+        sg.addWidget(_tlbl("Edge/Ctr:", "Edge avg / center avg — closer to 1.0 is more uniform"),       1, 6); sg.addWidget(self._lbl_ecr,    1, 7)
+        sg.addWidget(_tlbl("RMSE/avg:", "Normalized root-mean-square error vs ideal uniform field"),     2, 0); sg.addWidget(self._lbl_rmse,   2, 1)
+        sg.addWidget(_tlbl("MAD/avg:",  "Normalized mean absolute deviation vs ideal uniform field"),    2, 2); sg.addWidget(self._lbl_mad,    2, 3)
         corner_lbl = QLabel("Corner/avg:")
         corner_lbl.setToolTip("Average of the 4 corner patches (10 % of grid size each) / full avg")
         sg.addWidget(corner_lbl,             2, 4); sg.addWidget(self._lbl_corner, 2, 5)
@@ -354,10 +368,15 @@ class HeatmapPanel(QWidget):
         # ---- export buttons ----
         btn_row = QHBoxLayout()
         btn_png  = QPushButton("Export PNG")
+        btn_png.setToolTip("Save the heatmap plot as a PNG image")
         btn_kpi  = QPushButton("Export KPI CSV")
+        btn_kpi.setToolTip("Save all KPI metrics to a CSV file")
         btn_grid = QPushButton("Export Grid CSV")
+        btn_grid.setToolTip("Save the raw flux grid data as CSV")
         btn_html = QPushButton("Export HTML Report")
+        btn_html.setToolTip("Generate a self-contained HTML report with heatmap and KPIs")
         btn_zip  = QPushButton("Export Batch (ZIP)")
+        btn_zip.setToolTip("Export project + KPIs + grid + report in a single ZIP")
         btn_png.clicked.connect(self._export_png)
         btn_kpi.clicked.connect(self._export_kpi_csv)
         btn_grid.clicked.connect(self._export_grid_csv)
@@ -389,8 +408,8 @@ class HeatmapPanel(QWidget):
             cm = pg.colormap.get(name)
             self._img.setColorMap(cm)
             self._cbar.setColorMap(cm)
-        except Exception:
-            pass  # unsupported colormap — ignore silently
+        except (KeyError, ValueError):
+            pass  # unsupported colormap name — keep current
 
     def _on_mouse_moved(self, pos):
         """Update crosshair position and cursor label on mouse move."""
@@ -639,10 +658,10 @@ class HeatmapPanel(QWidget):
             return
 
         def _fmt_delta(v):
-            return f"{v:.4f}" if isinstance(v, float) and not (v != v) else "--"
+            return f"{v:.4f}" if isinstance(v, (int, float)) and np.isfinite(v) else "--"
 
         def _fmt_cct(v):
-            if isinstance(v, float) and not (v != v) and v > 0:
+            if isinstance(v, (int, float)) and np.isfinite(v) and v > 0:
                 return f"{int(round(v))} K"
             return "--"
 

@@ -2,6 +2,10 @@
 
 Provides the apply_dark_theme() function and palette constants used
 throughout the application for consistent dark styling with teal accents.
+
+Usage::
+
+    from backlight_sim.gui.theme import ACCENT, TEXT_MUTED, KPI_GREEN
 """
 
 from __future__ import annotations
@@ -9,6 +13,16 @@ from __future__ import annotations
 import os
 from PySide6.QtWidgets import QApplication
 import pyqtgraph as pg
+
+__all__ = [
+    "apply_dark_theme",
+    "BG_BASE", "BG_PANEL", "BG_INPUT", "BG_HOVER",
+    "ACCENT", "ACCENT_HOVER",
+    "TEXT_PRIMARY", "TEXT_MUTED",
+    "KPI_GREEN", "KPI_ORANGE", "KPI_RED",
+    "GL_BG",
+    "BORDER_GAP",
+]
 
 # --- Palette constants ---
 BG_BASE   = "#1e1e1e"
@@ -20,6 +34,14 @@ ACCENT_HOVER = "#26c6da"
 TEXT_PRIMARY = "#e0e0e0"
 TEXT_MUTED   = "#888888"
 BORDER_GAP   = 2
+
+# --- KPI threshold colors ---
+KPI_GREEN  = "#4caf50"
+KPI_ORANGE = "#ff9800"
+KPI_RED    = "#f44336"
+
+# --- OpenGL background (QSS doesn't affect GL widgets) ---
+GL_BG = (30, 30, 30, 255)
 
 
 def apply_dark_theme(app: QApplication) -> None:

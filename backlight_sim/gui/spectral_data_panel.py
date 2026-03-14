@@ -35,6 +35,7 @@ from backlight_sim.sim.spectral import (
     blackbody_spd,
     get_spd,
 )
+from backlight_sim.gui.theme import TEXT_MUTED
 
 
 # Built-in SPD names that cannot be edited or deleted
@@ -209,7 +210,7 @@ class SpectralDataPanel(QWidget):
 
         # Label for the chromaticity coordinate
         self._chroma_label = QLabel("x=-, y=-")
-        self._chroma_label.setStyleSheet("color: gray; font-size: 11px; padding: 2px;")
+        self._chroma_label.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; padding: 2px;")
         chroma_layout.addWidget(self._chroma_label)
 
         main_layout.addWidget(chroma_box, 1)

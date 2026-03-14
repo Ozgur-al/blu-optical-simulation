@@ -19,6 +19,7 @@ class Rectangle:
     v_axis: np.ndarray         # (3,) normalized local y-axis of the plane
     size: tuple[float, float]  # (width along u, height along v)
     material_name: str = "default_reflector"
+    optical_properties_name: str = ""  # if set, overrides material's optical behavior
 
     def __post_init__(self):
         self.center = np.asarray(self.center, dtype=float)

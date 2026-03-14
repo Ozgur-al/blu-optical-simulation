@@ -1,6 +1,10 @@
 # Blu Optical Simulation
 
-A desktop application for Monte Carlo optical simulation of backlight units (BLU). Designed for display engineers who need fast design iteration without expensive commercial tools.
+A desktop application for optical simulation of backlight units (BLU), built for display engineers who need fast design iteration. Uses Monte Carlo ray tracing with a modern PySide6 GUI.
+
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
+![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-orange)
+![Platform: Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
 
 ---
 
@@ -16,23 +20,34 @@ No Python, no installation, no admin rights needed.
 
 ## Features
 
+### Simulation Engine
 - **Monte Carlo ray tracing** — physically-based light propagation through reflective cavities
-- **Geometry builder** — direct-lit cavity with configurable width, height, depth, and wall angles (separate X/Y tilt)
-- **LED grid generator** — specify pitch or LED count; edge offsets auto-calculated
-- **Angular distributions** — import any LED I(θ) curve from CSV; built-in isotropic, Lambertian, and batwing profiles; table-based editing
-- **Material editor** — reflector, absorber, and diffuser surface types with specular/diffuse control
-- **3D viewport** — wireframe / solid / transparent view modes; selection highlighting; XYZ reference axes; six camera preset angles
-- **Heatmap output** — 2D flux map on the detector plane; min/avg and min/max uniformity metrics
-- **Ray path visualization** — see sampled ray trajectories overlaid in 3D
-- **Measurement tool** — point-to-point dX/dY/dZ/distance dialog
-- **Project save/load** — JSON format; portable between machines
-- **Built-in presets** — Simple Box (50×50×20 mm) and Automotive Cluster (120×60×10 mm, 4×2 LED grid)
+- **Angular distribution support** — isotropic, Lambertian, batwing, or custom I(theta) profiles
+- **IES / EULUMDAT import** — load measured photometric data from .ies and .ldt files
+- **Haze / scatter proxy** — forward-scatter cone with configurable half-angle
+- **Multiprocessing** — parallel per-source tracing for multi-core speedup
+- **Numba JIT acceleration** — optional 10-50x speedup for tracer inner loops (graceful NumPy fallback)
 
----
+### Geometry & Scene
+- **Geometry builder** — parametric direct-lit cavity with tilted walls, diffuser layer, and film placeholders
+- **LED grid builder** — uniform grid by count or pitch, with 2D drag-and-drop layout editor
+- **Arbitrary surface orientations** — general u-axis / v-axis representation for all geometry
+- **Built-in presets** — Simple Box (50x50x20 mm) and Automotive Cluster (120x60x10 mm, 4x2 grid)
 
-## Screenshots
+### Analysis & Output
+- **2D heatmap** with interactive ROI and live statistics
+- **KPI dashboard** — uniformity, efficiency, hotspot ratio, edge-center ratio, CV, NRMSE, design score
+- **Section views** — X/Y cross-sections, flux histogram, cumulative distribution
+- **Parameter sweep** — single or 2-parameter grid sweep with sortable results and Pareto front
+- **Export** — PNG, KPI CSV, grid CSV, self-contained HTML report, batch ZIP
 
-> *(Add screenshots here after first run)*
+### GUI
+- **3D viewport** — wireframe, solid, and transparent view modes with material-based coloring
+- **Object tree** with per-source enable/disable, bin tolerance, current scaling, and thermal derating
+- **Variant cloning** and side-by-side comparison dialog
+- **Design history** snapshots
+- **Measurement tool** — point-to-point distance in 3D
+- **Ray path visualization** — sampled ray trajectories overlaid in the 3D view
 
 ---
 
@@ -40,12 +55,14 @@ No Python, no installation, no admin rights needed.
 
 ### Requirements
 
-- Python 3.10+
-- Windows, macOS, or Linux
+- Python 3.12+
+- Windows 10/11
 
 ### Install dependencies
 
 ```bash
+git clone https://github.com/Ozgur-al/blu-optical-simulation.git
+cd blu-optical-simulation
 pip install -r requirements.txt
 ```
 
@@ -65,35 +82,12 @@ pytest backlight_sim/tests/
 
 ## Building the Windows Executable
 
-> Requires Python 3.10+ and a Windows machine (or Wine on Linux).
-
-### One-time setup
-
 ```bash
 pip install pyinstaller
-# or install all dev dependencies:
-pip install -r requirements-dev.txt
+python build_exe.py --clean --zip
 ```
 
-### Build
-
-```bash
-python build_exe.py
-```
-
-Or on Windows you can double-click **`build_exe.bat`**.
-
-The output appears in `dist/BluOpticalSim/`. Zip that folder and distribute it.
-
-### What the build produces
-
-```
-dist/
-└── BluOpticalSim/
-    ├── BluOpticalSim.exe   ← launch this
-    ├── _internal/          ← runtime libraries (keep alongside the exe)
-    └── ...
-```
+The output appears in `dist/BluOpticalSim/`. The `--zip` flag produces a ready-to-distribute archive.
 
 ---
 
@@ -101,14 +95,14 @@ dist/
 
 ### 1. Create or load a scene
 
-- **File → New Project** to start from scratch, or
-- **Presets** menu to load a ready-made scene, or
+- **File → New Project** to start from scratch
+- **Presets** menu to load a ready-made scene
 - **File → Open Project** to load a previously saved `.json` file
 
 ### 2. Build geometry
 
 - Open **Tools → Geometry Builder** to generate a reflective cavity and LED grid in one step
-- Adjust cavity dimensions, wall angle, LED pitch/count, and material assignments
+- Adjust cavity dimensions, wall angles, LED pitch/count, and material assignments
 
 ### 3. Edit objects
 
@@ -117,24 +111,28 @@ dist/
 
 ### 4. Manage angular distributions
 
-- Open the **Angular Dist.** tab to import LED I(θ) data from CSV/TXT
+- Open the **Angular Dist.** tab to import LED I(theta) data from CSV, TXT, IES, or LDT files
 - Built-in profiles (isotropic, lambertian, batwing) are always available
 - Assign a distribution to each LED source in its properties form
 
 ### 5. Run simulation
 
-- Click **Run** in the status bar (or toolbar)
+- Click **Run** in the status bar
 - Progress is shown in the progress bar
 - When complete, the **Heatmap** tab updates automatically and ray paths appear in 3D
 
-### 6. Read results
+### 6. Analyze results
 
-- **Heatmap tab**: 2D flux distribution on the output plane; uniformity stats shown below
-- **3D view**: ray path preview for the first source
+- **Heatmap tab** — 2D flux distribution with interactive ROI and full KPI dashboard
+- **Plot tab** — cross-section views, histogram, and CDF analysis
+- **3D view** — ray path preview overlaid on the scene
+- **Parameter Sweep** — explore design space across one or two parameters
 
-### 7. Save your work
+### 7. Export & save
 
-- **File → Save Project** writes a `.json` file you can share or reload later
+- **File → Save Project** writes a `.json` file you can share or reload
+- Export heatmap PNG, KPI CSV, grid CSV, or a self-contained HTML report
+- **File → Batch Export** packages everything into a single ZIP
 
 ---
 
@@ -157,47 +155,33 @@ theta_deg,intensity
 
 ---
 
-## Project File Format
-
-Projects are saved as plain JSON (`.json`). They are human-readable and can be version-controlled. The schema includes:
-
-| Key | Description |
-|-----|-------------|
-| `name` | Project name |
-| `settings` | Simulation parameters (rays, bounces, seed, resolution) |
-| `materials` | Array of material definitions |
-| `sources` | Array of LED point sources |
-| `surfaces` | Array of reflective/absorptive surfaces |
-| `detectors` | Array of detector planes |
-| `angular_distributions` | Dict of named I(θ) profiles |
-
----
-
-## Architecture Overview
+## Architecture
 
 ```
-core/   ← pure Python dataclasses, no GUI
-sim/    ← NumPy ray tracer, no GUI
-io/     ← file I/O, geometry builder, presets (no GUI)
-gui/    ← PySide6 UI (imports core/sim/io)
+backlight_sim/
+├── core/       # Pure data models (dataclasses) — no GUI imports
+├── sim/        # Monte Carlo ray tracer + sampling — depends only on core/ + numpy
+├── io/         # File I/O, scene builders, report generation — no GUI imports
+├── gui/        # PySide6 UI (3D viewport, heatmap, property editors, dialogs)
+├── data/       # Built-in angular distribution CSV profiles
+└── tests/      # pytest test suite (20 tests)
 ```
 
-`core/`, `sim/`, and `io/` have no Qt dependency — they can be used standalone or in scripts.
+**Key design rule**: `core/`, `sim/`, and `io/` never import PySide6, keeping the simulation engine headless and independently testable.
 
----
-
-## Roadmap
-
-- [ ] Export heatmap as PNG / KPI table as CSV
-- [ ] Quality presets (Quick / Standard / High)
-- [ ] KPI dashboard (uniformity, efficiency proxy)
-- [ ] Parameter sweep runner
-- [ ] IES / LDT angular distribution import
-- [ ] Numba / multiprocessing acceleration
-- [ ] Edge-lit / LGP simulation module
+| Component | Library |
+|-----------|---------|
+| GUI framework | PySide6 (Qt for Python) |
+| 3D viewport | pyqtgraph.opengl |
+| 2D heatmap / plots | pyqtgraph |
+| Numerics | NumPy |
+| JIT (optional) | Numba |
+| Testing | pytest |
 
 ---
 
 ## License
 
-*Add license here.*
+This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE.md).
+
+You are free to use, modify, and share this software for **noncommercial purposes only**. See the full license text for details.

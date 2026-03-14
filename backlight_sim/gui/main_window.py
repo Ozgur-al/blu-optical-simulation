@@ -43,6 +43,7 @@ from backlight_sim.gui.receiver_3d import Receiver3DWidget
 from backlight_sim.gui.spectral_data_panel import SpectralDataPanel
 from backlight_sim.io.angular_distributions import merge_default_profiles
 from backlight_sim.sim.accel import _NUMBA_AVAILABLE, warmup_jit_kernels
+from backlight_sim.gui.theme import ACCENT, TEXT_MUTED
 
 
 class SimulationThread(QThread):
@@ -132,6 +133,7 @@ class MainWindow(QMainWindow):
         self._viewport = Viewport3D()
         self._tree = ObjectTree()
         self._tree.setMinimumWidth(180)
+        self._tree.setAccessibleName("Scene object tree")
 
         self._heatmap = HeatmapPanel()
         self._heatmap.set_project(self._project)
@@ -169,10 +171,9 @@ class MainWindow(QMainWindow):
         # Registry: maps tab title -> widget (for opening/focusing existing tabs)
         self._tab_registry: dict[str, QWidget] = {}
 
-        # Default tabs: 3D View, Heatmap, and BSDF
+        # Default tabs: 3D View and Heatmap
         self._open_tab("3D View", self._viewport, closable=False)
         self._open_tab("Heatmap", self._heatmap, closable=False)
-        self._open_tab("BSDF", self._bsdf_panel)
 
         # Main splitter: left sidebar | center tabs
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -202,18 +203,24 @@ class MainWindow(QMainWindow):
         self._progress.setRange(0, 100)
         self._progress.setFixedWidth(200)
         self._progress.setVisible(False)
+        self._progress.setAccessibleName("Simulation progress")
         self._run_btn = QPushButton("Run")
+        self._run_btn.setAccessibleName("Run simulation")
+        self._run_btn.setToolTip("Run simulation (F5)")
         self._run_btn.clicked.connect(self._run_simulation)
         self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setAccessibleName("Cancel simulation")
+        self._cancel_btn.setToolTip("Cancel running simulation (Escape)")
         self._cancel_btn.clicked.connect(self._cancel_simulation)
         self._cancel_btn.setEnabled(False)
 
         # JIT status indicator
         self._jit_label = QLabel("JIT: Active" if _NUMBA_AVAILABLE else "JIT: Off")
+        self._jit_label.setAccessibleName("JIT acceleration status")
         if _NUMBA_AVAILABLE:
-            self._jit_label.setStyleSheet("color: #00bcd4; font-weight: bold; padding: 0 6px;")
+            self._jit_label.setStyleSheet(f"color: {ACCENT}; font-weight: bold; padding: 0 6px;")
         else:
-            self._jit_label.setStyleSheet("color: #888888; padding: 0 6px;")
+            self._jit_label.setStyleSheet(f"color: {TEXT_MUTED}; padding: 0 6px;")
 
         status.addWidget(self._jit_label)
         status.addPermanentWidget(self._run_btn)
@@ -278,23 +285,31 @@ class MainWindow(QMainWindow):
         fm = mb.addMenu("&File")
         self._new_action = fm.addAction("New Project", self._new_project)
         self._new_action.setShortcut(QKeySequence.StandardKey.New)
+        self._new_action.setStatusTip("Create a new empty project")
         self._open_action = fm.addAction("Open...", self._open_project)
         self._open_action.setShortcut(QKeySequence.StandardKey.Open)
+        self._open_action.setStatusTip("Open an existing project file")
         self._save_action = fm.addAction("Save", self._save_project)
         self._save_action.setShortcut(QKeySequence.StandardKey.Save)
+        self._save_action.setStatusTip("Save the current project")
         act = fm.addAction("Save As...", self._save_project_as)
         act.setShortcut(QKeySequence.StandardKey.SaveAs)
+        act.setStatusTip("Save the current project to a new file")
         fm.addSeparator()
-        fm.addAction("Clone as Variant...", self._clone_as_variant)
+        act = fm.addAction("Clone as Variant...", self._clone_as_variant)
+        act.setStatusTip("Save a copy of the current project as a named variant for comparison")
         fm.addSeparator()
         act = fm.addAction("Exit", self.close)
         act.setShortcut(QKeySequence.StandardKey.Quit)
+        act.setStatusTip("Exit the application")
 
         em = mb.addMenu("&Edit")
         undo_action = self._undo_stack.createUndoAction(self, "Undo")
         undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        undo_action.setStatusTip("Undo the last action")
         redo_action = self._undo_stack.createRedoAction(self, "Redo")
         redo_action.setShortcut(QKeySequence("Ctrl+Y"))
+        redo_action.setStatusTip("Redo the last undone action")
         em.addAction(undo_action)
         em.addAction(redo_action)
         self._undo_action = undo_action
@@ -316,7 +331,8 @@ class MainWindow(QMainWindow):
         am.addAction("Prism",              lambda: self._add_object("Solid Bodies:prism"))
 
         bm = mb.addMenu("&Build")
-        bm.addAction("Geometry Builder...", self._open_geometry_builder)
+        act = bm.addAction("Geometry Builder...", self._open_geometry_builder)
+        act.setStatusTip("Open the geometry builder to create cavity, LED grid, or LGP scene")
 
         self._variants_menu = mb.addMenu("&Variants")
         self._refresh_variants_menu()
@@ -325,13 +341,17 @@ class MainWindow(QMainWindow):
         self._refresh_history_menu()
 
         sm = mb.addMenu("&Simulation")
-        sm.addAction("Settings", self._show_settings)
+        act = sm.addAction("Settings", self._show_settings)
+        act.setStatusTip("Edit simulation settings (rays, bounces, convergence)")
         self._run_action = sm.addAction("Run", self._run_simulation)
         self._run_action.setShortcut(QKeySequence("F5"))
+        self._run_action.setStatusTip("Run the ray tracing simulation (F5 or Ctrl+R)")
         self._cancel_action = sm.addAction("Cancel", self._cancel_simulation)
         self._cancel_action.setShortcut(QKeySequence("Escape"))
+        self._cancel_action.setStatusTip("Cancel the running simulation")
         sm.addSeparator()
-        sm.addAction("Parameter Sweep...", self._open_parameter_sweep)
+        act = sm.addAction("Parameter Sweep...", self._open_parameter_sweep)
+        act.setStatusTip("Run a batch of simulations varying one or two parameters")
 
         vm = mb.addMenu("&View")
         self._view_mode_group = QActionGroup(self)
@@ -366,8 +386,10 @@ class MainWindow(QMainWindow):
             wm.addAction(title, lambda t=title, w=widget: self._open_tab(t, w))
 
         tm = mb.addMenu("&Tools")
-        tm.addAction("Measure...", self._open_measure_dialog)
-        tm.addAction("LED Layout Editor...", self._open_led_layout)
+        act = tm.addAction("Measure...", self._open_measure_dialog)
+        act.setStatusTip("Measure point-to-point distances between objects")
+        act = tm.addAction("LED Layout Editor...", self._open_led_layout)
+        act.setStatusTip("Open a 2D top-view editor to drag and reposition LEDs")
 
     def _setup_toolbar(self):
         """Create the main toolbar with icon+text action buttons."""
@@ -394,15 +416,16 @@ class MainWindow(QMainWindow):
         toolbar.addSeparator()
 
         # Quick-add buttons
-        for label, group in (
-            ("Add LED",      "Sources"),
-            ("Add Surface",  "Surfaces"),
-            ("Add Detector", "Detectors"),
-            ("Add SolidBox", "Solid Bodies:box"),
-            ("Add Cylinder", "Solid Bodies:cylinder"),
-            ("Add Prism",    "Solid Bodies:prism"),
+        for label, group, tip in (
+            ("Add LED",      "Sources",             "Add a new point light source"),
+            ("Add Surface",  "Surfaces",            "Add a new reflective/diffuse surface"),
+            ("Add Detector", "Detectors",           "Add a new planar detector"),
+            ("Add SolidBox", "Solid Bodies:box",    "Add a solid box (LGP slab)"),
+            ("Add Cylinder", "Solid Bodies:cylinder","Add a solid cylinder"),
+            ("Add Prism",    "Solid Bodies:prism",  "Add a solid prism"),
         ):
             act = QAction(label, self)
+            act.setToolTip(tip)
             act.triggered.connect(lambda _=False, g=group: self._add_object(g))
             toolbar.addAction(act)
 
@@ -419,15 +442,24 @@ class MainWindow(QMainWindow):
 
     def _setup_shortcuts(self):
         """Register application-wide keyboard shortcuts."""
-        # Ctrl+R: run simulation
+        # Ctrl+R: secondary shortcut for run simulation (F5 is on the menu action)
         QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(self._run_simulation)
-        # Delete: delete selected object
+        # Delete: delete selected object (with undo support)
         QShortcut(QKeySequence("Delete"), self).activated.connect(self._delete_selected)
+        # Ctrl+D: duplicate selected object
+        QShortcut(QKeySequence("Ctrl+D"), self).activated.connect(self._duplicate_selected)
 
     def _delete_selected(self):
         """Delete the currently selected object (Delete key shortcut)."""
         if self._selected_group and self._selected_name:
-            self._delete_object(self._selected_group, self._selected_name)
+            name = self._selected_name
+            self._delete_object(self._selected_group, name)
+            self.statusBar().showMessage(f"Deleted {name} (Ctrl+Z to undo)", 4000)
+
+    def _duplicate_selected(self):
+        """Duplicate the currently selected object (Ctrl+D shortcut)."""
+        if self._selected_group and self._selected_name:
+            self._duplicate_object(self._selected_group, self._selected_name)
 
     def _duplicate_object(self, group, name):
         """Duplicate the named object with an incremented name."""
@@ -819,6 +851,15 @@ class MainWindow(QMainWindow):
                 self._properties.show_source(src, distribution_names=list(self._project.angular_distributions.keys()))
         self._refresh_all()
 
+    def _unique_name(self, base: str, existing: set[str]) -> str:
+        """Return *base* if unique, otherwise append _2, _3, ... until unique."""
+        if base not in existing:
+            return base
+        i = 2
+        while f"{base}_{i}" in existing:
+            i += 1
+        return f"{base}_{i}"
+
     def _add_object(self, group):
         # Normalize legacy group key for counter lookup
         counter_key = group.split(":")[0] if ":" in group else group
@@ -829,30 +870,41 @@ class MainWindow(QMainWindow):
         default_mat = next(iter(self._project.materials), "pmma")
 
         if group == "Sources":
-            src = PointSource(f"Source_{n}", np.array([0.0, 0.0, 0.5]),
+            existing = {s.name for s in self._project.sources}
+            name = self._unique_name(f"Source_{n}", existing)
+            src = PointSource(name, np.array([0.0, 0.0, 0.5]),
                               flux=100.0, direction=np.array([0.0, 0.0, 1.0]),
                               distribution="lambertian")
             self._undo_stack.push(AddSourceCommand(self._project, src, self._refresh_all))
         elif group == "Surfaces":
-            surf = Rectangle.axis_aligned(f"Surface_{n}", [0, 0, 0], (10, 10), 2, 1.0)
+            existing = {s.name for s in self._project.surfaces}
+            name = self._unique_name(f"Surface_{n}", existing)
+            surf = Rectangle.axis_aligned(name, [0, 0, 0], (10, 10), 2, 1.0)
             self._undo_stack.push(AddSurfaceCommand(self._project, surf, self._refresh_all))
         elif group == "Detectors":
-            det = DetectorSurface.axis_aligned(f"Detector_{n}", [0, 0, 5], (10, 10), 2, 1.0)
+            existing = {d.name for d in self._project.detectors}
+            name = self._unique_name(f"Detector_{n}", existing)
+            det = DetectorSurface.axis_aligned(name, [0, 0, 5], (10, 10), 2, 1.0)
             self._undo_stack.push(AddDetectorCommand(self._project, det, self._refresh_all))
         elif group == "Materials":
-            mn = f"Material_{n}"
+            existing = set(self._project.materials.keys())
+            mn = self._unique_name(f"Material_{n}", existing)
             mat = Material(mn)
             self._undo_stack.push(AddMaterialCommand(self._project, mn, mat, self._refresh_all))
         elif group == "Sphere Detectors":
-            sd = SphereDetector(f"SphereDetector_{n}", np.array([0.0, 0.0, 0.0]), radius=20.0)
+            existing = {d.name for d in self._project.sphere_detectors}
+            name = self._unique_name(f"SphereDetector_{n}", existing)
+            sd = SphereDetector(name, np.array([0.0, 0.0, 0.0]), radius=20.0)
             self._undo_stack.push(AddSphereDetectorCommand(self._project, sd, self._refresh_all))
         elif group == "Optical Properties":
             from backlight_sim.core.materials import OpticalProperties
-            on = f"OptProp_{n}"
+            existing = set(self._project.optical_properties.keys())
+            on = self._unique_name(f"OptProp_{n}", existing)
             op = OpticalProperties(on)
             self._undo_stack.push(AddOpticalPropertiesCommand(self._project, on, op, self._refresh_all))
         elif group in ("Solid Bodies", "Solid Bodies:box"):
-            box_name = f"Box_{n}"
+            existing = {b.name for b in self._project.solid_bodies}
+            box_name = self._unique_name(f"Box_{n}", existing)
             box = SolidBox(
                 name=box_name,
                 center=np.array([0.0, 0.0, 0.0]),
@@ -863,8 +915,10 @@ class MainWindow(QMainWindow):
         elif group == "Solid Bodies:cylinder":
             if not hasattr(self._project, "solid_cylinders"):
                 self._project.solid_cylinders = []
+            existing = {c.name for c in self._project.solid_cylinders}
+            name = self._unique_name(f"Cylinder_{n}", existing)
             cyl = SolidCylinder(
-                name=f"Cylinder_{n}",
+                name=name,
                 center=np.array([0.0, 0.0, 0.0]),
                 axis=np.array([0.0, 0.0, 1.0]),
                 radius=5.0,
@@ -875,8 +929,10 @@ class MainWindow(QMainWindow):
         elif group == "Solid Bodies:prism":
             if not hasattr(self._project, "solid_prisms"):
                 self._project.solid_prisms = []
+            existing = {p.name for p in self._project.solid_prisms}
+            name = self._unique_name(f"Prism_{n}", existing)
             prism = SolidPrism(
-                name=f"Prism_{n}",
+                name=name,
                 center=np.array([0.0, 0.0, 0.0]),
                 axis=np.array([0.0, 0.0, 1.0]),
                 n_sides=6,
@@ -1182,8 +1238,8 @@ class MainWindow(QMainWindow):
                     self._viewport.refresh(self._project)
                     try:
                         self._viewport._draw_farfield_lobe(sd, sd_result)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        self._log(f"Far-field lobe rendering failed: {exc}")
                     showed_farfield = True
                     break
 

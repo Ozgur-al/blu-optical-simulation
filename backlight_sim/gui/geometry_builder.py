@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -27,6 +28,7 @@ from backlight_sim.core.materials import Material
 from backlight_sim.core.project_model import Project
 
 from backlight_sim.io.geometry_builder import build_cavity, build_led_grid, build_optical_stack, build_lgp_scene
+from backlight_sim.gui.theme import TEXT_MUTED, KPI_GREEN
 
 
 def _dspin(val=0.0, lo=0.0, hi=9999.0, decimals=1, step=1.0):
@@ -54,6 +56,12 @@ class GeometryBuilderDialog(QDialog):
         self.setMinimumWidth(480)
         self._project = project
         self._built_lgp = False
+
+        # Debounce timer for LED count preview (coalesces rapid spinbox edits)
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(80)
+        self._preview_timer.timeout.connect(self._preview_count)
 
         root = QVBoxLayout(self)
 
@@ -134,30 +142,30 @@ class GeometryBuilderDialog(QDialog):
         lf = QFormLayout(led)
         self._use_count = QCheckBox("Specify number of LEDs (auto pitch)")
         self._use_count.setChecked(False)
-        self._use_count.toggled.connect(self._preview_count)
+        self._use_count.toggled.connect(self._schedule_preview)
         lf.addRow("", self._use_count)
 
         self._count_x = _ispin(4, 1, 999)
         self._count_y = _ispin(2, 1, 999)
-        self._count_x.valueChanged.connect(self._preview_count)
-        self._count_y.valueChanged.connect(self._preview_count)
+        self._count_x.valueChanged.connect(self._schedule_preview)
+        self._count_y.valueChanged.connect(self._schedule_preview)
         lf.addRow("Count X:", self._count_x)
         lf.addRow("Count Y:", self._count_y)
 
         self._pitch_x = _dspin(20.0, 0.1, 1000.0, 1, 1.0)
         self._pitch_y = _dspin(20.0, 0.1, 1000.0, 1, 1.0)
-        self._pitch_x.valueChanged.connect(self._preview_count)
-        self._pitch_y.valueChanged.connect(self._preview_count)
+        self._pitch_x.valueChanged.connect(self._schedule_preview)
+        self._pitch_y.valueChanged.connect(self._schedule_preview)
         lf.addRow("Pitch X:", self._pitch_x)
         lf.addRow("Pitch Y:", self._pitch_y)
         self._pitch_lbl = QLabel("(or set Count X/Y and check 'Specify number of LEDs' to auto-calculate)")
-        self._pitch_lbl.setStyleSheet("color: gray; font-size: 9px;")
+        self._pitch_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 9px;")
         lf.addRow("", self._pitch_lbl)
 
         self._edge_x = _dspin(10.0, 0.0, 500.0, 1, 1.0)
         self._edge_y = _dspin(10.0, 0.0, 500.0, 1, 1.0)
-        self._edge_x.valueChanged.connect(self._preview_count)
-        self._edge_y.valueChanged.connect(self._preview_count)
+        self._edge_x.valueChanged.connect(self._schedule_preview)
+        self._edge_y.valueChanged.connect(self._schedule_preview)
         lf.addRow("Edge Offset X:", self._edge_x)
         lf.addRow("Edge Offset Y:", self._edge_y)
         self._led_flux = _dspin(100.0, 0.0, 1e6, 1, 10.0)
@@ -244,7 +252,7 @@ class GeometryBuilderDialog(QDialog):
         root.addWidget(spacing)
 
         self._lgp_status_lbl = QLabel("")
-        self._lgp_status_lbl.setStyleSheet("color: green; font-size: 10px;")
+        self._lgp_status_lbl.setStyleSheet(f"color: {KPI_GREEN}; font-size: 10px;")
         root.addWidget(self._lgp_status_lbl)
 
         self._lgp_build_btn = QPushButton("Build LGP Scene")
@@ -264,19 +272,23 @@ class GeometryBuilderDialog(QDialog):
             QMessageBox.warning(self, "No Coupling Edge", "Select at least one coupling edge.")
             return
 
-        build_lgp_scene(
-            self._project,
-            width=self._lgp_w.value(),
-            height=self._lgp_h.value(),
-            thickness=self._lgp_t.value(),
-            coupling_edges=coupling_edges,
-            led_count=self._lgp_led_count.value(),
-            led_flux=self._lgp_led_flux.value(),
-            led_distribution=self._lgp_led_dist.currentText(),
-            detector_gap=self._lgp_det_gap.value(),
-            reflector_gap=self._lgp_ref_gap.value(),
-            refractive_index=self._lgp_ri.value(),
-        )
+        try:
+            build_lgp_scene(
+                self._project,
+                width=self._lgp_w.value(),
+                height=self._lgp_h.value(),
+                thickness=self._lgp_t.value(),
+                coupling_edges=coupling_edges,
+                led_count=self._lgp_led_count.value(),
+                led_flux=self._lgp_led_flux.value(),
+                led_distribution=self._lgp_led_dist.currentText(),
+                detector_gap=self._lgp_det_gap.value(),
+                reflector_gap=self._lgp_ref_gap.value(),
+                refractive_index=self._lgp_ri.value(),
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "LGP Build Error", str(exc))
+            return
 
         n_leds = len(self._project.sources)
         n_edges = len(coupling_edges)
@@ -303,6 +315,10 @@ class GeometryBuilderDialog(QDialog):
         self._led_dist.addItems(unique)
         if current and current in unique:
             self._led_dist.setCurrentText(current)
+
+    def _schedule_preview(self, _=None):
+        """Debounce rapid spinbox edits — delay _preview_count by 80 ms."""
+        self._preview_timer.start()
 
     def _preview_count(self):
         from backlight_sim.io.geometry_builder import _grid_positions
@@ -395,8 +411,11 @@ class GeometryBuilderDialog(QDialog):
 
         if self._add_det.isChecked():
             self._project.detectors.clear()
-            top_w = w + 2 * d * float(np.tan(np.radians(wall_x)))
-            top_h = h + 2 * d * float(np.tan(np.radians(wall_y)))
+            # Clamp wall angles to < 89° to avoid near-infinite detector sizes
+            safe_wx = min(wall_x, 89.0)
+            safe_wy = min(wall_y, 89.0)
+            top_w = w + 2 * d * float(np.tan(np.radians(safe_wx)))
+            top_h = h + 2 * d * float(np.tan(np.radians(safe_wy)))
             self._project.detectors.append(
                 DetectorSurface.axis_aligned(
                     "Output Plane",

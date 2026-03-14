@@ -14,6 +14,21 @@ class PointSource:
     direction: np.ndarray = None  # (3,) forward direction for lambertian
     distribution: str = "isotropic"  # "isotropic" or "lambertian"
     enabled: bool = True  # when False the tracer skips this source
+    flux_tolerance: float = 0.0  # ±% bin tolerance (e.g. 10 = ±10%)
+    current_mA: float = 0.0  # drive current in mA (0 = use flux directly)
+    flux_per_mA: float = 0.0  # lm/mA scaling (0 = use flux directly)
+    thermal_derate: float = 1.0  # thermal derating factor 0-1 (1 = no derating)
+    color_rgb: tuple[float, float, float] = (1.0, 1.0, 1.0)  # LED color as (R, G, B) weights 0-1
+    # Spectral power distribution: "white" | "warm_white" | "cool_white" | "mono_<nm>" | custom key
+    spd: str = "white"
+
+    @property
+    def effective_flux(self) -> float:
+        """Compute flux after current scaling and thermal derating."""
+        base = self.flux
+        if self.current_mA > 0 and self.flux_per_mA > 0:
+            base = self.current_mA * self.flux_per_mA
+        return base * self.thermal_derate
 
     def __post_init__(self):
         self.position = np.asarray(self.position, dtype=float)

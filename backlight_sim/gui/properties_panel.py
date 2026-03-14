@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from backlight_sim.gui.widgets.collapsible_section import CollapsibleSection
+from backlight_sim.gui.theme import TEXT_MUTED
 
 from backlight_sim.core.detectors import DetectorSurface, SphereDetector
 from backlight_sim.core.geometry import Rectangle
@@ -120,7 +121,7 @@ class PropertiesPanel(QStackedWidget):
         self.setMinimumWidth(280)
 
         empty = QLabel("Select an object to edit")
-        empty.setStyleSheet("color: gray; padding: 8px;")
+        empty.setStyleSheet(f"color: {TEXT_MUTED}; padding: 8px;")
         self.addWidget(empty)
 
         for form_cls in (SourceForm, SurfaceForm, MaterialForm, OpticalPropertiesForm,
@@ -265,7 +266,7 @@ class SourceForm(QWidget):
         peak_row.addWidget(self._peak_spin)
         peak_row.addWidget(self._peak_set_btn)
         self._peak_lbl = QLabel("")
-        self._peak_lbl.setStyleSheet("color: gray; font-size: 10px;")
+        self._peak_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
         fl_emission.addRow("Peak cd:", peak_row)
 
         self._dist = QComboBox()
@@ -332,6 +333,18 @@ class SourceForm(QWidget):
         self._name.editingFinished.connect(self._apply)
         self._enabled.toggled.connect(self._apply)
 
+        # Explicit tab order for keyboard navigation
+        self.setTabOrder(self._name, self._enabled)
+        self.setTabOrder(self._enabled, self._px)
+        self.setTabOrder(self._px, self._py)
+        self.setTabOrder(self._py, self._pz)
+        self.setTabOrder(self._pz, self._flux)
+        self.setTabOrder(self._flux, self._dist)
+        self.setTabOrder(self._dist, self._tolerance)
+        self.setTabOrder(self._tolerance, self._current)
+        self.setTabOrder(self._current, self._flux_per_mA)
+        self.setTabOrder(self._flux_per_mA, self._thermal)
+
     def load(self, src, distribution_names=None):
         self._loading = True
         self._src = src
@@ -382,12 +395,10 @@ class SourceForm(QWidget):
     # ── peak intensity helpers ─────────────────────────────────────────
 
     def _flux_to_peak(self, flux: float, dist: str) -> float:
-        import math
-        return flux / (math.pi if "lambertian" in dist else 4 * math.pi)
+        return flux / (np.pi if "lambertian" in dist else 4 * np.pi)
 
     def _peak_to_flux(self, peak: float, dist: str) -> float:
-        import math
-        return peak * (math.pi if "lambertian" in dist else 4 * math.pi)
+        return peak * (np.pi if "lambertian" in dist else 4 * np.pi)
 
     def _update_peak_display(self):
         flux = self._flux.value()
@@ -489,7 +500,7 @@ class SurfaceForm(QWidget):
         self._ry = _dspin(-180.0, 180.0, 2, 0.0, 1.0)
         self._rz = _dspin(-180.0, 180.0, 2, 0.0, 1.0)
         self._normal_lbl = QLabel("normal: ?")
-        self._normal_lbl.setStyleSheet("color: gray; font-size: 11px;")
+        self._normal_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
         fl_orient.addRow("Face direction:", self._face)
         fl_orient.addRow("Rotate X (deg):", self._rx)
         fl_orient.addRow("Rotate Y (deg):", self._ry)
@@ -517,6 +528,19 @@ class SurfaceForm(QWidget):
         self._mat.currentIndexChanged.connect(self._apply)
         self._opt_prop.currentIndexChanged.connect(self._apply)
         self._name.editingFinished.connect(self._apply)
+
+        # Explicit tab order for keyboard navigation
+        self.setTabOrder(self._name, self._mat)
+        self.setTabOrder(self._mat, self._opt_prop)
+        self.setTabOrder(self._opt_prop, self._cx)
+        self.setTabOrder(self._cx, self._cy)
+        self.setTabOrder(self._cy, self._cz)
+        self.setTabOrder(self._cz, self._face)
+        self.setTabOrder(self._face, self._rx)
+        self.setTabOrder(self._rx, self._ry)
+        self.setTabOrder(self._ry, self._rz)
+        self.setTabOrder(self._rz, self._sw)
+        self.setTabOrder(self._sw, self._sh)
 
     def load(self, surf: Rectangle, mat_names: list[str], opt_prop_names: list[str] | None = None):
         self._loading = True
@@ -1153,6 +1177,19 @@ class DetectorForm(QWidget):
         self._ry_res.valueChanged.connect(self._apply)
         self._name.editingFinished.connect(self._apply)
 
+        # Explicit tab order for keyboard navigation
+        self.setTabOrder(self._name, self._cx)
+        self.setTabOrder(self._cx, self._cy)
+        self.setTabOrder(self._cy, self._cz)
+        self.setTabOrder(self._cz, self._face)
+        self.setTabOrder(self._face, self._rx)
+        self.setTabOrder(self._rx, self._ry)
+        self.setTabOrder(self._ry, self._rz)
+        self.setTabOrder(self._rz, self._sw)
+        self.setTabOrder(self._sw, self._sh)
+        self.setTabOrder(self._sh, self._rx_res)
+        self.setTabOrder(self._rx_res, self._ry_res)
+
     def load(self, det: DetectorSurface):
         self._loading = True
         self._det = det
@@ -1412,6 +1449,19 @@ class SettingsForm(QWidget):
         self._adaptive.toggled.connect(self._on_adaptive_toggled)
         self._cv_target.valueChanged.connect(self._apply)
         self._check_interval.valueChanged.connect(self._apply)
+
+        # Explicit tab order for keyboard navigation
+        self.setTabOrder(self._rays, self._bounce)
+        self.setTabOrder(self._bounce, self._thresh)
+        self.setTabOrder(self._thresh, self._adaptive)
+        self.setTabOrder(self._adaptive, self._cv_target)
+        self.setTabOrder(self._cv_target, self._check_interval)
+        self.setTabOrder(self._check_interval, self._seed)
+        self.setTabOrder(self._seed, self._rec)
+        self.setTabOrder(self._rec, self._unit)
+        self.setTabOrder(self._unit, self._flux_unit)
+        self.setTabOrder(self._flux_unit, self._angle_unit)
+        self.setTabOrder(self._angle_unit, self._mp)
 
     def load(self, s):
         self._loading = True

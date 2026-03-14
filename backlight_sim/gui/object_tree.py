@@ -112,6 +112,9 @@ class ObjectTree(QTreeWidget):
             "Sphere Detectors": [d.name for d in project.sphere_detectors],
         }
 
+        # Pre-build disabled-source lookup to avoid O(n²) scan
+        disabled_sources = {s.name for s in project.sources if not s.enabled}
+
         for group_name, names in group_data.items():
             parent = self._group_items[group_name]
             parent.takeChildren()
@@ -119,11 +122,9 @@ class ObjectTree(QTreeWidget):
             for name in names:
                 child = QTreeWidgetItem(parent, [name])
                 child.setIcon(0, icon)
-                if group_name == "Sources":
-                    src = next((s for s in project.sources if s.name == name), None)
-                    if src and not src.enabled:
-                        child.setForeground(0, QColor(150, 150, 150))
-                        child.setToolTip(0, "Disabled")
+                if group_name == "Sources" and name in disabled_sources:
+                    child.setForeground(0, QColor(150, 150, 150))
+                    child.setToolTip(0, "Disabled")
 
         # Solid Bodies: parent/child tree (box -> faces, cylinder -> caps+side, prism -> caps+sides)
         sb_group = self._group_items["Solid Bodies"]

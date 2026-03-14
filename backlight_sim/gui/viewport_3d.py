@@ -6,6 +6,8 @@ import numpy as np
 import pyqtgraph.opengl as gl
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from backlight_sim.gui.theme import GL_BG
+
 
 class Viewport3D(QWidget):
     def __init__(self, parent=None):
@@ -16,7 +18,7 @@ class Viewport3D(QWidget):
         self._view = gl.GLViewWidget()
         self._view.setCameraPosition(distance=180, elevation=30, azimuth=45)
         # GLViewWidget uses OpenGL rendering and ignores QSS — set background explicitly
-        self._view.setBackgroundColor(30, 30, 30, 255)
+        self._view.setBackgroundColor(*GL_BG)
         layout.addWidget(self._view)
 
         grid = gl.GLGridItem()
@@ -283,7 +285,6 @@ class Viewport3D(QWidget):
 
     def _draw_solid_prism(self, prism, color, edge_color, selected_face=None):
         """Render a SolidPrism as a faceted mesh or wireframe."""
-        import math
         axis = np.asarray(prism.axis, float)
         ref = np.array([1.0, 0.0, 0.0])
         if abs(np.dot(axis, ref)) > 0.9:
@@ -415,27 +416,9 @@ class Viewport3D(QWidget):
                 faces_list.append([v00, v11, v10])
         faces = np.array(faces_list, dtype=int)
 
-        # Color each face by normalized candela of the first vertex
-        def _cool_warm(t):
-            """Map t in [0,1] to RGBA using a cool-to-warm colormap."""
-            # Keypoints: blue(0) -> cyan(0.25) -> green(0.5) -> yellow(0.75) -> red(1)
-            r_keys = np.array([0.2, 0.2, 0.2, 1.0, 1.0])
-            g_keys = np.array([0.2, 0.7, 1.0, 1.0, 0.2])
-            b_keys = np.array([1.0, 1.0, 0.2, 0.2, 0.2])
-            xp = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
-            r_c = np.interp(t, xp, r_keys)
-            g_c = np.interp(t, xp, g_keys)
-            b_c = np.interp(t, xp, b_keys)
-            a_c = np.full_like(t, 0.8)
-            return np.stack([r_c, g_c, b_c, a_c], axis=-1)
-
-        # Per-face color from average of three vertex t-values
-        n_faces = len(faces)
-        face_t = np.zeros(n_faces, dtype=float)
+        # Per-face color from average of three vertex t-values (vectorized)
         norm_flat = norm_grid.reshape(-1)
-        for fi in range(n_faces):
-            v0, v1, v2 = faces[fi]
-            face_t[fi] = (norm_flat[v0] + norm_flat[v1] + norm_flat[v2]) / 3.0
+        face_t = (norm_flat[faces[:, 0]] + norm_flat[faces[:, 1]] + norm_flat[faces[:, 2]]) / 3.0
         # Gamma compression to spread color range across the full cool-to-warm map
         face_t = np.power(np.clip(face_t, 0.0, 1.0), 0.35)
         colors = _cool_warm(face_t)
@@ -456,8 +439,8 @@ class Viewport3D(QWidget):
         if self._farfield_lobe_item is not None:
             try:
                 self._view.removeItem(self._farfield_lobe_item)
-            except Exception:
-                pass
+            except RuntimeError:
+                pass  # item already removed from scene
             self._farfield_lobe_item = None
 
     def _draw_rect(self, center, u_axis, v_axis, size, base_rgb, is_detector=False):
@@ -552,6 +535,22 @@ def _material_color(mat) -> tuple[float, float, float]:
     if mat is None or mat.color is None:
         return (0.55, 0.65, 1.0)
     return tuple(float(c) for c in mat.color[:3])
+
+
+def _cool_warm(t):
+    """Map t in [0,1] to RGBA using a cool-to-warm colormap.
+
+    Keypoints: blue(0) -> cyan(0.25) -> green(0.5) -> yellow(0.75) -> red(1).
+    """
+    r_keys = np.array([0.2, 0.2, 0.2, 1.0, 1.0])
+    g_keys = np.array([0.2, 0.7, 1.0, 1.0, 0.2])
+    b_keys = np.array([1.0, 1.0, 0.2, 0.2, 0.2])
+    xp = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+    r_c = np.interp(t, xp, r_keys)
+    g_c = np.interp(t, xp, g_keys)
+    b_c = np.interp(t, xp, b_keys)
+    a_c = np.full_like(t, 0.8)
+    return np.stack([r_c, g_c, b_c, a_c], axis=-1)
 
 
 def _rect_loop(center, u_axis, v_axis, size) -> np.ndarray:

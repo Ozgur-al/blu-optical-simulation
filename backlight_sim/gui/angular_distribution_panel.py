@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from backlight_sim.io.angular_distributions import load_profile_csv, merge_default_profiles
+from backlight_sim.gui.theme import TEXT_MUTED, GL_BG
 
 
 class AngularDistributionPanel(QWidget):
@@ -37,21 +38,26 @@ class AngularDistributionPanel(QWidget):
         top = QHBoxLayout()
         top.addWidget(QLabel("Distribution:"))
         self._selector = QComboBox()
+        self._selector.setAccessibleName("Angular distribution selector")
+        self._selector.setToolTip("Select an angular distribution profile to view or edit")
         self._selector.currentTextChanged.connect(self._on_selection_changed)
         top.addWidget(self._selector, 1)
         self._import_btn = QPushButton("Import CSV/TXT")
+        self._import_btn.setToolTip("Import a distribution from CSV, TXT, IES, or LDT file")
         self._import_btn.clicked.connect(self._import_distribution)
         top.addWidget(self._import_btn)
         self._export_btn = QPushButton("Export CSV")
+        self._export_btn.setToolTip("Export the selected distribution to a CSV file")
         self._export_btn.clicked.connect(self._export_distribution)
         top.addWidget(self._export_btn)
         self._delete_btn = QPushButton("Delete")
+        self._delete_btn.setToolTip("Delete the selected distribution")
         self._delete_btn.clicked.connect(self._delete_distribution)
         top.addWidget(self._delete_btn)
         layout.addLayout(top)
 
         self._meta = QLabel("No distribution loaded.")
-        self._meta.setStyleSheet("color: gray;")
+        self._meta.setStyleSheet(f"color: {TEXT_MUTED};")
         layout.addWidget(self._meta)
 
         # View mode selector
@@ -93,7 +99,7 @@ class AngularDistributionPanel(QWidget):
         try:
             import pyqtgraph.opengl as gl
             self._lobe_view = gl.GLViewWidget()
-            self._lobe_view.setBackgroundColor(30, 30, 40)
+            self._lobe_view.setBackgroundColor(*GL_BG)
             self._lobe_view.setCameraPosition(distance=3, elevation=30, azimuth=45)
             self._plot_stack.addWidget(self._lobe_view)
             self._has_gl = True

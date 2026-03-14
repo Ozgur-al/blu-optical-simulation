@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from backlight_sim.gui.theme import TEXT_MUTED
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -82,6 +83,16 @@ class MeasurementDialog(QDialog):
 
         for w in (self._ax, self._ay, self._az, self._bx, self._by, self._bz):
             w.valueChanged.connect(self._recompute)
+
+        # Explicit tab order: A coords → use-A button → B coords → use-B button
+        self.setTabOrder(self._ax, self._ay)
+        self.setTabOrder(self._ay, self._az)
+        self.setTabOrder(self._az, self._use_a)
+        self.setTabOrder(self._use_a, self._bx)
+        self.setTabOrder(self._bx, self._by)
+        self.setTabOrder(self._by, self._bz)
+        self.setTabOrder(self._bz, self._use_b)
+
         self._recompute()
 
     def _selected_point(self):

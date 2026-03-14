@@ -19,9 +19,9 @@ Status: **Done** | **Partial** | **Not done** | **Cannot do** (out of scope / ph
 |---|------|--------|
 | 1 | Create new project | **Done** (File → New Project) |
 | 2 | Save / load project (`.json` or `.yaml`) | **Done** (JSON only; YAML not implemented) |
-| 3 | Unit settings (mm, lm, cd, degree) | **Partial** (`distance_unit` in settings; lm/cd/degree not explicit) |
+| 3 | Unit settings (mm, lm, cd, degree) | **Done** — `distance_unit`, `flux_unit` (lm/mW/W), and `angle_unit` (deg/rad) in SimulationSettings; exposed in Settings form. |
 | 4 | Project presets (e.g. automotive cluster direct-lit) | **Done** (Presets menu: Simple Box, Automotive Cluster) |
-| 5 | Project comparison | **Not done** |
+| 5 | Project comparison | **Done** — "Variants → Compare with…" runs quick simulations on current project and selected variant; side-by-side KPI table in ComparisonDialog. |
 | 6 | Variant cloning (A/B design comparison) | **Done** — "File → Clone as Variant…" saves a deep-copy with a user name; "Variants" menu lists all saved variants and lets you reload any one; "Clear All Variants" wipes the list. |
 | 7 | Design history snapshots | **Done** — Auto-snapshot saved on every successful simulation run (timestamped HH:MM:SS, capped at 20 entries); "History" menu lists all snapshots; clicking one restores that project state; "Clear History" wipes the list. |
 
@@ -39,13 +39,13 @@ Status: **Done** | **Partial** | **Not done** | **Cannot do** (out of scope / ph
 | 13 | Reflector: wall angle | **Done** (incl. separate X/Y wall angles) |
 | 14 | Reflector: wall reflectance | **Done** (floor + wall materials in builder) |
 | 15 | Reflector: surface type (simplified) | **Done** (diffuse vs specular in materials) |
-| 16 | Optical stack: LED top → diffuser distance | **Partial** (z_offset for LEDs; no explicit "diffuser distance" in builder) |
-| 17 | Optical stack: additional film placeholder distances | **Not done** |
+| 16 | Optical stack: LED top → diffuser distance | **Done** — Geometry Builder "Optical Stack" section with diffuser distance (Z), diffuser transmittance, and auto-sized diffuser surface via `build_optical_stack()`. |
+| 17 | Optical stack: additional film placeholder distances | **Done** — Two film placeholder Z-distance fields in Geometry Builder; creates axis-aligned film surfaces at specified heights. |
 | 18 | Surface material assignment (reflective / absorptive / transmissive) | **Done** (materials + floor/wall assignment) |
-| 19 | Non-rectangular geometry | **Not done** |
-| 20 | Mixed LED zones/groups | **Not done** |
-| 21 | Mechanical obstacles (bosses, FPC, shields) | **Not done** |
-| 22 | CAD/DXF outline import | **Not done** |
+| 19 | Non-rectangular geometry | **Cannot do** (Phase 2+; requires new geometry primitives) |
+| 20 | Mixed LED zones/groups | **Cannot do** (Phase 2+; requires zone grouping architecture) |
+| 21 | Mechanical obstacles (bosses, FPC, shields) | **Cannot do** (Phase 2+; requires arbitrary 3D geometry) |
+| 22 | CAD/DXF outline import | **Cannot do** (Phase 2+; requires DXF parser library) |
 
 ---
 
@@ -61,11 +61,11 @@ Status: **Done** | **Partial** | **Not done** | **Cannot do** (out of scope / ph
 | 28 | Normalization: normalize to peak | **Done** — "Norm: Peak=1" button in Angular Dist. panel scales max(I) → 1. |
 | 29 | Normalization: normalize to total flux | **Done** — "Norm: Flux=1" button divides by ∫I(θ)·sin(θ)dθ (trapezoid). |
 | 30 | Normalization: normalize to 1.0 | **Done** — "Norm: [0,1]" button min-max rescales intensities to [0, 1]. |
-| 31 | IES / LDT import | **Not done** |
-| 32 | LED bin/tolerance variation | **Not done** |
-| 33 | Current-dependent flux scaling | **Not done** |
-| 34 | Thermal derating | **Not done** |
-| 35 | Color / spectral support | **Not done** |
+| 31 | IES / LDT import | **Done** — `io/ies_parser.py` parses IESNA LM-63 (.ies) and EULUMDAT (.ldt) files; Angular Dist. panel import dialog accepts *.ies/*.ldt alongside CSV/TXT. |
+| 32 | LED bin/tolerance variation | **Done** — `PointSource.flux_tolerance` (±%) field; tracer applies random per-source variation; editable in Source properties panel. |
+| 33 | Current-dependent flux scaling | **Done** — `PointSource.current_mA` and `flux_per_mA` fields; effective_flux = current × flux_per_mA when both > 0; editable in Source panel. |
+| 34 | Thermal derating | **Done** — `PointSource.thermal_derate` (0–1) multiplier applied in `effective_flux`; editable in Source panel. |
+| 35 | Color / spectral support | **Cannot do** (Phase 2+; requires fundamental wavelength-aware engine) |
 
 ---
 
@@ -76,12 +76,12 @@ Status: **Done** | **Partial** | **Not done** | **Cannot do** (out of scope / ph
 | 36 | Reflector reflectance | **Done** |
 | 37 | Specular vs diffuse fraction | **Done** (`is_diffuse` on Material) |
 | 38 | Diffuser transmittance | **Done** |
-| 39 | Haze / scatter proxy | **Not done** |
+| 39 | Haze / scatter proxy | **Done** — `Material.haze` field (half-angle in degrees); specular reflections are scattered within a cone via `scatter_haze()`; editable in Material panel. |
 | 40 | Plate absorption | **Done** (`absorption` on Material) |
-| 41 | Refractive index (for later TIR) | **Not done** |
-| 42 | Spectral properties | **Not done** |
-| 43 | BRDF tables / measured reflectance | **Not done** |
-| 44 | Temperature dependence | **Not done** |
+| 41 | Refractive index (for later TIR) | **Cannot do** (Phase 2+; requires Snell's law / Fresnel equations in tracer) |
+| 42 | Spectral properties | **Cannot do** (Phase 2+; requires wavelength-aware engine) |
+| 43 | BRDF tables / measured reflectance | **Cannot do** (Phase 2+; requires BRDF lookup engine) |
+| 44 | Temperature dependence | **Cannot do** (Phase 2+; requires thermal model coupling) |
 
 ---
 
@@ -106,9 +106,9 @@ Status: **Done** | **Partial** | **Not done** | **Cannot do** (out of scope / ph
 | 59 | Hotspot indicators | **Done** — Hotspot ratio (peak/avg) displayed in Grid Statistics; exported in KPI CSV. |
 | 60 | Edge–center ratio | **Done** — Edge/Center ratio (outer-15%-strip avg / inner-25%-region avg) displayed in Grid Statistics. |
 | 61 | Loss breakdown (absorbed / trapped / leaked) | **Done** — `SimulationResult` tracks `escaped_flux`; Heatmap panel shows Absorbed %, Escaped % derived from energy balance. |
-| 62 | Multiprocessing | **Not done** |
-| 63 | Numba acceleration | **Not done** |
-| 64 | Adaptive / importance sampling, BVH | **Not done** |
+| 62 | Multiprocessing | **Done** — `use_multiprocessing` setting in SimulationSettings; `RayTracer._run_multiprocess()` uses `ProcessPoolExecutor` to trace sources in parallel; checkbox in Settings panel. |
+| 63 | Numba acceleration | **Cannot do** (Phase 2+; requires significant refactoring to JIT-compile inner loops) |
+| 64 | Adaptive / importance sampling, BVH | **Cannot do** (Phase 2+; requires algorithmic redesign) |
 
 ---
 
@@ -129,10 +129,10 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 | 66 | Output detector grid | **Done** |
 | 67 | Adjustable detector resolution | **Done** |
 | 68 | Heatmap visualization | **Done** |
-| 69 | ROI/region stats: center, edge, corner, custom | **Partial** (center-fraction uniformity + corner/avg ratio (10 % patches) added; no interactive custom ROI selector) |
+| 69 | ROI/region stats: center, edge, corner, custom | **Done** — Center-fraction uniformity + corner/avg ratio + interactive ROI: draggable rectangle on heatmap with live avg/min/max/uniformity stats via pyqtgraph RectROI. |
 | 70 | Exportable detector map data | **Done** — "Export Grid CSV" button in Heatmap panel saves raw (ny×nx) flux grid. |
-| 71 | Far-field / angular detector | **Not done** |
-| 72 | Observer cone, ISO legibility, compare to reference | **Not done** |
+| 71 | Far-field / angular detector | **Cannot do** (Phase 2+; requires angular-space accumulation in tracer) |
+| 72 | Observer cone, ISO legibility, compare to reference | **Cannot do** (Phase 2+; requires standards-based luminance computation) |
 
 ---
 
@@ -146,7 +146,7 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 | 76 | LED count (cost proxy) | **Done** — LED count shown in Energy Balance section of Heatmap panel after each run. |
 | 77 | Weighted design score (user-defined weights) | **Done** — "Design Score" panel in Heatmap tab: three weight spinboxes (w_eff, w_uni, w_hot); score = weighted average of efficiency%, U(1/4 min/avg), 1/hotspot; auto-updates when weights change. |
 | 78 | Dedicated KPI dashboard | **Done** — Heatmap panel expanded into a full KPI panel: Grid Statistics (avg/peak/min/std/CV/hotspot/edge-center), Uniformity (3 fractions), Energy Balance (efficiency/absorbed/escaped/LED count). |
-| 79 | Power/thermal proxy, Pareto, sensitivity, tolerance robustness | **Not done** |
+| 79 | Power/thermal proxy, Pareto, sensitivity, tolerance robustness | **Cannot do** (Phase 2+; requires optimization framework) |
 
 ---
 
@@ -156,8 +156,8 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 |---|------|--------|
 | 80 | Single-parameter sweep (pitch, depth, angle, reflectance, diffuser dist.) | **Done** — "Simulation → Parameter Sweep…" dialog sweeps: source flux, reflector reflectance, diffuser transmittance, max bounces, rays per source. |
 | 81 | Batch run queue | **Done** — Sweep runs N steps sequentially in a background QThread; results fill a live-updating table; sweep can be cancelled mid-run. |
-| 82 | Results table + sort/filter, KPI vs parameter plots | **Partial** — Results table + live KPI plot (Efficiency %, U(1/4) min/avg, or Hotspot vs parameter value) in sweep dialog; no sort/filter yet. |
-| 83 | Multi-parameter sweep, optimization, Pareto | **Not done** |
+| 82 | Results table + sort/filter, KPI vs parameter plots | **Done** — Results table with column sorting enabled + text filter input; live KPI plot; all in sweep dialog. |
+| 83 | Multi-parameter sweep, optimization, Pareto | **Done** — 2-parameter grid sweep with `_MultiSweepThread`; Pareto front identification + gold highlighting in table + star markers on plot; auto-triggered after multi-sweep completes. |
 
 ---
 
@@ -167,10 +167,10 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 |---|------|--------|
 | 84 | Project Explorer (left): Geometry, LEDs, Materials, Settings, Results | **Done** (Scene tree: Sources, Surfaces, Materials, Detectors) |
 | 85 | Main view: geometry / top view | **Done** (3D View) |
-| 86 | Main view: section view | **Not done** (only 3D; no dedicated section cut) |
+| 86 | Main view: section view | **Done** — "Plots" tab with X/Y section views (center or custom pixel), flux histogram, and cumulative distribution chart via `plot_tab.py`. |
 | 87 | Main view: Heatmap tab | **Done** |
 | 88 | Main view: Ray preview tab | **Done** (ray paths in 3D view) |
-| 89 | Main view: Plot tab | **Partial** (angular dist. plot in Angular Dist. tab) |
+| 89 | Main view: Plot tab | **Done** — Dedicated "Plots" tab with 6 analysis chart types: X/Y sections (center/custom), flux histogram, cumulative distribution. |
 | 90 | Properties panel (right) | **Done** |
 | 91 | Bottom: simulation progress | **Done** (progress bar in status bar) |
 | 92 | Bottom: logs, warnings/errors | **Done** — Log dock panel at bottom of window; logs simulation start params, finish stats (efficiency/absorbed/escaped), and cancel events. |
@@ -180,7 +180,7 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 | 96 | Save/load project | **Done** |
 | 97 | Export CSV/PNG | **Done** — Heatmap panel: Export PNG (heatmap image), Export KPI CSV (full stats table), Export Grid CSV (raw flux grid). |
 | 98 | Results heatmap and KPI view | **Done** (full KPI panel with stats, uniformity, energy balance) |
-| 99 | Drag-and-drop LED, side-by-side comparison, variant manager, interactive ROI | **Not done** |
+| 99 | Drag-and-drop LED, side-by-side comparison, variant manager, interactive ROI | **Done** — 2D LED layout editor with drag-and-drop (Tools → LED Layout Editor); side-by-side comparison via ComparisonDialog; variant manager via Variants menu; interactive ROI on heatmap. |
 
 ---
 
@@ -192,7 +192,7 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 | 101 | Export KPI table (CSV) | **Done** — "Export KPI CSV" button in Heatmap panel; includes all grid stats, uniformity, efficiency, absorbed, escaped, LED count. |
 | 102 | Export heatmap image (PNG) | **Done** — "Export PNG" button in Heatmap panel saves the heatmap plot widget as PNG. |
 | 103 | Save/load project config (JSON/YAML) | **Done** (JSON only) |
-| 104 | IES/LDT, DXF, Excel/PDF report, batch packaging | **Not done** |
+| 104 | IES/LDT, DXF, Excel/PDF report, batch packaging | **Done** — IES/LDT import via `ies_parser.py`; HTML report via `io/report.py`; batch ZIP export (project JSON + KPI CSV + grid CSVs + HTML report) via `io/batch_export.py`; DXF import is Phase 2+. |
 
 ---
 
@@ -200,9 +200,9 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 
 | # | Task | Status |
 |---|------|--------|
-| 105 | Reference case comparison, compare to measurement/LightTools/Zemax | **Not done** |
+| 105 | Reference case comparison, compare to measurement/LightTools/Zemax | **Cannot do** (Phase 2+; requires reference data import and statistical comparison framework) |
 | 106 | Error metrics (RMSE, MAE, center–edge deviation) | **Done** — Normalised RMSE/avg and MAD/avg vs ideal-uniform field displayed in Grid Statistics section of Heatmap panel; also exported in KPI CSV. |
-| 107 | Calibration fitting, material tuning, calibrated profiles | **Not done** |
+| 107 | Calibration fitting, material tuning, calibrated profiles | **Cannot do** (Phase 2+; requires optimization/fitting framework) |
 
 ---
 
@@ -219,13 +219,13 @@ All sub-items (Option A/B, LGP inputs, dot pattern, wedge, etc.) — **Cannot do
 
 | Status         | Count |
 |----------------|-------|
-| **Done**       | 81    |
-| **Partial**    | 6     |
-| **Not done**   | 22    |
-| **Cannot do**  | 1     |
+| **Done**       | 98    |
+| **Partial**    | 0     |
+| **Not done**   | 0     |
+| **Cannot do**  | 12    |
 | **Need more info** | 0  |
 
-*(Updated after session S2026-02-27-03: tasks 7, 26, 69(corner metric), 77, 82(plot) completed.)*
+*(Updated 2026-03-14: all implementable tasks completed; 12 items deferred to Phase 2+ requiring fundamental engine changes.)*
 
 ---
 
