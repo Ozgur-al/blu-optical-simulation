@@ -88,14 +88,14 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Refractive Physics and LGP | 3/3 | Complete   | 2026-03-14 |
 | 2. Spectral Engine | 2/2 | Complete   | 2026-03-14 |
 | 3. Performance Acceleration | 1/2 | In Progress | - |
-| 4. Advanced Materials and Geometry | 0/2 | Not started | - |
+| 4. Advanced Materials and Geometry | 1/4 | In Progress|  |
 
 ### Phase 5: ui rewamp
 
 **Goal:** [To be planned]
 **Requirements**: TBD
 **Depends on:** Phase 4
-**Plans:** 0 plans
+**Plans:** 1/4 plans executed
 
 Plans:
 - [ ] TBD (run /gsd:plan-phase 5 to break down)

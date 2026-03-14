@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-03-14T18:08:44Z"
+last_updated: "2026-03-14T18:18:19Z"
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 2
-  total_plans: 8
-  completed_plans: 6
+  total_plans: 11
+  completed_plans: 7
 ---
 
 # Project State
@@ -18,16 +18,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-14)
 
 **Core value:** Engineers can iterate on both direct-lit and edge-lit BLU designs with physically accurate, wavelength-aware simulation — fast enough for real workloads.
-**Current focus:** Phase 3 — Performance Acceleration
+**Current focus:** Phase 4 — Advanced Materials and Geometry
 
 ## Current Position
 
-Phase: 3 of 4 (Performance Acceleration) — IN PROGRESS
-Plan: 1 of 3 in current phase — COMPLETE
-Status: Phase 3 Plan 01 complete. Numba JIT kernels (sim/accel.py) wired into tracer with graceful NumPy fallback, status bar indicator, eager warmup, and PyInstaller bundling.
-Last activity: 2026-03-14 — Plan 03-01 complete (Numba JIT: accel.py kernels, tracer dispatch, GUI status label, spec update)
+Phase: 4 of 5 (Advanced Materials and Geometry) — IN PROGRESS
+Plan: 2 of 4 in current phase — COMPLETE
+Status: Phase 4 Plan 02 complete. Far-field sphere detector (direction-based accumulation, candela normalization, IES export) implemented.
+Last activity: 2026-03-14 — Plan 04-02 complete (far-field SphereDetector, _accumulate_sphere_farfield, compute_farfield_candela, export_ies, export_farfield_csv, compute_farfield_kpis)
 
-Progress: [███████░░░] 70%
+Progress: [████████░░] 73%
 
 ## Performance Metrics
 
@@ -55,6 +55,7 @@ Progress: [███████░░░] 70%
 | Phase 02 P01 | 12 min | 1 task TDD | 5 files |
 | Phase 02 P02 | 24 min | 3 tasks | 5 files |
 | Phase 03 P01 | 3.6 min | 2 tasks TDD | 6 files |
+| Phase 04 P02 | 5 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -88,6 +89,9 @@ Recent decisions affecting current work:
 - [Phase 03-01]: accumulate_*_jit uses @njit(cache=True) without fastmath to preserve exact scatter-add semantics
 - [Phase 03-01]: Wrapper functions (intersect_plane/intersect_sphere) handle tuple→scalar conversion so JIT kernels receive primitive types only
 - [Phase 03-01]: warmup_jit_kernels() returns bool; JIT label uses addWidget (left-aligned) not addPermanentWidget
+- [Phase 04]: Far-field accumulation negates ray direction (outgoing from luminaire = -ray_dir)
+- [Phase 04]: Beam/field angle uses 2*half_angle convention for standard cone angle measurement
+- [Phase 04]: compute_farfield_candela floors sin(theta) at 1e-6 to prevent division-by-zero at poles
 
 ### Roadmap Evolution
 
@@ -107,5 +111,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-14
-Stopped at: Completed 03-01-PLAN.md (Numba JIT: sim/accel.py kernels, tracer dispatch, GUI JIT status label, PyInstaller spec update)
+Stopped at: Completed 04-02-PLAN.md (Far-field detector: direction-based accumulation, candela normalization, IES export)
 Resume file: None
