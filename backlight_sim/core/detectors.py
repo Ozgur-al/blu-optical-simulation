@@ -63,11 +63,36 @@ class DetectorSurface:
 
 
 @dataclass
+class SphereDetector:
+    """A spherical receiver that accumulates light from all directions."""
+
+    name: str
+    center: np.ndarray         # (3,)
+    radius: float = 10.0
+    resolution: tuple[int, int] = (72, 36)  # (n_phi, n_theta) bins
+
+    def __post_init__(self):
+        self.center = np.asarray(self.center, dtype=float)
+
+
+@dataclass
 class DetectorResult:
     """Result of a simulation for one detector."""
 
     detector_name: str
     grid: np.ndarray   # (ny, nx) accumulated flux per bin
+    total_hits: int = 0
+    total_flux: float = 0.0
+    grid_rgb: np.ndarray | None = None  # (ny, nx, 3) RGB flux grid, or None if mono
+    grid_spectral: np.ndarray | None = None  # (ny, nx, n_bins) spectral flux, or None
+
+
+@dataclass
+class SphereDetectorResult:
+    """Result for a sphere detector — (n_theta, n_phi) grid."""
+
+    detector_name: str
+    grid: np.ndarray   # (n_theta, n_phi) accumulated flux per bin
     total_hits: int = 0
     total_flux: float = 0.0
 
@@ -77,10 +102,14 @@ class SimulationResult:
     """Full output returned by RayTracer.run()."""
 
     detectors: dict[str, DetectorResult] = field(default_factory=dict)
-    ray_paths: list[list[np.ndarray]] = field(default_factory=list)
-    # ray_paths: each element is a list of 3-D waypoints for one recorded ray
+    sphere_detectors: dict[str, SphereDetectorResult] = field(default_factory=dict)
+    ray_paths: list = field(default_factory=list)  # list[list[np.ndarray]] for 3D visualization
 
     # Energy accounting
     total_emitted_flux: float = 0.0    # sum of all source flux values
     escaped_flux: float = 0.0          # flux that left geometry without hitting anything
     source_count: int = 0              # number of light sources simulated
+
+    # Per-face flux stats for SolidBox objects.
+    # Structure: { box_name: { face_id: { "entering_flux": float, "exiting_flux": float } } }
+    solid_body_stats: dict = field(default_factory=dict)
