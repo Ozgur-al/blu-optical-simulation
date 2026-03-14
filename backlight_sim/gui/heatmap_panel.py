@@ -6,6 +6,7 @@ import csv
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout as _QVL,  # used in spectrum popup
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QComboBox, QDoubleSpinBox, QLabel, QGroupBox, QPushButton, QFileDialog,
 )
@@ -14,6 +15,14 @@ from backlight_sim.core.detectors import DetectorResult, SimulationResult
 
 # Uniformity area fractions to evaluate
 _FRACTIONS = [("1/4", 0.25), ("1/6", 1 / 6), ("1/10", 0.10)]
+
+# Color uniformity row labels
+_COLOR_FRACTIONS = [
+    ("Full",       None),
+    ("Center 1/4", 0.25),
+    ("Center 1/6", 1 / 6),
+    ("Center 1/10", 0.10),
+]
 
 
 def _uniformity_in_center(grid: np.ndarray, fraction: float) -> tuple[float, float]:
@@ -108,6 +117,8 @@ class HeatmapPanel(QWidget):
         self._plot.hideAxis("bottom")
         self._img = pg.ImageItem()
         self._plot.addItem(self._img)
+        # Click to inspect per-pixel spectrum
+        self._img.mouseClickEvent = self._on_image_clicked
         # Interactive ROI for custom region stats
         self._roi = pg.RectROI([10, 10], [30, 30], pen=pg.mkPen('c', width=2))
         self._roi.addScaleHandle([1, 1], [0, 0])
@@ -177,6 +188,30 @@ class HeatmapPanel(QWidget):
             lm = _lbl(); ug.addWidget(lm, row_i, 3)
             self._uni_labels[label] = (la, lm)
         layout.addWidget(uni_box, stretch=0)
+
+        # ---- color uniformity (spectral only) ----
+        self._color_uni_box = QGroupBox("Color Uniformity")
+        cug = QGridLayout(self._color_uni_box)
+        cug.setVerticalSpacing(2)
+        # Column headers: delta-CCx, delta-CCy, delta-u', delta-v', CCT avg, CCT range
+        _col_hdrs = ["delta-CCx", "delta-CCy", "delta-u'", "delta-v'", "CCT avg", "CCT range"]
+        for ci, hdr in enumerate(_col_hdrs):
+            lbl = QLabel(hdr)
+            lbl.setStyleSheet("font-weight: bold;")
+            cug.addWidget(lbl, 0, ci + 1)
+
+        self._color_uni_labels: dict[str, list[QLabel]] = {}
+        for row_i, (row_label, _frac) in enumerate(_COLOR_FRACTIONS):
+            cug.addWidget(QLabel(row_label + ":"), row_i + 1, 0)
+            row_lbls = []
+            for ci in range(6):
+                lbl = _lbl()
+                cug.addWidget(lbl, row_i + 1, ci + 1)
+                row_lbls.append(lbl)
+            self._color_uni_labels[row_label] = row_lbls
+
+        self._color_uni_box.hide()
+        layout.addWidget(self._color_uni_box, stretch=0)
 
         # ---- energy balance ----
         energy_box = QGroupBox("Energy Balance")
@@ -444,9 +479,58 @@ class HeatmapPanel(QWidget):
             for w in lgp_widgets:
                 w.hide()
 
+        self._update_color_uniformity(result)
         self._update_score()
         if self._roi_toggle.isChecked():
             self._update_roi_stats()
+
+    def _update_color_uniformity(self, result: DetectorResult):
+        """Update the Color Uniformity KPI section; hide it if no spectral data."""
+        if result.grid_spectral is None:
+            self._color_uni_box.hide()
+            return
+        try:
+            from backlight_sim.sim.spectral import compute_color_kpis, spectral_bin_centers
+            n_bins = result.grid_spectral.shape[2]
+            wl = spectral_bin_centers(n_bins)
+            kpis = compute_color_kpis(result.grid_spectral, wl)
+        except Exception:
+            self._color_uni_box.hide()
+            return
+
+        def _fmt_delta(v):
+            return f"{v:.4f}" if isinstance(v, float) and not (v != v) else "--"
+
+        def _fmt_cct(v):
+            if isinstance(v, float) and not (v != v) and v > 0:
+                return f"{int(round(v))} K"
+            return "--"
+
+        # Full row
+        full_lbls = self._color_uni_labels["Full"]
+        full_lbls[0].setText(_fmt_delta(kpis.get("delta_ccx", float("nan"))))
+        full_lbls[1].setText(_fmt_delta(kpis.get("delta_ccy", float("nan"))))
+        full_lbls[2].setText(_fmt_delta(kpis.get("delta_uprime", float("nan"))))
+        full_lbls[3].setText(_fmt_delta(kpis.get("delta_vprime", float("nan"))))
+        full_lbls[4].setText(_fmt_cct(kpis.get("cct_avg", float("nan"))))
+        full_lbls[5].setText(_fmt_delta(kpis.get("cct_range", float("nan"))))
+
+        # Center fraction rows
+        for row_label, frac_key in [
+            ("Center 1/4", "center_1_4"),
+            ("Center 1/6", "center_1_6"),
+            ("Center 1/10", "center_1_10"),
+        ]:
+            center_data = kpis.get(frac_key, {})
+            lbls = self._color_uni_labels[row_label]
+            lbls[0].setText(_fmt_delta(center_data.get("delta_ccx", float("nan"))))
+            lbls[1].setText(_fmt_delta(center_data.get("delta_ccy", float("nan"))))
+            lbls[2].setText(_fmt_delta(center_data.get("delta_uprime", float("nan"))))
+            lbls[3].setText(_fmt_delta(center_data.get("delta_vprime", float("nan"))))
+            lbls[4].setText("--")   # CCT avg/range not computed for center fractions
+            lbls[5].setText("--")
+
+        self._color_uni_box.show()
 
     def _update_score(self, _=None):
         """Recompute the weighted design score from cached KPIs and weight spinboxes."""
@@ -499,6 +583,43 @@ class HeatmapPanel(QWidget):
             f"min/avg={u_ma:.3f}  min/max={u_mm:.3f}"
         )
 
+    def _on_image_clicked(self, event):
+        """Show per-pixel spectral power distribution popup on image click."""
+        if self._current_result is None:
+            return
+        if self._current_result.grid_spectral is None:
+            return
+        try:
+            pos = event.pos()
+            # Convert from image-item local coords to grid indices
+            # ImageItem is transposed (width, height) so x->col, y->row
+            col = int(pos.x())
+            row = int(pos.y())
+            grid_spectral = self._current_result.grid_spectral
+            ny, nx, n_bins = grid_spectral.shape
+            # Clamp
+            col = max(0, min(col, nx - 1))
+            row = max(0, min(row, ny - 1))
+            spectrum = grid_spectral[row, col, :]
+        except Exception:
+            return
+
+        from backlight_sim.sim.spectral import spectral_bin_centers
+        wl = spectral_bin_centers(n_bins)
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Pixel ({col}, {row}) Spectrum")
+        dlg.setModal(False)
+        dlg.resize(400, 280)
+        layout = _QVL(dlg)
+        pw = pg.PlotWidget()
+        pw.setLabel("bottom", "Wavelength (nm)")
+        pw.setLabel("left", "Flux")
+        pw.setTitle(f"Pixel ({col}, {row}) SPD")
+        pw.showGrid(x=True, y=True, alpha=0.25)
+        pw.plot(wl, spectrum, pen=pg.mkPen((255, 200, 50), width=2))
+        layout.addWidget(pw)
+        dlg.show()
+
     def clear(self):
         self._img.clear()
         self._selector.clear()
@@ -523,6 +644,8 @@ class HeatmapPanel(QWidget):
                   self._lbl_lgp_overall_key,
                   self._lbl_lgp_coupling, self._lbl_lgp_extraction, self._lbl_lgp_overall):
             w.hide()
+        # Hide color uniformity
+        self._color_uni_box.hide()
 
     # ------------------------------------------------------------------
     # Export helpers
@@ -592,6 +715,36 @@ class HeatmapPanel(QWidget):
                 ("Escaped (%)", f"{escaped / emitted * 100:.2f}"),
                 ("LED count", str(self._sim_result.source_count)),
             ]
+
+        # Color uniformity KPIs (only when spectral data available)
+        if r.grid_spectral is not None:
+            try:
+                from backlight_sim.sim.spectral import compute_color_kpis, spectral_bin_centers
+                n_bins = r.grid_spectral.shape[2]
+                wl = spectral_bin_centers(n_bins)
+                ckpis = compute_color_kpis(r.grid_spectral, wl)
+                rows += [
+                    ("delta_ccx",    f"{ckpis.get('delta_ccx', 0):.4f}"),
+                    ("delta_ccy",    f"{ckpis.get('delta_ccy', 0):.4f}"),
+                    ("delta_uprime", f"{ckpis.get('delta_uprime', 0):.4f}"),
+                    ("delta_vprime", f"{ckpis.get('delta_vprime', 0):.4f}"),
+                    ("cct_avg_K",    f"{ckpis.get('cct_avg', float('nan')):.0f}"),
+                    ("cct_range_K",  f"{ckpis.get('cct_range', 0):.0f}"),
+                ]
+                for label_key, row_label in [
+                    ("center_1_4", "center_1_4"),
+                    ("center_1_6", "center_1_6"),
+                    ("center_1_10", "center_1_10"),
+                ]:
+                    cdata = ckpis.get(label_key, {})
+                    rows += [
+                        (f"{label_key}_delta_ccx",    f"{cdata.get('delta_ccx', 0):.4f}"),
+                        (f"{label_key}_delta_ccy",    f"{cdata.get('delta_ccy', 0):.4f}"),
+                        (f"{label_key}_delta_uprime", f"{cdata.get('delta_uprime', 0):.4f}"),
+                        (f"{label_key}_delta_vprime", f"{cdata.get('delta_vprime', 0):.4f}"),
+                    ]
+            except Exception:
+                pass  # Non-critical — skip color KPIs on error
 
         with open(path, "w", newline="", encoding="utf-8") as f:
             csv.writer(f).writerows(rows)
