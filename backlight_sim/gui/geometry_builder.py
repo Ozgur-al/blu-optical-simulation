@@ -11,17 +11,22 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
+    QWidget,
 )
 
 from backlight_sim.core.detectors import DetectorSurface
 from backlight_sim.core.materials import Material
 from backlight_sim.core.project_model import Project
-from backlight_sim.io.geometry_builder import build_cavity, build_led_grid
+
+from backlight_sim.io.geometry_builder import build_cavity, build_led_grid, build_optical_stack, build_lgp_scene
 
 
 def _dspin(val=0.0, lo=0.0, hi=9999.0, decimals=1, step=1.0):
@@ -41,15 +46,38 @@ def _ispin(val=1, lo=1, hi=9999):
 
 
 class GeometryBuilderDialog(QDialog):
-    """Dialog to build a direct-lit backlight cavity with LED grid."""
+    """Dialog to build direct-lit backlight cavity or edge-lit LGP scene."""
 
     def __init__(self, project: Project, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Geometry Builder")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(480)
         self._project = project
+        self._built_lgp = False
 
         root = QVBoxLayout(self)
+
+        self._tabs = QTabWidget()
+        self._tabs.addTab(self._create_direct_lit_tab(), "Direct-Lit Cavity")
+        self._tabs.addTab(self._create_lgp_tab(), "LGP")
+        root.addWidget(self._tabs)
+
+        bbox = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        bbox.accepted.connect(self._on_accept)
+        bbox.rejected.connect(self.reject)
+        root.addWidget(bbox)
+
+        self._preview_count()
+
+    # ------------------------------------------------------------------
+    # Direct-Lit tab
+    # ------------------------------------------------------------------
+
+    def _create_direct_lit_tab(self) -> QWidget:
+        container = QWidget()
+        root = QVBoxLayout(container)
 
         cav = QGroupBox("Cavity Dimensions")
         cf = QFormLayout(cav)
@@ -75,6 +103,21 @@ class GeometryBuilderDialog(QDialog):
         mf.addRow("Wall Reflectance:", self._wall_ref)
         mf.addRow("Wall Type:", self._wall_diff)
         root.addWidget(mat)
+
+        stack = QGroupBox("Optical Stack")
+        sf = QFormLayout(stack)
+        self._diff_dist = _dspin(0.0, 0.0, 500.0, 1, 0.5)
+        self._diff_dist.setToolTip("Z height of diffuser plane (0 = no diffuser)")
+        self._diff_trans = _dspin(0.7, 0.0, 1.0, 3, 0.01)
+        self._film1_z = _dspin(0.0, 0.0, 500.0, 1, 0.5)
+        self._film1_z.setToolTip("Z height of film placeholder 1 (0 = skip)")
+        self._film2_z = _dspin(0.0, 0.0, 500.0, 1, 0.5)
+        self._film2_z.setToolTip("Z height of film placeholder 2 (0 = skip)")
+        sf.addRow("Diffuser distance (Z):", self._diff_dist)
+        sf.addRow("Diffuser transmittance:", self._diff_trans)
+        sf.addRow("Film 1 distance (Z):", self._film1_z)
+        sf.addRow("Film 2 distance (Z):", self._film2_z)
+        root.addWidget(stack)
 
         det = QGroupBox("Output Detector")
         df = QFormLayout(det)
@@ -132,14 +175,119 @@ class GeometryBuilderDialog(QDialog):
         lf.addRow("", self._btn_preview)
         root.addWidget(led)
 
-        bbox = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        bbox.accepted.connect(self._on_accept)
-        bbox.rejected.connect(self.reject)
-        root.addWidget(bbox)
+        root.addStretch()
+        return container
 
-        self._preview_count()
+    # ------------------------------------------------------------------
+    # LGP tab
+    # ------------------------------------------------------------------
+
+    def _create_lgp_tab(self) -> QWidget:
+        container = QWidget()
+        root = QVBoxLayout(container)
+
+        dim = QGroupBox("LGP Dimensions")
+        df = QFormLayout(dim)
+        self._lgp_w = _dspin(80.0, 5.0, 500.0, 1, 5.0)
+        self._lgp_h = _dspin(50.0, 5.0, 500.0, 1, 5.0)
+        self._lgp_t = _dspin(3.0, 0.5, 50.0, 2, 0.5)
+        df.addRow("LGP Width (mm):", self._lgp_w)
+        df.addRow("LGP Height (mm):", self._lgp_h)
+        df.addRow("LGP Thickness (mm):", self._lgp_t)
+        root.addWidget(dim)
+
+        mat = QGroupBox("Material")
+        mf = QFormLayout(mat)
+        self._lgp_mat_combo = QComboBox()
+        self._lgp_mat_combo.addItems(["PMMA (n=1.49)", "Custom"])
+        self._lgp_mat_combo.currentIndexChanged.connect(self._on_lgp_mat_changed)
+        self._lgp_ri = _dspin(1.49, 1.0, 3.0, 3, 0.01)
+        mf.addRow("Material:", self._lgp_mat_combo)
+        mf.addRow("Refractive Index:", self._lgp_ri)
+        root.addWidget(mat)
+
+        edges = QGroupBox("Coupling Edges")
+        ef = QFormLayout(edges)
+        self._lgp_edge_checks: dict[str, QCheckBox] = {}
+        edges_row = QHBoxLayout()
+        for edge_id in ("left", "right", "front", "back"):
+            cb = QCheckBox(edge_id.capitalize())
+            self._lgp_edge_checks[edge_id] = cb
+            edges_row.addWidget(cb)
+        self._lgp_edge_checks["left"].setChecked(True)  # default: left edge
+        ef.addRow("Coupling edges:", edges_row)
+        root.addWidget(edges)
+
+        leds = QGroupBox("LED Parameters")
+        lf = QFormLayout(leds)
+        self._lgp_led_count = _ispin(6, 1, 100)
+        self._lgp_led_flux = _dspin(100.0, 0.0, 1e6, 1, 10.0)
+        self._lgp_led_dist = QComboBox()
+        self._lgp_led_dist.addItems(["lambertian", "isotropic"])
+        extra = sorted(self._project.angular_distributions.keys())
+        for name in extra:
+            if name not in ("lambertian", "isotropic"):
+                self._lgp_led_dist.addItem(name)
+        lf.addRow("LEDs per edge:", self._lgp_led_count)
+        lf.addRow("LED Flux:", self._lgp_led_flux)
+        lf.addRow("LED Distribution:", self._lgp_led_dist)
+        root.addWidget(leds)
+
+        spacing = QGroupBox("Detector & Reflector Spacing")
+        sf = QFormLayout(spacing)
+        self._lgp_det_gap = _dspin(2.0, 0.0, 50.0, 1, 0.5)
+        self._lgp_ref_gap = _dspin(1.0, 0.0, 50.0, 1, 0.5)
+        self._lgp_det_gap.setToolTip("Gap between LGP top face and detector plane (mm)")
+        self._lgp_ref_gap.setToolTip("Gap between LGP bottom face and reflector surface (mm)")
+        sf.addRow("Detector gap (mm):", self._lgp_det_gap)
+        sf.addRow("Reflector gap (mm):", self._lgp_ref_gap)
+        root.addWidget(spacing)
+
+        self._lgp_status_lbl = QLabel("")
+        self._lgp_status_lbl.setStyleSheet("color: green; font-size: 10px;")
+        root.addWidget(self._lgp_status_lbl)
+
+        self._lgp_build_btn = QPushButton("Build LGP Scene")
+        self._lgp_build_btn.clicked.connect(self._on_build_lgp)
+        root.addWidget(self._lgp_build_btn)
+
+        root.addStretch()
+        return container
+
+    def _on_lgp_mat_changed(self, idx: int):
+        if idx == 0:  # PMMA preset
+            self._lgp_ri.setValue(1.49)
+
+    def _on_build_lgp(self):
+        coupling_edges = [eid for eid, cb in self._lgp_edge_checks.items() if cb.isChecked()]
+        if not coupling_edges:
+            QMessageBox.warning(self, "No Coupling Edge", "Select at least one coupling edge.")
+            return
+
+        build_lgp_scene(
+            self._project,
+            width=self._lgp_w.value(),
+            height=self._lgp_h.value(),
+            thickness=self._lgp_t.value(),
+            coupling_edges=coupling_edges,
+            led_count=self._lgp_led_count.value(),
+            led_flux=self._lgp_led_flux.value(),
+            led_distribution=self._lgp_led_dist.currentText(),
+            detector_gap=self._lgp_det_gap.value(),
+            reflector_gap=self._lgp_ref_gap.value(),
+            refractive_index=self._lgp_ri.value(),
+        )
+
+        n_leds = len(self._project.sources)
+        n_edges = len(coupling_edges)
+        self._lgp_status_lbl.setText(
+            f"LGP scene created: {n_leds} LEDs on {n_edges} edge(s)"
+        )
+        self._built_lgp = True
+
+    # ------------------------------------------------------------------
+    # Direct-lit helpers
+    # ------------------------------------------------------------------
 
     def _refresh_distributions(self):
         current = self._led_dist.currentText()
@@ -178,6 +326,15 @@ class GeometryBuilderDialog(QDialog):
         self._count_lbl.setText(f"LED count: {len(xs) * len(ys)}")
 
     def _on_accept(self):
+        # If on LGP tab and LGP was built, just accept
+        if self._tabs.currentIndex() == 1:
+            if self._built_lgp:
+                self.accept()
+            else:
+                QMessageBox.information(self, "LGP", "Click 'Build LGP Scene' first, or switch to the Direct-Lit tab.")
+            return
+
+        # Direct-Lit tab
         w = self._cav_w.value()
         h = self._cav_h.value()
         d = self._cav_d.value()
@@ -213,6 +370,28 @@ class GeometryBuilderDialog(QDialog):
             wall_material=wall_mat_name,
             replace_existing=True,
         )
+
+        # Optical stack (diffuser + film placeholders)
+        diff_z = self._diff_dist.value()
+        film_zs = [z for z in (self._film1_z.value(), self._film2_z.value()) if z > 0]
+        if diff_z > 0 or film_zs:
+            diff_mat_name = "diffuser_stack"
+            self._project.materials[diff_mat_name] = Material(
+                name=diff_mat_name,
+                surface_type="diffuser",
+                transmittance=self._diff_trans.value(),
+                reflectance=1.0 - self._diff_trans.value(),
+                is_diffuse=True,
+            )
+            build_optical_stack(
+                self._project, w, h, d,
+                diffuser_distance=diff_z,
+                film_distances=film_zs if film_zs else None,
+                diffuser_material=diff_mat_name,
+                film_material=wall_mat_name,
+                wall_angle_x_deg=wall_x,
+                wall_angle_y_deg=wall_y,
+            )
 
         if self._add_det.isChecked():
             self._project.detectors.clear()

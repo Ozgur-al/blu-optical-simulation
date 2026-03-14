@@ -9,14 +9,15 @@ from PySide6.QtWidgets import (
     QProgressBar, QStatusBar, QMessageBox, QFileDialog, QPushButton,
     QDockWidget, QTextEdit,
 )
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QActionGroup
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QActionGroup, QKeySequence
 
 from backlight_sim.core.project_model import Project
 from backlight_sim.core.geometry import Rectangle
 from backlight_sim.core.materials import Material
 from backlight_sim.core.sources import PointSource
-from backlight_sim.core.detectors import DetectorSurface, SimulationResult
+from backlight_sim.core.detectors import DetectorSurface, SphereDetector, SimulationResult
+from backlight_sim.core.solid_body import SolidBox
 from backlight_sim.sim.tracer import RayTracer
 from backlight_sim.gui.object_tree import ObjectTree
 from backlight_sim.gui.properties_panel import PropertiesPanel
@@ -24,6 +25,8 @@ from backlight_sim.gui.viewport_3d import Viewport3D
 from backlight_sim.gui.heatmap_panel import HeatmapPanel
 from backlight_sim.gui.angular_distribution_panel import AngularDistributionPanel
 from backlight_sim.gui.measurement_dialog import MeasurementDialog
+from backlight_sim.gui.plot_tab import PlotTab
+from backlight_sim.gui.receiver_3d import Receiver3DWidget
 from backlight_sim.io.angular_distributions import merge_default_profiles
 
 
@@ -53,15 +56,22 @@ class MainWindow(QMainWindow):
         self._init_default_materials()
         merge_default_profiles(self._project)
         self._sim_thread = None
-        self._counter = {"Sources": 0, "Surfaces": 0, "Materials": 0, "Detectors": 0}
+        self._counter = {"Sources": 0, "Surfaces": 0, "Materials": 0, "Optical Properties": 0, "Detectors": 0, "Sphere Detectors": 0, "Solid Bodies": 0}
         self._last_save_path = None
         self._selected_group = None
         self._selected_name = None
+        self._dirty = False
         self._variants: dict[str, "Project"] = {}
         self._variants_menu = None
         # Design history: list of (label, Project) — newest first, capped at 20
         self._history: list[tuple[str, "Project"]] = []
         self._history_menu = None
+
+        # Debounce timer: coalesces rapid property edits into a single refresh
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(50)  # 50 ms debounce
+        self._refresh_timer.timeout.connect(self._refresh_all)
 
         self._setup_ui()
         self._setup_menu()
@@ -85,10 +95,15 @@ class MainWindow(QMainWindow):
         self._center_tabs = QTabWidget()
         self._viewport = Viewport3D()
         self._heatmap = HeatmapPanel()
+        self._heatmap.set_project(self._project)
         self._ang_dist = AngularDistributionPanel()
         self._ang_dist.set_project(self._project)
+        self._plot_tab = PlotTab()
+        self._receiver_3d = Receiver3DWidget()
         self._center_tabs.addTab(self._viewport, "3D View")
         self._center_tabs.addTab(self._heatmap, "Heatmap")
+        self._center_tabs.addTab(self._receiver_3d, "3D Receiver")
+        self._center_tabs.addTab(self._plot_tab, "Plots")
         self._center_tabs.addTab(self._ang_dist, "Angular Dist.")
         main_split.addWidget(self._center_tabs)
 
@@ -128,14 +143,19 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
 
         fm = mb.addMenu("&File")
-        fm.addAction("New Project",    self._new_project)
-        fm.addAction("Open...",        self._open_project)
-        fm.addAction("Save",           self._save_project)
-        fm.addAction("Save As...",     self._save_project_as)
+        act = fm.addAction("New Project",    self._new_project)
+        act.setShortcut(QKeySequence.StandardKey.New)
+        act = fm.addAction("Open...",        self._open_project)
+        act.setShortcut(QKeySequence.StandardKey.Open)
+        act = fm.addAction("Save",           self._save_project)
+        act.setShortcut(QKeySequence.StandardKey.Save)
+        act = fm.addAction("Save As...",     self._save_project_as)
+        act.setShortcut(QKeySequence.StandardKey.SaveAs)
         fm.addSeparator()
         fm.addAction("Clone as Variant...", self._clone_as_variant)
         fm.addSeparator()
-        fm.addAction("Exit",           self.close)
+        act = fm.addAction("Exit",           self.close)
+        act.setShortcut(QKeySequence.StandardKey.Quit)
 
         pm = mb.addMenu("&Presets")
         from backlight_sim.io.presets import PRESETS
@@ -143,10 +163,12 @@ class MainWindow(QMainWindow):
             pm.addAction(name, lambda f=factory: self._load_preset(f))
 
         am = mb.addMenu("&Add")
-        am.addAction("Point Source",   lambda: self._add_object("Sources"))
-        am.addAction("Surface",        lambda: self._add_object("Surfaces"))
-        am.addAction("Detector",       lambda: self._add_object("Detectors"))
-        am.addAction("Material",       lambda: self._add_object("Materials"))
+        am.addAction("Point Source",       lambda: self._add_object("Sources"))
+        am.addAction("Surface",            lambda: self._add_object("Surfaces"))
+        am.addAction("Detector",           lambda: self._add_object("Detectors"))
+        am.addAction("Sphere Detector",    lambda: self._add_object("Sphere Detectors"))
+        am.addAction("Material",           lambda: self._add_object("Materials"))
+        am.addAction("Optical Properties", lambda: self._add_object("Optical Properties"))
 
         bm = mb.addMenu("&Build")
         bm.addAction("Geometry Builder...", self._open_geometry_builder)
@@ -159,8 +181,10 @@ class MainWindow(QMainWindow):
 
         sm = mb.addMenu("&Simulation")
         sm.addAction("Settings",       self._show_settings)
-        sm.addAction("Run",            self._run_simulation)
-        sm.addAction("Cancel",         self._cancel_simulation)
+        act = sm.addAction("Run",            self._run_simulation)
+        act.setShortcut(QKeySequence("F5"))
+        act = sm.addAction("Cancel",         self._cancel_simulation)
+        act.setShortcut(QKeySequence("Escape"))
         sm.addSeparator()
         sm.addAction("Parameter Sweep...", self._open_parameter_sweep)
 
@@ -193,13 +217,56 @@ class MainWindow(QMainWindow):
 
         tm = mb.addMenu("&Tools")
         tm.addAction("Measure...", self._open_measure_dialog)
+        tm.addAction("LED Layout Editor...", self._open_led_layout)
 
     def _connect_signals(self):
         self._tree.object_selected.connect(self._on_object_selected)
+        self._tree.multi_selected.connect(self._on_multi_selected)
         self._tree.add_requested.connect(self._add_object)
         self._tree.delete_requested.connect(self._delete_object)
         self._properties.properties_changed.connect(self._on_properties_changed)
         self._ang_dist.distributions_changed.connect(self._on_distributions_changed)
+
+    # ------------------------------------------------------------------
+    # Dirty-flag & unsaved-changes guard
+    # ------------------------------------------------------------------
+
+    def _mark_dirty(self):
+        self._dirty = True
+
+    def _maybe_save(self) -> bool:
+        """Prompt to save if unsaved changes exist. Returns True if OK to proceed."""
+        if not self._dirty:
+            return True
+        ret = QMessageBox.question(
+            self, "Unsaved Changes",
+            "The project has unsaved changes. Save before continuing?",
+            QMessageBox.StandardButton.Save |
+            QMessageBox.StandardButton.Discard |
+            QMessageBox.StandardButton.Cancel,
+        )
+        if ret == QMessageBox.StandardButton.Save:
+            self._save_project()
+            return not self._dirty  # False if save was cancelled/failed
+        if ret == QMessageBox.StandardButton.Discard:
+            return True
+        return False  # Cancel
+
+    def closeEvent(self, event):
+        if self._sim_thread and self._sim_thread.isRunning():
+            ret = QMessageBox.question(
+                self, "Simulation Running",
+                "A simulation is still running. Quit anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if ret != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            self._sim_thread.cancel()
+        if not self._maybe_save():
+            event.ignore()
+            return
+        event.accept()
 
     def _log(self, msg: str):
         ts = datetime.datetime.now().strftime("%H:%M:%S")
@@ -234,9 +301,22 @@ class MainWindow(QMainWindow):
         dlg = MeasurementDialog(self._selected_object_center, self)
         dlg.exec()
 
+    def _open_led_layout(self):
+        if not self._project.sources:
+            QMessageBox.information(self, "No LEDs", "Add light sources first.")
+            return
+        from backlight_sim.gui.led_layout_editor import LEDLayoutEditor
+        dlg = LEDLayoutEditor(self._project, self)
+        dlg.exec()
+        self._mark_dirty()
+        self._refresh_all()
+
     def _new_project(self):
         if self._sim_thread and self._sim_thread.isRunning():
             QMessageBox.warning(self, "Busy", "Stop the simulation first."); return
+        if not self._maybe_save():
+            return
+        self._dirty = False
         self._project = Project()
         self._init_default_materials()
         merge_default_profiles(self._project)
@@ -244,13 +324,17 @@ class MainWindow(QMainWindow):
         self._last_save_path = None
         self._clear_selected_object()
         self._ang_dist.set_project(self._project)
+        self._heatmap.set_project(self._project)
         self._properties.clear_selection()
         self._heatmap.clear()
+        self._plot_tab.clear()
         self._viewport.clear_ray_paths()
         self._refresh_all()
         self.setWindowTitle("Blu Optical Simulation - Untitled")
 
     def _open_project(self):
+        if not self._maybe_save():
+            return
         path, _ = QFileDialog.getOpenFileName(
             self, "Open Project", "", "JSON files (*.json);;All files (*)")
         if not path: return
@@ -258,6 +342,7 @@ class MainWindow(QMainWindow):
         try:
             self._project = load_project(path)
             merge_default_profiles(self._project)
+            self._dirty = False
             self._last_save_path = path
             self._counter = {k: 0 for k in self._counter}
             self._clear_selected_object()
@@ -288,6 +373,7 @@ class MainWindow(QMainWindow):
         from backlight_sim.io.project_io import save_project
         try:
             save_project(self._project, path)
+            self._dirty = False
             self.statusBar().showMessage(f"Saved to {path}", 4000)
         except Exception as exc:
             QMessageBox.critical(self, "Save Error", str(exc))
@@ -300,10 +386,12 @@ class MainWindow(QMainWindow):
         ) != QMessageBox.StandardButton.Yes: return
         self._project = factory()
         merge_default_profiles(self._project)
+        self._dirty = False
         self._counter = {k: 0 for k in self._counter}
         self._last_save_path = None
         self._clear_selected_object()
         self._ang_dist.set_project(self._project)
+        self._heatmap.set_project(self._project)
         self._properties.clear_selection()
         self._heatmap.clear()
         self._viewport.clear_ray_paths()
@@ -314,11 +402,13 @@ class MainWindow(QMainWindow):
         from backlight_sim.gui.geometry_builder import GeometryBuilderDialog
         dlg = GeometryBuilderDialog(self._project, self)
         if dlg.exec():
+            self._mark_dirty()
             self._clear_selected_object()
             self._properties.clear_selection()
             self._refresh_all()
 
     def _refresh_all(self):
+        self._refresh_timer.stop()  # cancel pending debounced refresh
         self._tree.refresh(self._project)
         self._viewport.set_selected(self._selected_group, self._selected_name, redraw=False)
         self._viewport.refresh(self._project)
@@ -334,18 +424,57 @@ class MainWindow(QMainWindow):
                 self._properties.show_source(obj, distribution_names=list(self._project.angular_distributions.keys()))
         elif group == "Surfaces":
             obj = next((s for s in self._project.surfaces if s.name == name), None)
-            if obj: self._properties.show_surface(obj, list(self._project.materials.keys()))
+            if obj: self._properties.show_surface(obj, list(self._project.materials.keys()),
+                                                   list(self._project.optical_properties.keys()))
         elif group == "Materials":
             obj = self._project.materials.get(name)
             if obj: self._properties.show_material(obj)
+        elif group == "Optical Properties":
+            obj = self._project.optical_properties.get(name)
+            if obj: self._properties.show_optical_properties(obj)
         elif group == "Detectors":
             obj = next((d for d in self._project.detectors if d.name == name), None)
             if obj: self._properties.show_detector(obj)
+        elif group == "Sphere Detectors":
+            obj = next((d for d in self._project.sphere_detectors if d.name == name), None)
+            if obj: self._properties.show_sphere_detector(obj)
+        elif group == "Solid Bodies":
+            if "::" in name:
+                # Face node: "BoxName::face_id"
+                box_name, face_id = name.split("::", 1)
+                box = next((b for b in self._project.solid_bodies if b.name == box_name), None)
+                if box:
+                    self._properties.show_face(box, face_id, list(self._project.optical_properties.keys()))
+            else:
+                # Box-level node
+                box = next((b for b in self._project.solid_bodies if b.name == name), None)
+                if box:
+                    self._properties.show_solid_box(box, list(self._project.materials.keys()))
+
+    def _on_multi_selected(self, group: str, names: list):
+        """Handle Ctrl+click multi-selection of objects in the same group."""
+        objects = []
+        if group == "Sources":
+            objects = [s for s in self._project.sources if s.name in names]
+        elif group == "Surfaces":
+            objects = [s for s in self._project.surfaces if s.name in names]
+        elif group == "Materials":
+            objects = [self._project.materials[n] for n in names if n in self._project.materials]
+        elif group == "Detectors":
+            objects = [d for d in self._project.detectors if d.name in names]
+        if objects:
+            self._properties.show_batch(
+                group, objects,
+                distribution_names=list(self._project.angular_distributions.keys()),
+                mat_names=list(self._project.materials.keys()),
+            )
 
     def _on_properties_changed(self):
-        self._refresh_all()
+        self._mark_dirty()
+        self._refresh_timer.start()  # debounced — coalesces rapid edits
 
     def _on_distributions_changed(self):
+        self._mark_dirty()
         if self._selected_group == "Sources" and self._selected_name:
             src = next((s for s in self._project.sources if s.name == self._selected_name), None)
             if src:
@@ -353,6 +482,7 @@ class MainWindow(QMainWindow):
         self._refresh_all()
 
     def _add_object(self, group):
+        self._mark_dirty()
         self._counter[group] += 1
         n = self._counter[group]
         if group == "Sources":
@@ -369,17 +499,49 @@ class MainWindow(QMainWindow):
         elif group == "Materials":
             mn = f"Material_{n}"
             self._project.materials[mn] = Material(mn)
+        elif group == "Sphere Detectors":
+            self._project.sphere_detectors.append(
+                SphereDetector(f"SphereDetector_{n}", np.array([0.0, 0.0, 0.0]), radius=20.0))
+        elif group == "Optical Properties":
+            from backlight_sim.core.materials import OpticalProperties
+            on = f"OptProp_{n}"
+            self._project.optical_properties[on] = OpticalProperties(on)
+        elif group == "Solid Bodies":
+            box_name = f"Box_{n}"
+            self._project.solid_bodies.append(
+                SolidBox(
+                    name=box_name,
+                    center=np.array([0.0, 0.0, 0.0]),
+                    dimensions=(50.0, 30.0, 3.0),
+                    material_name=next(iter(self._project.materials), "pmma"),
+                )
+            )
         self._refresh_all()
 
     def _delete_object(self, group, name):
+        self._mark_dirty()
         if group == "Sources":
             self._project.sources = [s for s in self._project.sources if s.name != name]
         elif group == "Surfaces":
             self._project.surfaces = [s for s in self._project.surfaces if s.name != name]
         elif group == "Detectors":
             self._project.detectors = [d for d in self._project.detectors if d.name != name]
+        elif group == "Sphere Detectors":
+            self._project.sphere_detectors = [d for d in self._project.sphere_detectors if d.name != name]
         elif group == "Materials":
             self._project.materials.pop(name, None)
+        elif group == "Optical Properties":
+            self._project.optical_properties.pop(name, None)
+        elif group == "Solid Bodies":
+            if "::" in name:
+                # Face node — clear the face optics override (don't delete the face)
+                box_name, face_id = name.split("::", 1)
+                box = next((b for b in self._project.solid_bodies if b.name == box_name), None)
+                if box:
+                    box.face_optics.pop(face_id, None)
+            else:
+                # Box-level — remove the SolidBox
+                self._project.solid_bodies = [b for b in self._project.solid_bodies if b.name != name]
         self._clear_selected_object()
         self._properties.clear_selection()
         self._refresh_all()
@@ -411,6 +573,11 @@ class MainWindow(QMainWindow):
                 self._variants_menu.addAction(
                     vname, lambda _=False, n=vname: self._load_variant(n))
             self._variants_menu.addSeparator()
+            compare_menu = self._variants_menu.addMenu("Compare with...")
+            for vname in self._variants:
+                compare_menu.addAction(
+                    vname, lambda _=False, n=vname: self._compare_variant(n))
+            self._variants_menu.addSeparator()
             self._variants_menu.addAction("Clear All Variants", self._clear_variants)
 
     def _load_variant(self, name: str):
@@ -426,16 +593,26 @@ class MainWindow(QMainWindow):
             return
         self._project = copy.deepcopy(v)
         merge_default_profiles(self._project)
+        self._dirty = False
         self._counter = {k: 0 for k in self._counter}
         self._last_save_path = None
         self._clear_selected_object()
         self._ang_dist.set_project(self._project)
+        self._heatmap.set_project(self._project)
         self._properties.clear_selection()
         self._heatmap.clear()
         self._viewport.clear_ray_paths()
         self._refresh_all()
         self.setWindowTitle(f"Blu Optical Simulation - {self._project.name} [variant: {name}]")
         self._log(f"Loaded variant: '{name}'")
+
+    def _compare_variant(self, name: str):
+        v = self._variants.get(name)
+        if v is None:
+            return
+        from backlight_sim.gui.comparison_dialog import ComparisonDialog
+        dlg = ComparisonDialog(self._project, name, v, self)
+        dlg.exec()
 
     def _clear_variants(self):
         self._variants.clear()
@@ -482,10 +659,12 @@ class MainWindow(QMainWindow):
             return
         self._project = copy.deepcopy(snap)
         merge_default_profiles(self._project)
+        self._dirty = False
         self._counter = {k: 0 for k in self._counter}
         self._last_save_path = None
         self._clear_selected_object()
         self._ang_dist.set_project(self._project)
+        self._heatmap.set_project(self._project)
         self._properties.clear_selection()
         self._heatmap.clear()
         self._viewport.clear_ray_paths()
@@ -510,11 +689,15 @@ class MainWindow(QMainWindow):
         self._refresh_all()
 
     def _run_simulation(self):
+        if not self._run_btn.isEnabled():
+            return
         if self._sim_thread and self._sim_thread.isRunning():
             self.statusBar().showMessage("Simulation already running."); return
         if not self._project.sources:
             QMessageBox.warning(self, "No Sources", "Add at least one light source."); return
-        if not self._project.detectors:
+        if not any(s.enabled for s in self._project.sources):
+            QMessageBox.warning(self, "No Active Sources", "Enable at least one light source."); return
+        if not self._project.detectors and not self._project.sphere_detectors:
             QMessageBox.warning(self, "No Detectors", "Add at least one detector."); return
 
         self._progress.setVisible(True)
@@ -550,6 +733,8 @@ class MainWindow(QMainWindow):
         self._cancel_btn.setEnabled(False)
         self.statusBar().showMessage("Simulation complete.", 5000)
         self._heatmap.update_results(result)
+        self._plot_tab.update_results(result)
+        self._receiver_3d.update_results(result)
         self._center_tabs.setCurrentWidget(self._heatmap)
         if result.ray_paths:
             self._viewport.show_ray_paths(result.ray_paths)
