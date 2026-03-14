@@ -44,6 +44,16 @@ hidden_imports = [
     # numpy internals sometimes missed
     "numpy.core._methods",
     "numpy.lib.format",
+    # Numba JIT acceleration (optional — app works without it)
+    # Note: pyinstaller-hooks-contrib >= 2025.1 handles Numba's _RedirectSubpackage
+    # modules automatically. Install it alongside PyInstaller when building with Numba.
+    "numba",
+    "numba.core",
+    "numba.typed",
+    "numba.np",
+    "numba.np.ufunc",
+    "llvmlite",
+    "llvmlite.binding",
 ]
 
 # ---------------------------------------------------------------------------

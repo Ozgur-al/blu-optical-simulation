@@ -7,7 +7,7 @@ import numpy as np
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QTabWidget,
     QProgressBar, QStatusBar, QMessageBox, QFileDialog, QPushButton,
-    QDockWidget, QTextEdit,
+    QDockWidget, QTextEdit, QLabel,
 )
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QActionGroup, QKeySequence
@@ -29,6 +29,7 @@ from backlight_sim.gui.plot_tab import PlotTab
 from backlight_sim.gui.receiver_3d import Receiver3DWidget
 from backlight_sim.gui.spectral_data_panel import SpectralDataPanel
 from backlight_sim.io.angular_distributions import merge_default_profiles
+from backlight_sim.sim.accel import _NUMBA_AVAILABLE, warmup_jit_kernels
 
 
 class SimulationThread(QThread):
@@ -78,6 +79,16 @@ class MainWindow(QMainWindow):
         self._setup_menu()
         self._connect_signals()
         self._refresh_all()
+
+        # Eager JIT warmup: triggers LLVM compilation so first simulation runs at full speed
+        if _NUMBA_AVAILABLE:
+            ok = warmup_jit_kernels()
+            if ok:
+                self._log("JIT kernels compiled and ready (Numba acceleration active)")
+            else:
+                self._log("JIT warmup failed — falling back to NumPy kernels")
+        else:
+            self._log("JIT acceleration not available (install numba for 10-50x speedup)")
 
     def _init_default_materials(self):
         self._project.materials["default_reflector"] = Material(
@@ -138,6 +149,15 @@ class MainWindow(QMainWindow):
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.clicked.connect(self._cancel_simulation)
         self._cancel_btn.setEnabled(False)
+
+        # JIT status indicator
+        self._jit_label = QLabel("JIT: Active" if _NUMBA_AVAILABLE else "JIT: Off")
+        if _NUMBA_AVAILABLE:
+            self._jit_label.setStyleSheet("color: green; font-weight: bold; padding: 0 6px;")
+        else:
+            self._jit_label.setStyleSheet("color: grey; padding: 0 6px;")
+
+        status.addWidget(self._jit_label)
         status.addPermanentWidget(self._run_btn)
         status.addPermanentWidget(self._cancel_btn)
         status.addPermanentWidget(self._progress)

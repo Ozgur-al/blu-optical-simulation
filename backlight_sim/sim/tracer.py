@@ -27,6 +27,13 @@ from backlight_sim.sim.spectral import (
     sample_wavelengths, spectral_bin_centers, N_SPECTRAL_BINS, LAMBDA_MIN, LAMBDA_MAX,
     get_spd_from_project,
 )
+from backlight_sim.sim.accel import (
+    _NUMBA_AVAILABLE,
+    intersect_plane as _intersect_plane_accel,
+    intersect_sphere as _intersect_sphere_accel,
+    accumulate_grid_jit,
+    accumulate_sphere_jit,
+)
 
 _EPSILON = 1e-6
 
@@ -390,7 +397,7 @@ class RayTracer:
                 best_obj = np.full(n_active, -1, dtype=int)
 
                 for si, surf in enumerate(surfaces):
-                    t = _intersect_rays_plane(active_origins, active_dirs, surf.normal, surf.center,
+                    t = _intersect_plane_accel(active_origins, active_dirs, surf.normal, surf.center,
                                                surf.u_axis, surf.v_axis, surf.size)
                     closer = t < best_t
                     best_t[closer] = t[closer]
@@ -398,7 +405,7 @@ class RayTracer:
                     best_obj[closer] = si
 
                 for di, det in enumerate(detectors):
-                    t = _intersect_rays_plane(active_origins, active_dirs, det.normal, det.center,
+                    t = _intersect_plane_accel(active_origins, active_dirs, det.normal, det.center,
                                                det.u_axis, det.v_axis, det.size)
                     closer = t < best_t
                     best_t[closer] = t[closer]
@@ -406,7 +413,7 @@ class RayTracer:
                     best_obj[closer] = di
 
                 for sdi, sd in enumerate(sphere_dets):
-                    t = _intersect_rays_sphere(active_origins, active_dirs, sd.center, sd.radius)
+                    t = _intersect_sphere_accel(active_origins, active_dirs, sd.center, sd.radius)
                     closer = t < best_t
                     best_t[closer] = t[closer]
                     best_type[closer] = 2
@@ -414,7 +421,7 @@ class RayTracer:
 
                 # SolidBox face intersections (type 3)
                 for sfi, sface in enumerate(solid_faces):
-                    t = _intersect_rays_plane(active_origins, active_dirs,
+                    t = _intersect_plane_accel(active_origins, active_dirs,
                                                sface.normal, sface.center,
                                                sface.u_axis, sface.v_axis, sface.size)
                     closer = t < best_t
@@ -771,7 +778,7 @@ def _trace_single_source(project, source_name, base_seed):
         best_obj = np.full(n_active, -1, dtype=int)
 
         for si, surf in enumerate(surfaces):
-            t = _intersect_rays_plane(active_origins, active_dirs, surf.normal, surf.center,
+            t = _intersect_plane_accel(active_origins, active_dirs, surf.normal, surf.center,
                                        surf.u_axis, surf.v_axis, surf.size)
             closer = t < best_t
             best_t[closer] = t[closer]
@@ -779,7 +786,7 @@ def _trace_single_source(project, source_name, base_seed):
             best_obj[closer] = si
 
         for di, det in enumerate(detectors):
-            t = _intersect_rays_plane(active_origins, active_dirs, det.normal, det.center,
+            t = _intersect_plane_accel(active_origins, active_dirs, det.normal, det.center,
                                        det.u_axis, det.v_axis, det.size)
             closer = t < best_t
             best_t[closer] = t[closer]
@@ -788,7 +795,7 @@ def _trace_single_source(project, source_name, base_seed):
 
         # SolidBox face intersections (type 3)
         for sfi, sface in enumerate(solid_faces):
-            t = _intersect_rays_plane(active_origins, active_dirs,
+            t = _intersect_plane_accel(active_origins, active_dirs,
                                        sface.normal, sface.center,
                                        sface.u_axis, sface.v_axis, sface.size)
             closer = t < best_t
@@ -816,7 +823,7 @@ def _trace_single_source(project, source_name, base_seed):
             ix = np.clip(((u + hw) / det.size[0] * nx).astype(int), 0, nx - 1)
             iy = np.clip(((v + hh) / det.size[1] * ny).astype(int), 0, ny - 1)
             hw_arr = weights[hit_idx]
-            np.add.at(det_grids[det.name]["grid"], (iy, ix), hw_arr)
+            accumulate_grid_jit(det_grids[det.name]["grid"], iy, ix, hw_arr)
             det_grids[det.name]["hits"] += len(hw_arr)
             det_grids[det.name]["flux"] += float(hw_arr.sum())
             # Pass-through: advance ray past the detector plane
@@ -1042,7 +1049,7 @@ def _accumulate_sphere(sd: "SphereDetector", result: "SphereDetectorResult",
     i_theta = np.clip((theta / np.pi * n_theta).astype(int), 0, n_theta - 1)
     i_phi = np.clip((phi / (2.0 * np.pi) * n_phi).astype(int), 0, n_phi - 1)
 
-    np.add.at(result.grid, (i_theta, i_phi), hit_weights)
+    accumulate_sphere_jit(result.grid, i_theta, i_phi, hit_weights)
     result.total_hits += len(hit_weights)
     result.total_flux += float(hit_weights.sum())
 
@@ -1063,14 +1070,14 @@ def _accumulate(det: DetectorSurface, result: DetectorResult,
     ix = np.clip(((u + hw) / det.size[0] * nx).astype(int), 0, nx - 1)
     iy = np.clip(((v + hh) / det.size[1] * ny).astype(int), 0, ny - 1)
 
-    np.add.at(result.grid, (iy, ix), hit_weights)
+    accumulate_grid_jit(result.grid, iy, ix, hit_weights)
     result.total_hits += len(hit_weights)
     result.total_flux += float(hit_weights.sum())
 
     # Accumulate RGB channels if color data present
     if color_rgb is not None and result.grid_rgb is not None:
         for ch in range(3):
-            np.add.at(result.grid_rgb[:, :, ch], (iy, ix), hit_weights * color_rgb[ch])
+            accumulate_grid_jit(result.grid_rgb[:, :, ch], iy, ix, hit_weights * color_rgb[ch])
 
     # Accumulate spectral bins
     if wavelengths is not None and spec_centers is not None and result.grid_spectral is not None:
@@ -1080,4 +1087,4 @@ def _accumulate(det: DetectorSurface, result: DetectorResult,
         for b in range(n_bins):
             bmask = i_bin == b
             if bmask.any():
-                np.add.at(result.grid_spectral[:, :, b], (iy[bmask], ix[bmask]), hit_weights[bmask])
+                accumulate_grid_jit(result.grid_spectral[:, :, b], iy[bmask], ix[bmask], hit_weights[bmask])

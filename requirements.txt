@@ -3,3 +3,8 @@ pyqtgraph>=0.13
 numpy>=1.24
 PyOpenGL>=3.1
 pytest>=7.0
+# Optional: provides 10-50x JIT acceleration for the Monte Carlo tracer inner loops.
+# App runs correctly without it (graceful NumPy fallback).
+# When building PyInstaller executable with Numba, also install:
+#   pyinstaller-hooks-contrib>=2025.1
+numba>=0.64.0
