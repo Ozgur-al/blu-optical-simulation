@@ -8,7 +8,7 @@ import pyqtgraph as pg
 from PySide6.QtWidgets import (
     QMainWindow,
     QProgressBar, QStatusBar, QMessageBox, QFileDialog, QPushButton,
-    QDockWidget, QTextEdit, QLabel, QToolBar,
+    QTextEdit, QLabel, QToolBar, QSplitter, QTabWidget, QWidget,
 )
 from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSettings, QSize
 from PySide6.QtGui import QActionGroup, QKeySequence, QAction, QShortcut
@@ -61,6 +61,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Blu Optical Simulation")
         self.resize(1440, 920)
 
+
         self._project = Project()
         self._init_default_materials()
         merge_default_profiles(self._project)
@@ -111,11 +112,8 @@ class MainWindow(QMainWindow):
             "absorber", "absorber", reflectance=0.0, absorption=1.0)
 
     def _setup_ui(self):
-        # ---- Central widget: 3D viewport (always visible, never dockable) ----
-        self._viewport = Viewport3D()
-        self.setCentralWidget(self._viewport)
-
         # ---- Create all panels ----
+        self._viewport = Viewport3D()
         self._tree = ObjectTree()
         self._tree.setMinimumWidth(180)
 
@@ -138,80 +136,48 @@ class MainWindow(QMainWindow):
 
         self._properties = PropertiesPanel()
 
-        _dock_features = (
-            QDockWidget.DockWidgetFeature.DockWidgetMovable |
-            QDockWidget.DockWidgetFeature.DockWidgetFloatable |
-            QDockWidget.DockWidgetFeature.DockWidgetClosable
-        )
+        # ---- Central layout: left sidebar + center tabs ----
+        # Left sidebar: scene tree (top) + properties (bottom)
+        left_splitter = QSplitter(Qt.Orientation.Vertical)
+        left_splitter.addWidget(self._tree)
+        left_splitter.addWidget(self._properties)
+        left_splitter.setStretchFactor(0, 1)
+        left_splitter.setStretchFactor(1, 2)
 
-        def _make_dock(title, obj_name, widget):
-            dock = QDockWidget(title)
-            dock.setObjectName(obj_name)
-            dock.setWidget(widget)
-            dock.setFeatures(_dock_features)
-            return dock
+        # Center: tabbed panel area
+        self._center_tabs = QTabWidget()
+        self._center_tabs.setTabsClosable(True)
+        self._center_tabs.setMovable(True)
+        self._center_tabs.tabCloseRequested.connect(self._on_tab_close)
 
-        # ---- Left area: Scene tree ----
-        self._tree_dock = _make_dock("Scene", "scene_dock", self._tree)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._tree_dock)
+        # Registry: maps tab title -> widget (for opening/focusing existing tabs)
+        self._tab_registry: dict[str, QWidget] = {}
 
-        # ---- Right area: Properties (separate, not tabbed with result panels) ----
-        self._props_dock = _make_dock("Properties", "properties_dock", self._properties)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._props_dock)
+        # Default tabs: 3D View and Heatmap
+        self._open_tab("3D View", self._viewport, closable=False)
+        self._open_tab("Heatmap", self._heatmap, closable=False)
 
-        # ---- Right area: Result + analysis panels (tabbed together) ----
-        self._heatmap_dock   = _make_dock("Heatmap",      "heatmap_dock",   self._heatmap)
-        self._farfield_dock  = _make_dock("Far-field",    "farfield_dock",  self._far_field_panel)
-        self._receiver3d_dock = _make_dock("3D Receiver", "receiver3d_dock", self._receiver_3d)
-        self._plots_dock     = _make_dock("Plots",        "plots_dock",     self._plot_tab)
-        self._angdist_dock   = _make_dock("Angular Dist.", "angdist_dock",  self._ang_dist)
-        self._spectral_dock  = _make_dock("Spectral Data", "spectral_dock", self._spectral_panel)
-        self._bsdf_dock      = _make_dock("BSDF",         "bsdf_dock",      self._bsdf_panel)
+        # Main splitter: left sidebar | center tabs
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_splitter.addWidget(left_splitter)
+        main_splitter.addWidget(self._center_tabs)
+        main_splitter.setStretchFactor(0, 0)
+        main_splitter.setStretchFactor(1, 1)
+        main_splitter.setSizes([280, 1160])
 
-        # Add all result docks to right area, then tabify so they share space
-        for dock in (self._heatmap_dock, self._farfield_dock, self._receiver3d_dock,
-                     self._plots_dock, self._angdist_dock, self._spectral_dock, self._bsdf_dock):
-            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        self.setCentralWidget(main_splitter)
 
-        # Tabify result panels together (first added becomes base)
-        self.tabifyDockWidget(self._heatmap_dock, self._farfield_dock)
-        self.tabifyDockWidget(self._farfield_dock, self._receiver3d_dock)
-        self.tabifyDockWidget(self._receiver3d_dock, self._plots_dock)
-        self.tabifyDockWidget(self._plots_dock, self._angdist_dock)
-        self.tabifyDockWidget(self._angdist_dock, self._spectral_dock)
-        self.tabifyDockWidget(self._spectral_dock, self._bsdf_dock)
-
-        # Show heatmap tab by default
-        self._heatmap_dock.raise_()
-
-        # ---- Bottom area: Log dock ----
-        self._log_edit = QTextEdit()
-        self._log_edit.setReadOnly(True)
-        self._log_edit.setMaximumHeight(140)
-        self._log_dock = _make_dock("Log", "log_dock", self._log_edit)
-        self._log_dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable |
-            QDockWidget.DockWidgetFeature.DockWidgetClosable
-        )
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._log_dock)
-
-        # ---- Bottom area: Convergence dock (hidden by default) ----
+        # ---- Convergence plot (not docked — opened as a tab when needed) ----
         self._conv_plot = pg.PlotWidget()
         self._conv_plot.setLabel("left", "CV", units="%")
         self._conv_plot.setLabel("bottom", "Rays traced")
         self._conv_plot.setTitle("Convergence (CV% per source)")
-        self._conv_plot.setMaximumHeight(140)
         self._conv_plot.showGrid(x=True, y=True, alpha=0.3)
         self._conv_plot.addLegend()
-        self._conv_dock = QDockWidget("Convergence")
-        self._conv_dock.setObjectName("convergence_dock")
-        self._conv_dock.setWidget(self._conv_plot)
-        self._conv_dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable |
-            QDockWidget.DockWidgetFeature.DockWidgetClosable
-        )
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._conv_dock)
-        self._conv_dock.hide()
+
+        # ---- Log panel (opened as a tab when needed) ----
+        self._log_edit = QTextEdit()
+        self._log_edit.setReadOnly(True)
 
         # ---- Status bar ----
         status = QStatusBar()
@@ -237,6 +203,57 @@ class MainWindow(QMainWindow):
         status.addPermanentWidget(self._cancel_btn)
         status.addPermanentWidget(self._progress)
         self.setStatusBar(status)
+
+    # ------------------------------------------------------------------
+    # Tab management
+    # ------------------------------------------------------------------
+
+    def _open_tab(self, title: str, widget: QWidget, closable: bool = True):
+        """Open a panel as a tab, or focus it if already open."""
+        if title in self._tab_registry:
+            idx = self._center_tabs.indexOf(self._tab_registry[title])
+            if idx >= 0:
+                self._center_tabs.setCurrentIndex(idx)
+                return
+            # Widget was closed — re-add
+            del self._tab_registry[title]
+        idx = self._center_tabs.addTab(widget, title)
+        self._tab_registry[title] = widget
+        self._center_tabs.setCurrentIndex(idx)
+        if not closable:
+            # Remove close button for non-closable tabs
+            self._center_tabs.tabBar().setTabButton(
+                idx, self._center_tabs.tabBar().ButtonPosition.RightSide, None
+            )
+
+    def _on_tab_close(self, index: int):
+        """Handle tab close — remove from registry but don't destroy widget."""
+        widget = self._center_tabs.widget(index)
+        # Find and remove from registry
+        for title, w in list(self._tab_registry.items()):
+            if w is widget:
+                del self._tab_registry[title]
+                break
+        self._center_tabs.removeTab(index)
+
+    # ------------------------------------------------------------------
+    # Available panels for the Window menu
+    # ------------------------------------------------------------------
+
+    def _get_openable_panels(self) -> list[tuple[str, QWidget]]:
+        """Return list of (title, widget) for all panels that can be opened as tabs."""
+        return [
+            ("3D View", self._viewport),
+            ("Heatmap", self._heatmap),
+            ("Plots", self._plot_tab),
+            ("Angular Dist.", self._ang_dist),
+            ("Far-field", self._far_field_panel),
+            ("3D Receiver", self._receiver_3d),
+            ("Spectral Data", self._spectral_panel),
+            ("BSDF", self._bsdf_panel),
+            ("Convergence", self._conv_plot),
+            ("Log", self._log_edit),
+        ]
 
     def _setup_menu(self):
         mb = self.menuBar()
@@ -314,17 +331,10 @@ class MainWindow(QMainWindow):
         ):
             preset_menu.addAction(label, lambda p=preset: self._set_view_preset(p))
 
-        # Panel visibility toggles — dock.toggleViewAction() returns QAction that
-        # is automatically checked/unchecked when the dock is shown/hidden.
-        vm.addSeparator()
-        panels_menu = vm.addMenu("Panels")
-        for dock in (
-            self._tree_dock, self._props_dock, self._heatmap_dock,
-            self._farfield_dock, self._receiver3d_dock, self._plots_dock,
-            self._angdist_dock, self._spectral_dock, self._bsdf_dock,
-            self._log_dock, self._conv_dock,
-        ):
-            panels_menu.addAction(dock.toggleViewAction())
+        # Window menu — open panels as tabs
+        wm = mb.addMenu("&Window")
+        for title, widget in self._get_openable_panels():
+            wm.addAction(title, lambda t=title, w=widget: self._open_tab(t, w))
 
         tm = mb.addMenu("&Tools")
         tm.addAction("Measure...", self._open_measure_dialog)
@@ -387,20 +397,16 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _save_layout(self):
-        """Persist window geometry and dock/toolbar state to QSettings."""
+        """Persist window geometry to QSettings."""
         settings = QSettings("BluOptical", "BluSim")
         settings.setValue("geometry", self.saveGeometry())
-        settings.setValue("windowState", self.saveState())
 
     def _restore_layout(self):
-        """Restore window geometry and dock/toolbar state from QSettings."""
+        """Restore window geometry from QSettings."""
         settings = QSettings("BluOptical", "BluSim")
         geom = settings.value("geometry")
-        state = settings.value("windowState")
         if geom is not None:
             self.restoreGeometry(geom)
-        if state is not None:
-            self.restoreState(state)
 
     # ------------------------------------------------------------------
     # Dirty-flag & unsaved-changes guard
@@ -1005,9 +1011,8 @@ class MainWindow(QMainWindow):
                         pass
                     break
 
-        # Show and raise the heatmap dock after simulation completes
-        self._heatmap_dock.show()
-        self._heatmap_dock.raise_()
+        # Focus the heatmap tab after simulation completes
+        self._open_tab("Heatmap", self._heatmap, closable=False)
         if result.ray_paths:
             self._viewport.show_ray_paths(result.ray_paths)
 
@@ -1041,9 +1046,9 @@ class MainWindow(QMainWindow):
                 [], [], pen=pg.mkPen(color, width=1.5), name=src_name
             )
             self._conv_curves[src_idx] = curve
-            # Show dock on first data point
-            if not self._conv_dock.isVisible():
-                self._conv_dock.show()
+            # Open convergence tab on first data point
+            if "Convergence" not in self._tab_registry:
+                self._open_tab("Convergence", self._conv_plot)
 
         rays_list, cv_list = self._conv_data[src_idx]
         rays_list.append(n_rays)

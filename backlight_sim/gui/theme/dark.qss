@@ -29,7 +29,7 @@ QDockWidget::title {
     color: #00bcd4;
     padding: 4px 8px;
     font-weight: bold;
-    font-size: 11px;
+    font-size: 9pt;
     text-align: left;
     border-bottom: 1px solid #333;
 }
@@ -133,7 +133,7 @@ QToolButton {
     border: 1px solid transparent;
     border-radius: 4px;
     padding: 4px 8px;
-    font-size: 12px;
+    font-size: 10pt;
 }
 
 QToolButton:hover {
@@ -179,12 +179,12 @@ QTreeWidget::item:selected {
 
 QTreeWidget::branch {
     background-color: #1e1e1e;
-}
-
-QTreeWidget::branch:has-children:!has-siblings:closed,
-QTreeWidget::branch:closed:has-children:has-siblings {
     border-image: none;
     image: none;
+    width: 0px;
+    padding: 0px;
+    margin: 0px;
+    border: none;
 }
 
 /* ---- List widget ---- */
@@ -241,7 +241,7 @@ QHeaderView::section {
     border: none;
     border-right: 1px solid #2a2a2a;
     border-bottom: 1px solid #2a2a2a;
-    font-size: 11px;
+    font-size: 9pt;
 }
 
 QHeaderView::section:hover {
@@ -407,7 +407,7 @@ QPushButton {
     border-radius: 4px;
     padding: 5px 12px;
     min-height: 22px;
-    font-size: 12px;
+    font-size: 10pt;
 }
 
 QPushButton:hover {
@@ -512,7 +512,7 @@ QGroupBox {
     border-radius: 4px;
     margin-top: 8px;
     padding-top: 8px;
-    font-size: 11px;
+    font-size: 9pt;
     font-weight: bold;
 }
 
@@ -634,7 +634,7 @@ QTextEdit {
     color: #c0c0c0;
     border: none;
     font-family: "Consolas", "Courier New", monospace;
-    font-size: 11px;
+    font-size: 9pt;
     selection-background-color: #00bcd4;
     selection-color: #000000;
 }
@@ -644,7 +644,7 @@ QPlainTextEdit {
     color: #c0c0c0;
     border: none;
     font-family: "Consolas", "Courier New", monospace;
-    font-size: 11px;
+    font-size: 9pt;
 }
 
 /* ---- Progress bar ---- */
@@ -654,7 +654,7 @@ QProgressBar {
     border: 1px solid #333;
     border-radius: 3px;
     text-align: center;
-    font-size: 11px;
+    font-size: 9pt;
 }
 
 QProgressBar::chunk {
@@ -687,7 +687,7 @@ QToolTip {
     color: #e0e0e0;
     border: 1px solid #444;
     padding: 4px 6px;
-    font-size: 11px;
+    font-size: 9pt;
 }
 
 /* ---- Dialog ---- */

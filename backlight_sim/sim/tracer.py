@@ -464,6 +464,8 @@ class RayTracer:
             n_rays_traced = 0
             paths_recorded = False  # path recording happens only in first batch
             # Per-batch mean flux accumulator for convergence estimation
+            # Snapshot cumulative flux BEFORE this source so we track per-source delta
+            _flux_before_source = sum(dr.total_flux for dr in det_results.values())
             batch_fluxes: list[float] = []
 
             while n_rays_traced < n_total and not self._cancelled:
@@ -880,7 +882,8 @@ class RayTracer:
                     paths_recorded = True
 
                 n_rays_traced += n
-                batch_fluxes.append(sum(dr.total_flux for dr in det_results.values()))
+                # Track per-source flux delta (not cumulative across sources)
+                batch_fluxes.append(sum(dr.total_flux for dr in det_results.values()) - _flux_before_source)
 
                 # Convergence check (requires >= 2 batches and adaptive mode)
                 if _adaptive:
@@ -907,13 +910,13 @@ class RayTracer:
                 # n is the last batch_size; use n_total for progress
                 n = n_total  # restore for progress tracking
 
-        # Collect paths for this source
-        if record:
-            all_paths.extend(paths)
+            # Collect paths for this source
+            if record:
+                all_paths.extend(paths)
 
-        rays_processed += n_total
-        if progress_callback:
-            progress_callback(rays_processed / total_rays)
+            rays_processed += n_total
+            if progress_callback:
+                progress_callback(rays_processed / total_rays)
 
         # Compute far-field candela distributions for far_field sphere detectors
         for sd in sphere_dets:

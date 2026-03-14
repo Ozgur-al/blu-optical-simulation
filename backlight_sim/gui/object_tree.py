@@ -26,13 +26,30 @@ class ObjectTree(QTreeWidget):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._context_menu)
         self.itemSelectionChanged.connect(self._on_selection_changed)
+        self.itemExpanded.connect(self._update_arrow)
+        self.itemCollapsed.connect(self._update_arrow)
+        self.setRootIsDecorated(False)
+        self.setIndentation(16)
 
         self._group_items: dict[str, QTreeWidgetItem] = {}
         for group in GROUPS:
-            item = QTreeWidgetItem(self, [group])
+            item = QTreeWidgetItem(self, [f"\u25BC {group}"])
+            item.setData(0, Qt.ItemDataRole.UserRole + 1, group)
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
             item.setExpanded(True)
             self._group_items[group] = item
+
+    def _update_arrow(self, item: QTreeWidgetItem):
+        """Update the arrow prefix on group/parent items when expanded/collapsed."""
+        stored = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        if stored is not None:
+            arrow = "\u25BC" if item.isExpanded() else "\u25B6"
+            item.setText(0, f"{arrow} {stored}")
+
+    def _get_group_name(self, item: QTreeWidgetItem) -> str:
+        """Get the real group name from a top-level item (strips arrow prefix)."""
+        stored = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        return stored if stored else item.text(0)
 
     def refresh(self, project):
         """Rebuild the tree from the project model."""
@@ -90,7 +107,7 @@ class ObjectTree(QTreeWidget):
             return "", ""
         grandparent = parent.parent()
         # Face node: parent is a solid body node, grandparent is "Solid Bodies" group header
-        if grandparent is not None and grandparent.parent() is None and grandparent.text(0) == "Solid Bodies":
+        if grandparent is not None and grandparent.parent() is None and self._get_group_name(grandparent) == "Solid Bodies":
             # Determine actual body name from UserRole data stored on parent
             user_data = parent.data(0, Qt.ItemDataRole.UserRole)
             if user_data:
@@ -105,7 +122,7 @@ class ObjectTree(QTreeWidget):
             face_id = item.text(0)
             return "Solid Bodies", f"{body_name}::{face_id}"
         # Solid body parent node (level directly under group header)
-        if parent.parent() is None and parent.text(0) == "Solid Bodies":
+        if parent.parent() is None and self._get_group_name(parent) == "Solid Bodies":
             # Item is a solid body node itself
             user_data = item.data(0, Qt.ItemDataRole.UserRole)
             if user_data:
@@ -118,7 +135,7 @@ class ObjectTree(QTreeWidget):
                     return "Solid Bodies:box", name[len(prefix):]
             return "Solid Bodies:box", name
         # Normal item: parent is a group header (no grandparent)
-        group = parent.text(0)
+        group = self._get_group_name(parent)
         name = item.text(0)
         return group, name
 
@@ -157,7 +174,7 @@ class ObjectTree(QTreeWidget):
 
         # Clicked on a group header (top level)
         if item.parent() is None:
-            group = item.text(0)
+            group = self._get_group_name(item)
             if group == "Solid Bodies":
                 a1 = menu.addAction("Add Solid Box")
                 a1.triggered.connect(lambda: self.add_requested.emit("Solid Bodies:box"))
