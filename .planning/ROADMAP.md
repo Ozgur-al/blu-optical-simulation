@@ -44,11 +44,11 @@ Plans:
   2. Material reflectance and transmittance values change with wavelength via user-defined tables
   3. Detector result can be viewed as an sRGB color image computed from CIE XYZ integration
   4. KPI dashboard shows delta-CCx and delta-CCy color uniformity across the detector plane
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 02-01: Spectral accumulation vectorization, MP guard, per-ray wavelength wiring
-- [ ] 02-02: Wavelength-dependent material properties, spectral GUI panel and color uniformity KPIs
+- [ ] 02-01-PLAN.md — Data model, custom SPD lookup, blackbody generator, wavelength-dependent material interpolation, MP spectral guard, project I/O, tests
+- [ ] 02-02-PLAN.md — CIE colorimetry helpers, Spectral Data GUI panel, chromaticity diagram, Color Uniformity KPIs, click-to-inspect, export extensions
 
 ### Phase 3: Performance Acceleration
 **Goal**: A 1M-ray LGP simulation completes 10-50x faster than pure NumPy via Numba JIT, and large scenes use BVH acceleration
