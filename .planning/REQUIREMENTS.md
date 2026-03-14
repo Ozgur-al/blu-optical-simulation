@@ -49,8 +49,8 @@ Requirements for Phase 2 release. Each maps to roadmap phases.
 - [x] **UI-04**: Full undo/redo system (Ctrl+Z / Ctrl+Y) using QUndoStack for all scene mutations (add, delete, property edit)
 - [x] **UI-05**: Properties panel uses collapsible sections for property groups with expand/collapse arrows
 - [x] **UI-06**: Object tree shows per-type colored icons and enhanced context menus with Duplicate action
-- [ ] **UI-07**: Heatmap panel has selectable colormaps, crosshair cursor with live pixel values, and KPI cards with color-coded thresholds (green/yellow/red)
-- [ ] **UI-08**: Live heatmap preview updates during simulation at 5% intervals, with auto-focus on heatmap dock after completion
+- [x] **UI-07**: Heatmap panel has selectable colormaps, crosshair cursor with live pixel values, and KPI cards with color-coded thresholds (green/yellow/red)
+- [x] **UI-08**: Live heatmap preview updates during simulation at 5% intervals, with auto-focus on heatmap dock after completion
 
 ## v2 Requirements
 
@@ -124,8 +124,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | UI-04 | Phase 5 | Complete |
 | UI-05 | Phase 5 | Complete |
 | UI-06 | Phase 5 | Complete |
-| UI-07 | Phase 5 | Pending |
-| UI-08 | Phase 5 | Pending |
+| UI-07 | Phase 5 | Complete |
+| UI-08 | Phase 5 | Complete |
 
 **Coverage:**
 - v1 requirements: 24 total

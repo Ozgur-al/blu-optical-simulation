@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-03-15T21:44:00Z"
+last_updated: "2026-03-15T22:20:00Z"
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 16
-  completed_plans: 14
+  completed_plans: 15
 ---
 
 # Project State
@@ -23,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-03-14)
 ## Current Position
 
 Phase: 5 of 5 (UI Revamp) — In Progress
-Plan: 2 of N in current phase — COMPLETE (05-02 SUMMARY created)
-Status: 05-02 complete. QUndoStack undo/redo system implemented with command pattern for all scene mutations.
-Last activity: 2026-03-15 — Plan 05-02 complete (commands/__init__.py, base.py, source_commands.py, surface_commands.py, scene_commands.py, main_window.py)
+Plan: 4 of N in current phase — COMPLETE (05-04 SUMMARY created)
+Status: 05-04 complete. Enhanced heatmap with colormap selector, crosshair cursor, collapsible KPI cards, live simulation preview.
+Last activity: 2026-03-15 — Plan 05-04 complete (heatmap_panel.py, tracer.py, main_window.py)
 
-Progress: [█████████░] 88%
+Progress: [█████████░] 94%
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [█████████░] 88%
 | Phase 03-performance-acceleration P02 | 20 | 2 tasks | 7 files |
 | Phase 05-ui-rewamp P02 | 6 | 2 tasks | 6 files |
 | Phase 05-ui-rewamp P03 | 5 | 2 tasks | 4 files |
+| Phase 05-ui-rewamp P04 | 18 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -126,6 +127,10 @@ Recent decisions affecting current work:
 - [Phase 04-05]: smooth=False on GLMeshItem for far-field lobe: smooth=True overrides per-face faceColors with vertex-normal interpolation
 - [Phase 04-05]: Sphere detector accumulation in _trace_single_source uses inline numpy to avoid passing SphereDetectorResult between processes
 - [Phase 04-05]: sph_grids dict returned from _trace_single_source; merged in _run_multiprocess; compute_farfield_candela called after merge
+- [Phase 05-04]: Partial result emitted after each source completes (source-granularity) — matches natural progress callback rhythm; progress >= 0.05 guard prevents early empty snapshots
+- [Phase 05-04]: grid.copy() for partial snapshots — fast shallow numpy copy; no ray_paths/sphere_detectors/solid_body_stats in partial to minimize cross-thread transfer
+- [Phase 05-04]: CollapsibleSection wraps inner QWidget+QGridLayout (not addLayout directly) to preserve existing grid structure
+- [Phase 05-04]: _threshold_color() returns CSS color string; applied via label.setStyleSheet() for green/yellow/red threshold feedback
 
 ### Roadmap Evolution
 
@@ -145,5 +150,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-15
-Stopped at: Completed 05-02-PLAN.md — QUndoStack undo/redo system with command pattern
+Stopped at: Completed 05-04-PLAN.md — Enhanced heatmap, live preview (checkpoint awaiting visual verification)
 Resume file: None
