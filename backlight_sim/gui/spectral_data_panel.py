@@ -71,17 +71,22 @@ def _planckian_locus_xy(
 
 
 def _spectral_locus_xy() -> tuple[np.ndarray, np.ndarray]:
-    """Return CIE 1931 (x, y) spectral locus (closed with line of purples)."""
+    """Return CIE 1931 (x, y) spectral locus (closed with line of purples).
+
+    Only returns points where the CIE sum is above a threshold to avoid
+    the near-zero long-wavelength points collapsing to (0, 0).
+    """
     X = _CIE_X
     Y = _CIE_Y
     Z = _CIE_Z
     s = X + Y + Z
-    s = np.where(s > 0, s, 1.0)
-    x = X / s
-    y = Y / s
+    # Only keep points with meaningful CIE response (> 0.001 of peak)
+    valid = s > s.max() * 1e-3
+    x_v = X[valid] / s[valid]
+    y_v = Y[valid] / s[valid]
     # Close with line of purples (connect last to first point)
-    x_closed = np.append(x, x[0])
-    y_closed = np.append(y, y[0])
+    x_closed = np.append(x_v, x_v[0])
+    y_closed = np.append(y_v, y_v[0])
     return x_closed, y_closed
 
 
@@ -255,18 +260,22 @@ class SpectralDataPanel(QWidget):
 
     def _draw_static_loci(self):
         """Draw spectral locus and Planckian locus on the chromaticity diagram."""
-        # Spectral locus
+        # Spectral locus — use a bold white/light pen so it's visible on dark background
         xl, yl = _spectral_locus_xy()
-        locus_pen = pg.mkPen((180, 180, 255), width=1.5)
-        self._chroma_plot.plot(xl, yl, pen=locus_pen, name="Spectral locus")
+        locus_pen = pg.mkPen((200, 200, 255), width=2.0)
+        self._chroma_plot.plot(xl, yl, pen=locus_pen)
 
         # Planckian locus
         try:
             xp, yp = _planckian_locus_xy()
-            planck_pen = pg.mkPen((255, 150, 50), width=1.5)
-            self._chroma_plot.plot(xp, yp, pen=planck_pen, name="Planckian locus")
+            planck_pen = pg.mkPen((255, 180, 80), width=2.0)
+            self._chroma_plot.plot(xp, yp, pen=planck_pen)
         except Exception:
             pass  # Non-critical — skip if computation fails
+
+        # Fix view range to the standard CIE 1931 horseshoe region
+        self._chroma_plot.setXRange(0.0, 0.85, padding=0.02)
+        self._chroma_plot.setYRange(0.0, 0.92, padding=0.02)
 
     # ------------------------------------------------------------------
     # Public API
@@ -306,6 +315,9 @@ class SpectralDataPanel(QWidget):
                 except Exception:
                     pass
                 break
+        # Restore fixed CIE 1931 view range (scatter data must not override it)
+        self._chroma_plot.setXRange(0.0, 0.85, padding=0.02)
+        self._chroma_plot.setYRange(0.0, 0.92, padding=0.02)
 
     # ------------------------------------------------------------------
     # SPD section

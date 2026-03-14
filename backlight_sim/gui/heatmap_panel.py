@@ -132,6 +132,14 @@ class HeatmapPanel(QWidget):
         self._cbar.setImageItem(self._img)
         layout.addWidget(self._plot, stretch=3)
 
+        # ---- spectral mode status ----
+        self._spectral_status = QLabel()
+        self._spectral_status.setStyleSheet(
+            "color: orange; font-style: italic; padding: 2px 4px;"
+        )
+        self._spectral_status.hide()
+        layout.addWidget(self._spectral_status)
+
         # ---- ROI stats ----
         roi_row = QHBoxLayout()
         self._roi_toggle = QPushButton("Show ROI")
@@ -338,35 +346,49 @@ class HeatmapPanel(QWidget):
         use_rgb = (mode_idx == 1 and result.grid_rgb is not None)
         use_spectral = (mode_idx == 2 and result.grid_spectral is not None)
 
+        # Clear spectral status by default
+        self._spectral_status.hide()
+
+        _displayed = False
         if use_spectral:
             try:
                 from backlight_sim.sim.spectral import spectral_grid_to_rgb, spectral_bin_centers
-            except ImportError:
-                use_spectral = False
-        if use_spectral:
-            wl = spectral_bin_centers(result.grid_spectral.shape[2])
-            rgb = spectral_grid_to_rgb(result.grid_spectral, wl)
-            ny, nx = rgb.shape[:2]
-            rgba = np.ones((ny, nx, 4), dtype=np.float32)
-            rgba[:, :, :3] = rgb
-            self._img.setImage(rgba.transpose(1, 0, 2))
-            self._cbar.setLevels(values=(0, 1))
-        elif use_rgb:
-            rgb = result.grid_rgb.copy()
-            mx = rgb.max()
-            if mx > 0:
-                rgb = rgb / mx  # normalize to 0-1
-            # Convert to RGBA (ny, nx, 4) for ImageItem
-            ny, nx = rgb.shape[:2]
-            rgba = np.ones((ny, nx, 4), dtype=np.float32)
-            rgba[:, :, :3] = rgb.astype(np.float32)
-            self._img.setImage(rgba.transpose(1, 0, 2))  # ImageItem expects (width, height, 4)
-            self._cbar.setLevels(values=(0, 1))
-        else:
-            self._img.setImage(grid.T)
-            vmin, vmax = float(grid.min()), float(grid.max())
-            if vmax > vmin:
-                self._cbar.setLevels(values=(vmin, vmax))
+                wl = spectral_bin_centers(result.grid_spectral.shape[2])
+                rgb = spectral_grid_to_rgb(result.grid_spectral, wl)
+                ny, nx = rgb.shape[:2]
+                rgba = np.ones((ny, nx, 4), dtype=np.float32)
+                rgba[:, :, :3] = rgb
+                self._img.setImage(rgba.transpose(1, 0, 2))
+                self._cbar.setLevels(values=(0, 1))
+                _displayed = True
+            except Exception as _e:
+                self._spectral_status.setText(f"Spectral color error: {_e}")
+                self._spectral_status.show()
+        elif mode_idx == 2 and result.grid_spectral is None:
+            # Spectral color requested but no spectral data — show informational message
+            self._spectral_status.setText(
+                "Spectral Color: no spectral data — set source SPD to a non-white "
+                "profile (e.g. warm_white) and re-run."
+            )
+            self._spectral_status.show()
+
+        if not _displayed:
+            if use_rgb:
+                rgb = result.grid_rgb.copy()
+                mx = rgb.max()
+                if mx > 0:
+                    rgb = rgb / mx  # normalize to 0-1
+                # Convert to RGBA (ny, nx, 4) for ImageItem
+                ny, nx = rgb.shape[:2]
+                rgba = np.ones((ny, nx, 4), dtype=np.float32)
+                rgba[:, :, :3] = rgb.astype(np.float32)
+                self._img.setImage(rgba.transpose(1, 0, 2))  # ImageItem expects (width, height, 4)
+                self._cbar.setLevels(values=(0, 1))
+            else:
+                self._img.setImage(grid.T)
+                vmin, vmax = float(grid.min()), float(grid.max())
+                if vmax > vmin:
+                    self._cbar.setLevels(values=(vmin, vmax))
 
         avg  = float(grid.mean())
         peak = float(grid.max())
@@ -494,7 +516,9 @@ class HeatmapPanel(QWidget):
             n_bins = result.grid_spectral.shape[2]
             wl = spectral_bin_centers(n_bins)
             kpis = compute_color_kpis(result.grid_spectral, wl)
-        except Exception:
+        except Exception as exc:
+            import warnings
+            warnings.warn(f"Color KPI computation failed: {exc}", stacklevel=2)
             self._color_uni_box.hide()
             return
 
