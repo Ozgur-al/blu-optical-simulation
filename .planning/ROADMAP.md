@@ -31,9 +31,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — SolidBox dataclass + Fresnel/TIR physics engine (TDD)
-- [ ] 01-02-PLAN.md — Project I/O, LGP scene builder, preset, KPI dashboard
-- [ ] 01-03-PLAN.md — GUI: object tree, properties panel, viewport, geometry builder
+- [x] 01-01-PLAN.md — SolidBox dataclass + Fresnel/TIR physics engine (TDD)
+- [x] 01-02-PLAN.md — Project I/O, LGP scene builder, preset, KPI dashboard
+- [x] 01-03-PLAN.md — GUI: object tree, properties panel, viewport, geometry builder
 
 ### Phase 2: Spectral Engine
 **Goal**: Engineers can run wavelength-aware simulations and see the detector result as a color image with color uniformity KPIs

@@ -9,9 +9,9 @@ Requirements for Phase 2 release. Each maps to roadmap phases.
 
 ### Edge-Lit / LGP
 
-- [ ] **LGP-01**: User can define an LGP slab as a solid box with independent optical properties per face
+- [x] **LGP-01**: User can define an LGP slab as a solid box with independent optical properties per face
 - [x] **LGP-02**: Tracer computes Snell's law refraction, Fresnel reflection/transmission, and TIR at dielectric interfaces
-- [ ] **LGP-03**: User can see edge coupling efficiency (flux-through-edge / total-emitted) as a KPI after simulation
+- [x] **LGP-03**: User can see edge coupling efficiency (flux-through-edge / total-emitted) as a KPI after simulation
 
 ### Spectral Simulation
 
@@ -91,9 +91,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| LGP-01 | Phase 1 | Pending |
+| LGP-01 | Phase 1 | Complete |
 | LGP-02 | Phase 1 | Complete |
-| LGP-03 | Phase 1 | Pending |
+| LGP-03 | Phase 1 | Complete |
 | SPEC-01 | Phase 2 | Pending |
 | SPEC-02 | Phase 2 | Pending |
 | SPEC-03 | Phase 2 | Pending |
