@@ -1262,3 +1262,168 @@ def test_project_solid_prisms_default_empty():
     p = Project()
     assert hasattr(p, "solid_prisms")
     assert p.solid_prisms == []
+
+
+# ------------------------------------------------------------------
+# Phase 4 Plan 01 — BSDF engine tests
+# ------------------------------------------------------------------
+
+
+def _make_simple_bsdf_csv(path, uniform=True):
+    """Create a minimal BSDF CSV for testing (long-format 4-column)."""
+    import csv
+    theta_in_vals = [0.0, 30.0, 60.0]
+    theta_out_vals = [0.0, 30.0, 60.0, 90.0]
+    rows = []
+    for ti in theta_in_vals:
+        for to in theta_out_vals:
+            r_i = 1.0 if uniform else (1.0 if to < 30.0 else 0.0)
+            t_i = 0.0
+            rows.append([ti, to, r_i, t_i])
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["theta_in", "theta_out", "refl_intensity", "trans_intensity"])
+        writer.writerows(rows)
+
+
+def test_load_bsdf_csv_valid_file():
+    """load_bsdf_csv on a valid 4-column CSV returns dict with expected structure."""
+    import tempfile, os
+    from backlight_sim.io.bsdf_io import load_bsdf_csv
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        path = f.name
+    try:
+        _make_simple_bsdf_csv(path)
+        profile = load_bsdf_csv(path)
+        assert "theta_in" in profile
+        assert "theta_out" in profile
+        assert "refl_intensity" in profile
+        assert "trans_intensity" in profile
+        assert len(profile["theta_in"]) == 3
+        assert len(profile["theta_out"]) == 4
+        assert len(profile["refl_intensity"]) == 3    # M rows
+        assert len(profile["refl_intensity"][0]) == 4  # N cols
+    finally:
+        os.unlink(path)
+
+
+def test_load_bsdf_csv_missing_columns():
+    """load_bsdf_csv rejects CSV where refl+trans columns are missing (raises ValueError)."""
+    import tempfile, os
+    from backlight_sim.io.bsdf_io import load_bsdf_csv
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        f.write("theta_in,theta_out\n0,0\n30,30\n")
+        path = f.name
+    try:
+        with pytest.raises(ValueError, match="(?i)missing|column|refl|trans"):
+            load_bsdf_csv(path)
+    finally:
+        os.unlink(path)
+
+
+def test_validate_bsdf_rejects_energy_gain():
+    """validate_bsdf rejects profile where any theta_in row has total refl+trans > 1.0."""
+    from backlight_sim.io.bsdf_io import validate_bsdf
+
+    profile = {
+        "theta_in": [0.0, 30.0],
+        "theta_out": [0.0, 45.0, 90.0],
+        "refl_intensity": [[0.5, 0.5, 0.5], [0.5, 0.5, 0.5]],  # sum=1.5 per row
+        "trans_intensity": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+    }
+    valid, msg = validate_bsdf(profile)
+    assert not valid, f"Expected invalid BSDF (energy gain), got valid=True, msg={msg}"
+
+
+def test_validate_bsdf_accepts_valid_profile():
+    """validate_bsdf accepts a physically correct profile (sum refl+trans <= 1)."""
+    from backlight_sim.io.bsdf_io import validate_bsdf
+
+    profile = {
+        "theta_in": [0.0, 30.0],
+        "theta_out": [0.0, 45.0, 90.0],
+        "refl_intensity": [[0.3, 0.3, 0.3], [0.3, 0.3, 0.3]],
+        "trans_intensity": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+    }
+    valid, msg = validate_bsdf(profile)
+    assert valid, f"Expected valid BSDF, got valid=False, msg={msg}"
+
+
+def test_sample_bsdf_uniform_roughly_hemispherical():
+    """sample_bsdf with uniform BSDF produces spread in hemisphere."""
+    from backlight_sim.sim.sampling import sample_bsdf
+
+    rng = np.random.default_rng(42)
+    normal = np.array([0.0, 0.0, 1.0])
+    n = 1000
+    incident_dirs = np.tile(np.array([0.0, 0.0, -1.0]), (n, 1))
+
+    profile = {
+        "theta_in": [0.0, 30.0, 60.0, 90.0],
+        "theta_out": [0.0, 30.0, 60.0, 90.0],
+        "refl_intensity": [
+            [1.0, 1.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0, 1.0],
+        ],
+        "trans_intensity": [
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+        ],
+    }
+    scattered = sample_bsdf(n, incident_dirs, normal, profile, "reflect", rng)
+    assert scattered.shape == (n, 3)
+    # All reflected directions must be in the reflection hemisphere (z >= 0)
+    assert np.all(scattered[:, 2] >= -1e-6), "Some reflected rays are below surface"
+    mean_z = float(scattered[:, 2].mean())
+    assert 0.1 < mean_z < 0.99, f"Uniform BSDF mean z should be spread, got {mean_z:.3f}"
+
+
+def test_sample_bsdf_returns_unit_vectors():
+    """sample_bsdf mode=reflect: all returned directions are unit vectors."""
+    from backlight_sim.sim.sampling import sample_bsdf
+
+    rng = np.random.default_rng(7)
+    normal = np.array([0.0, 0.0, 1.0])
+    n = 500
+    incident_dirs = np.tile(np.array([0.0, 0.0, -1.0]), (n, 1))
+
+    profile = {
+        "theta_in": [0.0, 45.0, 90.0],
+        "theta_out": [0.0, 45.0, 90.0],
+        "refl_intensity": [[0.3, 0.3, 0.3], [0.3, 0.3, 0.3], [0.3, 0.3, 0.3]],
+        "trans_intensity": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+    }
+    scattered = sample_bsdf(n, incident_dirs, normal, profile, "reflect", rng)
+    norms = np.linalg.norm(scattered, axis=1)
+    np.testing.assert_allclose(norms, 1.0, atol=1e-10,
+                                err_msg="sample_bsdf returned non-unit direction vectors")
+
+
+def test_optical_properties_bsdf_profile_name_default():
+    """OpticalProperties.bsdf_profile_name defaults to empty string (backward compat)."""
+    from backlight_sim.core.materials import OpticalProperties
+    op = OpticalProperties("test_op")
+    assert hasattr(op, "bsdf_profile_name")
+    assert op.bsdf_profile_name == ""
+
+
+def test_material_bsdf_profile_name_default():
+    """Material.bsdf_profile_name defaults to empty string (backward compat)."""
+    from backlight_sim.core.materials import Material
+    m = Material("test_mat")
+    assert hasattr(m, "bsdf_profile_name")
+    assert m.bsdf_profile_name == ""
+
+
+def test_project_bsdf_profiles_default_empty():
+    """Project.bsdf_profiles defaults to empty dict (backward compat)."""
+    from backlight_sim.core.project_model import Project
+    p = Project()
+    assert hasattr(p, "bsdf_profiles")
+    assert p.bsdf_profiles == {}
