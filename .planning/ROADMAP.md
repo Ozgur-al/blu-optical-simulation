@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Refractive Physics and LGP** - Snell's law, Fresnel/TIR, solid box body, and end-to-end edge-lit LGP simulation (completed 2026-03-14)
 - [x] **Phase 2: Spectral Engine** - Per-ray wavelength, wavelength-dependent materials, spectral detector grids, CIE color display (completed 2026-03-14)
-- [x] **Phase 3: Performance Acceleration** - Numba JIT for inner loops, BVH spatial acceleration, adaptive sampling (completed 2026-03-14)
+- [x] **Phase 3: Performance Acceleration** - Numba JIT for inner loops, BVH spatial acceleration, adaptive sampling (completed 2026-03-14)
 - [ ] **Phase 4: Advanced Materials and Geometry** - Tabulated BRDF, far-field detector, cylinder and prism solid bodies
 
 ## Phase Details
@@ -72,13 +72,14 @@ Plans:
   1. User can import a goniophotometer BRDF CSV and assign it to any surface; rays reflect per the tabulated distribution
   2. User can add a far-field angular detector, run a simulation, and export the candela distribution as an IES file
   3. User can create a cylinder solid body and a prism solid body as scene objects with independent face optical properties
-**Plans**: TBD
+**Plans**: 5 plans
 
 Plans:
 - [x] 04-01: Tabulated BRDF import, 2D CDF importance sampling, surface assignment
 - [x] 04-02: Far-field angular detector with IES export
 - [x] 04-03: SolidCylinder + SolidPrism dataclasses, analytic intersection, Fresnel/TIR dispatch, I/O, viewport mesh rendering
 - [x] 04-04: GUI integration (BSDFPanel, FarFieldPanel, SolidCylinderForm/PrismForm, 3D intensity lobe, MainWindow wiring)
+- [ ] 04-05-PLAN.md — Gap closure: menu/toolbar entries, BSDF visibility, far-field tab auto-open, polar plot lock, lobe gradient, radius visibility
 
 ### Phase 5: UI Revamp
 **Goal**: Application has a professional dark-themed interface with dockable panels, toolbar, undo/redo, collapsible properties, enhanced heatmap with live simulation preview — matching the look and workflow of engineering tools like Blender and Fusion 360
@@ -109,5 +110,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Refractive Physics and LGP | 3/3 | Complete   | 2026-03-14 |
 | 2. Spectral Engine | 2/2 | Complete   | 2026-03-14 |
 | 3. Performance Acceleration | 2/2 | Complete   | 2026-03-14 |
-| 4. Advanced Materials and Geometry | 4/4 | Complete (awaiting human verify) | 2026-03-14 |
+| 4. Advanced Materials and Geometry | 4/5 | Gap closure in progress | - |
 | 5. UI Revamp | 0/4 | Not Started | - |
