@@ -47,8 +47,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Data model, custom SPD lookup, blackbody generator, wavelength-dependent material interpolation, MP spectral guard, project I/O, tests
-- [ ] 02-02-PLAN.md — CIE colorimetry helpers, Spectral Data GUI panel, chromaticity diagram, Color Uniformity KPIs, click-to-inspect, export extensions
+- [x] 02-01-PLAN.md — Data model, custom SPD lookup, blackbody generator, wavelength-dependent material interpolation, MP spectral guard, project I/O, tests
+- [x] 02-02-PLAN.md — CIE colorimetry helpers, Spectral Data GUI panel, chromaticity diagram, Color Uniformity KPIs, click-to-inspect, export extensions
 
 ### Phase 3: Performance Acceleration
 **Goal**: A 1M-ray LGP simulation completes 10-50x faster than pure NumPy via Numba JIT, and large scenes use BVH acceleration

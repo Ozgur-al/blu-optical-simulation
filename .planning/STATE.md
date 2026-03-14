@@ -35,29 +35,29 @@ See: .planning/PROJECT.md (updated 2026-03-14)
 
 ## Current Position
 
-Phase: 2 of 4 (Spectral Engine) — IN PROGRESS
-Plan: 1 of ? in current phase — COMPLETE
-Status: Phase 2 plan 01 complete, ready for Phase 2 plan 02
-Last activity: 2026-03-14 — Plan 02-01 complete (Spectral engine backbone: custom SPD profiles, blackbody SPD, per-wavelength material R/T, MP guard, project I/O)
+Phase: 2 of 4 (Spectral Engine) — COMPLETE
+Plan: 2 of 2 in current phase — COMPLETE
+Status: Phase 2 complete. Plan 02-02 (Spectral Engine GUI: CIE 1931 chromaticity diagram, Color Uniformity KPIs, click-to-inspect spectrum, Spectral Color heatmap mode) complete and verified.
+Last activity: 2026-03-14 — Plan 02-02 complete (Spectral GUI: chromaticity diagram, Color Uniformity KPIs, spectral color mode, click-to-inspect, CSV/HTML export extensions)
 
-Progress: [████░░░░░░] 40%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: 7.25 min
-- Total execution time: 0.49 hours
+- Total plans completed: 5
+- Average duration: 9.8 min
+- Total execution time: 0.82 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | Phase 01 | 3 | 19 min | 6.3 min |
-| Phase 02 | 1 | 12 min | 12 min |
+| Phase 02 | 2 | 36 min | 18 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (8 min, 39 tests), 01-02 (3 min, 2 tasks, 4 files), 01-03 (8 min, 2 tasks, 5 files), 02-01 (12 min, 1 task TDD, 5 files)
+- Last 5 plans: 01-02 (3 min, 2 tasks, 4 files), 01-03 (8 min, 2 tasks, 5 files), 02-01 (12 min, 1 task TDD, 5 files), 02-02 (24 min, 3 tasks, 5 files)
 - Trend: stable
 
 *Updated after each plan completion*
@@ -65,6 +65,7 @@ Progress: [████░░░░░░] 40%
 | Phase 01 P02 | 3 min | 2 tasks | 4 files |
 | Phase 01 P03 | 8 min | 2 tasks | 5 files |
 | Phase 02 P01 | 12 min | 1 task TDD | 5 files |
+| Phase 02 P02 | 24 min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -91,6 +92,9 @@ Recent decisions affecting current work:
 - [Phase 02-spectral-engine]: Robertson 1968 31-entry isotherm table inlined for CCT estimation; clamped to [1000, 25000] K
 - [Phase 02-spectral-engine]: Color Uniformity KPI section hidden by default; shown when grid_spectral is not None
 - [Phase 02-spectral-engine]: compute_color_kpis uses luminance-weighted mean CCT (by Y channel)
+- [Phase 02-02]: Spectral locus filters CIE sum < 1e-3 of peak — removes 780nm region collapse to (0,0) artifact
+- [Phase 02-02]: Fixed CIE 1931 view range [0,0.85]x[0,0.92] enforced both at init and after scatter update — pyqtgraph auto-range must not override diagram
+- [Phase 02-02]: Spectral Color mode uses _displayed flag + orange status QLabel — user sees explicit feedback when grid_spectral is None instead of silent intensity fallback
 
 ### Pending Todos
 
@@ -106,5 +110,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-14
-Stopped at: Completed 02-01-PLAN.md (Spectral engine backbone: custom SPD, blackbody, per-wavelength R/T, MP guard, project I/O)
+Stopped at: Completed 02-02-PLAN.md (Spectral Engine GUI: CIE 1931 chromaticity diagram, Color Uniformity KPIs, Spectral Color mode with status feedback, click-to-inspect, CSV/HTML exports)
 Resume file: None
