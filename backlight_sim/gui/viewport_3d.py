@@ -149,10 +149,13 @@ class Viewport3D(QWidget):
                 (self._selected_name == cyl.name or
                  (self._selected_name and self._selected_name.startswith(f"{cyl.name}::")))
             )
+            selected_face = None
+            if is_selected and self._selected_name and "::" in self._selected_name:
+                selected_face = self._selected_name.split("::", 1)[1]
             mat = project.materials.get(cyl.material_name)
             color = _material_color(mat)
             edge_color = (1.0, 1.0, 0.0, 1.0) if is_selected else (*color, 1.0)
-            self._draw_solid_cylinder(cyl, color, edge_color)
+            self._draw_solid_cylinder(cyl, color, edge_color, selected_face=selected_face)
 
         # Solid Prisms
         for prism in getattr(project, "solid_prisms", []):
@@ -161,10 +164,13 @@ class Viewport3D(QWidget):
                 (self._selected_name == prism.name or
                  (self._selected_name and self._selected_name.startswith(f"{prism.name}::")))
             )
+            selected_face = None
+            if is_selected and self._selected_name and "::" in self._selected_name:
+                selected_face = self._selected_name.split("::", 1)[1]
             mat = project.materials.get(prism.material_name)
             color = _material_color(mat)
             edge_color = (1.0, 1.0, 0.0, 1.0) if is_selected else (*color, 1.0)
-            self._draw_solid_prism(prism, color, edge_color)
+            self._draw_solid_prism(prism, color, edge_color, selected_face=selected_face)
 
     def _draw_solid_box(self, box, is_selected: bool = False):
         """Render a SolidBox as a semi-transparent solid with visible edges."""
@@ -198,7 +204,7 @@ class Viewport3D(QWidget):
                 self._view.addItem(mesh)
                 self._scene_items.append(mesh)
 
-    def _draw_solid_cylinder(self, cyl, color, edge_color, n_seg=32):
+    def _draw_solid_cylinder(self, cyl, color, edge_color, selected_face=None, n_seg=32):
         """Render a SolidCylinder as a smooth mesh or wireframe."""
         axis = np.asarray(cyl.axis, float)
         # Build orthonormal basis perpendicular to axis
@@ -222,46 +228,59 @@ class Viewport3D(QWidget):
             np.cos(angles)[:, None] * u[None, :] + np.sin(angles)[:, None] * v[None, :]
         )
 
+        _hl = (1.0, 1.0, 0.0)  # highlight yellow
+
         if self._view_mode == "wireframe":
-            # Draw top ring, bottom ring, and a few longitudinal lines
-            for ring in (ring_top, ring_bot):
-                loop = np.vstack([ring, ring[:1]])
-                item = gl.GLLinePlotItem(pos=loop.astype(float), color=edge_color, width=2, mode="line_strip")
-                self._view.addItem(item)
-                self._scene_items.append(item)
+            top_color = (*_hl, 1.0) if selected_face == "top_cap" else edge_color
+            bot_color = (*_hl, 1.0) if selected_face == "bottom_cap" else edge_color
+            side_color = (*_hl, 1.0) if selected_face == "side" else edge_color
+            top_w = 4 if selected_face == "top_cap" else 2
+            bot_w = 4 if selected_face == "bottom_cap" else 2
+            side_w = 4 if selected_face == "side" else 2
+            loop_t = np.vstack([ring_top, ring_top[:1]])
+            item = gl.GLLinePlotItem(pos=loop_t.astype(float), color=top_color, width=top_w, mode="line_strip")
+            self._view.addItem(item); self._scene_items.append(item)
+            loop_b = np.vstack([ring_bot, ring_bot[:1]])
+            item = gl.GLLinePlotItem(pos=loop_b.astype(float), color=bot_color, width=bot_w, mode="line_strip")
+            self._view.addItem(item); self._scene_items.append(item)
             for i in range(0, n_seg, n_seg // 4):
                 pts = np.array([ring_bot[i], ring_top[i]], dtype=float)
-                item = gl.GLLinePlotItem(pos=pts, color=edge_color, width=2, mode="lines")
-                self._view.addItem(item)
-                self._scene_items.append(item)
+                item = gl.GLLinePlotItem(pos=pts, color=side_color, width=side_w, mode="lines")
+                self._view.addItem(item); self._scene_items.append(item)
         else:
             alpha = 0.25 if self._view_mode == "transparent" else 0.5
-            face_color = (*color, alpha)
-            # Build mesh: indices 0..n_seg-1 = top ring, n_seg..2n_seg-1 = bot ring
-            # n_seg*2 = top center, n_seg*2+1 = bot center
+            normal_color = (*color, alpha)
+            highlight_color = (*_hl, min(alpha + 0.3, 0.8))
             verts_list = list(ring_top) + list(ring_bot) + [top_center, bot_center]
             verts = np.array(verts_list, dtype=float)
             faces_list = []
+            face_groups = []
             for i in range(n_seg):
                 ni = (i + 1) % n_seg
-                # side quad (2 triangles)
                 faces_list.append([i, ni, ni + n_seg])
+                face_groups.append("side")
                 faces_list.append([i, ni + n_seg, i + n_seg])
+                face_groups.append("side")
             tc_idx = n_seg * 2
             bc_idx = n_seg * 2 + 1
             for i in range(n_seg):
                 ni = (i + 1) % n_seg
-                faces_list.append([tc_idx, ni, i])         # top cap (outward)
-                faces_list.append([bc_idx, i + n_seg, ni + n_seg])  # bot cap (outward)
+                faces_list.append([tc_idx, ni, i])
+                face_groups.append("top_cap")
+                faces_list.append([bc_idx, i + n_seg, ni + n_seg])
+                face_groups.append("bottom_cap")
             faces = np.array(faces_list, dtype=int)
-            colors = np.array([face_color] * len(faces), dtype=float)
+            colors = np.array([
+                highlight_color if selected_face is not None and g == selected_face else normal_color
+                for g in face_groups
+            ], dtype=float)
             mesh = gl.GLMeshItem(vertexes=verts, faces=faces, faceColors=colors,
                                  smooth=True, drawEdges=True, edgeColor=edge_color)
             mesh.setGLOptions("translucent")
             self._view.addItem(mesh)
             self._scene_items.append(mesh)
 
-    def _draw_solid_prism(self, prism, color, edge_color):
+    def _draw_solid_prism(self, prism, color, edge_color, selected_face=None):
         """Render a SolidPrism as a faceted mesh or wireframe."""
         import math
         axis = np.asarray(prism.axis, float)
@@ -287,35 +306,58 @@ class Viewport3D(QWidget):
             np.cos(angles)[:, None] * u[None, :] + np.sin(angles)[:, None] * v[None, :]
         )
 
+        _hl = (1.0, 1.0, 0.0)
+
         if self._view_mode == "wireframe":
-            for ring in (ring_top, ring_bot):
-                loop = np.vstack([ring, ring[:1]])
-                item = gl.GLLinePlotItem(pos=loop.astype(float), color=edge_color, width=2, mode="line_strip")
-                self._view.addItem(item)
-                self._scene_items.append(item)
+            top_color = (*_hl, 1.0) if selected_face == "cap_top" else edge_color
+            bot_color = (*_hl, 1.0) if selected_face == "cap_bottom" else edge_color
+            top_w = 4 if selected_face == "cap_top" else 2
+            bot_w = 4 if selected_face == "cap_bottom" else 2
+            loop_t = np.vstack([ring_top, ring_top[:1]])
+            item = gl.GLLinePlotItem(pos=loop_t.astype(float), color=top_color, width=top_w, mode="line_strip")
+            self._view.addItem(item); self._scene_items.append(item)
+            loop_b = np.vstack([ring_bot, ring_bot[:1]])
+            item = gl.GLLinePlotItem(pos=loop_b.astype(float), color=bot_color, width=bot_w, mode="line_strip")
+            self._view.addItem(item); self._scene_items.append(item)
             for i in range(n):
-                pts = np.array([ring_bot[i], ring_top[i]], dtype=float)
-                item = gl.GLLinePlotItem(pos=pts, color=edge_color, width=2, mode="lines")
-                self._view.addItem(item)
-                self._scene_items.append(item)
+                is_side_sel = selected_face == f"side_{i}"
+                s_color = (*_hl, 1.0) if is_side_sel else edge_color
+                s_w = 4 if is_side_sel else 2
+                ni = (i + 1) % n
+                for pts in [
+                    np.array([ring_bot[i], ring_top[i]], dtype=float),
+                    np.array([ring_top[i], ring_top[ni]], dtype=float),
+                    np.array([ring_bot[i], ring_bot[ni]], dtype=float),
+                ]:
+                    item = gl.GLLinePlotItem(pos=pts, color=s_color, width=s_w, mode="lines")
+                    self._view.addItem(item); self._scene_items.append(item)
         else:
             alpha = 0.25 if self._view_mode == "transparent" else 0.5
-            face_color = (*color, alpha)
+            normal_color = (*color, alpha)
+            highlight_color = (*_hl, min(alpha + 0.3, 0.8))
             verts_list = list(ring_top) + list(ring_bot) + [top_center, bot_center]
             verts = np.array(verts_list, dtype=float)
             faces_list = []
+            face_groups = []
             for i in range(n):
                 ni = (i + 1) % n
                 faces_list.append([i, ni, ni + n])
+                face_groups.append(f"side_{i}")
                 faces_list.append([i, ni + n, i + n])
+                face_groups.append(f"side_{i}")
             tc_idx = n * 2
             bc_idx = n * 2 + 1
             for i in range(n):
                 ni = (i + 1) % n
                 faces_list.append([tc_idx, ni, i])
+                face_groups.append("cap_top")
                 faces_list.append([bc_idx, i + n, ni + n])
+                face_groups.append("cap_bottom")
             faces = np.array(faces_list, dtype=int)
-            colors = np.array([face_color] * len(faces), dtype=float)
+            colors = np.array([
+                highlight_color if selected_face is not None and g == selected_face else normal_color
+                for g in face_groups
+            ], dtype=float)
             mesh = gl.GLMeshItem(vertexes=verts, faces=faces, faceColors=colors,
                                  smooth=False, drawEdges=True, edgeColor=edge_color)
             mesh.setGLOptions("translucent")
@@ -388,13 +430,15 @@ class Viewport3D(QWidget):
             a_c = np.full_like(t, 0.8)
             return np.stack([r_c, g_c, b_c, a_c], axis=-1)
 
-        # Per-face color from average of two vertex t-values
+        # Per-face color from average of three vertex t-values
         n_faces = len(faces)
         face_t = np.zeros(n_faces, dtype=float)
         norm_flat = norm_grid.reshape(-1)
         for fi in range(n_faces):
             v0, v1, v2 = faces[fi]
             face_t[fi] = (norm_flat[v0] + norm_flat[v1] + norm_flat[v2]) / 3.0
+        # Gamma compression to spread color range across the full cool-to-warm map
+        face_t = np.power(np.clip(face_t, 0.0, 1.0), 0.35)
         colors = _cool_warm(face_t)
 
         mesh = gl.GLMeshItem(
