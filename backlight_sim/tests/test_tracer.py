@@ -1241,6 +1241,140 @@ def test_bvh_simulation_same_result_as_bruteforce():
 
 
 # ------------------------------------------------------------------
+# Phase 3 Plan 02 — Adaptive sampling tests
+# ------------------------------------------------------------------
+
+
+def test_adaptive_sampling_converges_early():
+    """With a loose CV target, adaptive sampling should stop before n_total rays."""
+    project = _make_box_scene(rays_per_source=10_000)
+    project.settings.adaptive_sampling = True
+    project.settings.convergence_cv_target = 50.0   # very loose — should converge fast
+    project.settings.check_interval = 500
+
+    result = RayTracer(project).run()
+    det = result.detectors["top_detector"]
+    assert det.total_hits > 0, "Adaptive simulation produced zero hits"
+    assert det.total_flux > 0, "Adaptive simulation produced zero flux"
+    # With cv_target=50% and check_interval=500, should stop well before 10k rays
+    # (total_hits < 10_000 rays × fraction_that_reach_detector)
+    # Just assert it ran without error and produced results
+
+
+def test_adaptive_sampling_disabled_traces_full():
+    """When adaptive_sampling=False, all n rays are traced (no early stopping)."""
+    project = _make_box_scene(rays_per_source=2000)
+    project.settings.adaptive_sampling = False
+    project.settings.check_interval = 100  # would stop early if adaptive were on
+
+    convergence_calls = []
+    result = RayTracer(project).run(
+        convergence_callback=lambda s, n, cv: convergence_calls.append((s, n, cv))
+    )
+    det = result.detectors["top_detector"]
+    assert det.total_hits > 0
+    # No convergence callbacks should be issued when adaptive is off
+    assert len(convergence_calls) == 0, (
+        f"Expected no convergence callbacks with adaptive=False, got {len(convergence_calls)}"
+    )
+
+
+def test_adaptive_mp_guard():
+    """adaptive_sampling=True + use_multiprocessing=True should warn and run."""
+    import warnings
+    project = _make_box_scene(rays_per_source=500)
+    project.settings.adaptive_sampling = True
+    project.settings.use_multiprocessing = True
+    project.settings.record_ray_paths = 0
+    # Add second source for MP to kick in
+    src2 = PointSource("src2", np.array([1.0, 0.0, 0.0]), flux=100.0)
+    project.sources.append(src2)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        result = RayTracer(project).run()
+    det = result.detectors["top_detector"]
+    assert det.total_hits > 0, "MP+adaptive guard should still produce results"
+    # Should have issued a warning about adaptive+MP
+    warning_msgs = [str(warning.message) for warning in w]
+    assert any("adaptive" in msg.lower() or "multiprocessing" in msg.lower()
+               for msg in warning_msgs), (
+        f"Expected adaptive/MP warning, got: {warning_msgs}"
+    )
+
+
+def test_convergence_callback_receives_data():
+    """convergence_callback receives (src_idx, n_rays, cv_pct) tuples."""
+    project = _make_box_scene(rays_per_source=2000)
+    project.settings.adaptive_sampling = True
+    project.settings.check_interval = 500
+    project.settings.convergence_cv_target = 100.0  # never converge, run all batches
+
+    calls = []
+    result = RayTracer(project).run(
+        convergence_callback=lambda s, n, cv: calls.append((s, n, cv))
+    )
+    assert len(calls) > 0, "Expected convergence callbacks"
+    src_idxs = [c[0] for c in calls]
+    assert 0 in src_idxs, "Expected source 0 in callbacks"
+    # cv_pct should be a float >= 0
+    for s, n, cv in calls:
+        assert isinstance(s, int)
+        assert n > 0
+        assert cv >= 0.0
+
+
+def test_project_serialization_adaptive_fields():
+    """Project save/load round-trips adaptive sampling fields correctly."""
+    from backlight_sim.io.project_io import project_to_dict, save_project, load_project
+    import tempfile, os
+
+    p = Project(name="adaptive_serial_test")
+    p.settings.adaptive_sampling = False
+    p.settings.convergence_cv_target = 3.5
+    p.settings.check_interval = 750
+
+    d = project_to_dict(p)
+    assert d["settings"]["adaptive_sampling"] is False
+    assert d["settings"]["convergence_cv_target"] == pytest.approx(3.5)
+    assert d["settings"]["check_interval"] == 750
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        path = f.name
+    try:
+        save_project(p, path)
+        loaded = load_project(path)
+        assert loaded.settings.adaptive_sampling is False
+        assert loaded.settings.convergence_cv_target == pytest.approx(3.5)
+        assert loaded.settings.check_interval == 750
+    finally:
+        os.unlink(path)
+
+
+def test_project_load_without_adaptive_fields_uses_defaults():
+    """Old project JSON without adaptive fields loads with sensible defaults."""
+    from backlight_sim.io.project_io import save_project, load_project
+    import tempfile, os, json
+
+    p = Project(name="old_project")
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
+        path = f.name
+    try:
+        save_project(p, path)
+        # Remove adaptive fields from JSON (simulate old project)
+        data = json.loads(open(path, encoding="utf-8").read())
+        for key in ("adaptive_sampling", "convergence_cv_target", "check_interval"):
+            data["settings"].pop(key, None)
+        open(path, "w", encoding="utf-8").write(json.dumps(data))
+        # Load — should use defaults
+        loaded = load_project(path)
+        assert loaded.settings.adaptive_sampling is True
+        assert loaded.settings.convergence_cv_target == pytest.approx(2.0)
+        assert loaded.settings.check_interval == 1000
+    finally:
+        os.unlink(path)
+
+
+# ------------------------------------------------------------------
 # Phase 4 Plan 03 — SolidCylinder and SolidPrism dataclass tests
 # ------------------------------------------------------------------
 
@@ -1698,3 +1832,106 @@ def test_project_bsdf_profiles_default_empty():
     p = Project()
     assert hasattr(p, "bsdf_profiles")
     assert p.bsdf_profiles == {}
+
+
+def test_bsdf_integration_tracer_produces_detector_hits():
+    """Tracer dispatches BSDF sampling: scene with BSDF surface produces detector hits."""
+    from backlight_sim.core.materials import OpticalProperties
+
+    # Simple box scene with a highly reflective BSDF surface on the floor
+    materials = {
+        "wall": Material(name="wall", surface_type="reflector",
+                         reflectance=0.9, absorption=0.1),
+    }
+    # Add an optical properties entry with BSDF assigned
+    op_bsdf = OpticalProperties("bsdf_floor", surface_type="reflector",
+                                bsdf_profile_name="test_bsdf")
+
+    surfaces = [
+        Rectangle.axis_aligned("floor",      [0, 0, -5], (20, 20), 2, -1.0, "wall"),
+        Rectangle.axis_aligned("wall_left",  [-10, 0, 0], (20, 10), 0, -1.0, "wall"),
+        Rectangle.axis_aligned("wall_right", [10, 0, 0],  (20, 10), 0,  1.0, "wall"),
+        Rectangle.axis_aligned("wall_front", [0, -10, 0], (20, 10), 1, -1.0, "wall"),
+        Rectangle.axis_aligned("wall_back",  [0, 10, 0],  (20, 10), 1,  1.0, "wall"),
+    ]
+    # Override floor to use BSDF optical properties
+    surfaces[0].optical_properties_name = "bsdf_floor"
+
+    detectors = [
+        DetectorSurface.axis_aligned("top_detector", [0, 0, 5], (20, 20), 2, 1.0, (20, 20)),
+    ]
+    sources = [PointSource("src1", np.array([0.0, 0.0, 0.0]), flux=1000.0)]
+    settings = SimulationSettings(rays_per_source=2000, max_bounces=50,
+                                  energy_threshold=0.001, random_seed=42,
+                                  record_ray_paths=0)
+
+    # Create a BSDF profile: strongly forward-scattering (reflect back up)
+    bsdf_profile = {
+        "theta_in": [0.0, 30.0, 60.0, 90.0],
+        "theta_out": [0.0, 30.0, 60.0, 90.0],
+        "refl_intensity": [
+            [0.9, 0.05, 0.02, 0.0],
+            [0.9, 0.05, 0.02, 0.0],
+            [0.9, 0.05, 0.02, 0.0],
+            [0.9, 0.05, 0.02, 0.0],
+        ],
+        "trans_intensity": [
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+        ],
+    }
+
+    project = Project(
+        name="bsdf_integration_test",
+        sources=sources, surfaces=surfaces,
+        materials=materials,
+        optical_properties={"bsdf_floor": op_bsdf},
+        detectors=detectors,
+        settings=settings,
+        bsdf_profiles={"test_bsdf": bsdf_profile},
+    )
+
+    result = RayTracer(project).run()
+    det = result.detectors["top_detector"]
+    assert det.total_hits > 0, "Expected detector hits with BSDF surface"
+    assert det.total_flux > 0, "Expected non-zero flux with BSDF surface"
+
+
+def test_bsdf_project_io_roundtrip():
+    """Project with bsdf_profiles should round-trip through JSON correctly."""
+    from backlight_sim.io.project_io import save_project, load_project
+    import tempfile, os
+
+    profile = {
+        "theta_in": [0.0, 30.0, 60.0],
+        "theta_out": [0.0, 30.0, 60.0, 90.0],
+        "refl_intensity": [
+            [0.3, 0.3, 0.2, 0.0],
+            [0.3, 0.3, 0.2, 0.0],
+            [0.3, 0.3, 0.2, 0.0],
+        ],
+        "trans_intensity": [
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+        ],
+    }
+
+    p = Project(name="bsdf_io_test")
+    p.bsdf_profiles = {"my_bsdf": profile}
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        path = f.name
+    try:
+        save_project(p, path)
+        p2 = load_project(path)
+        assert "my_bsdf" in p2.bsdf_profiles, "bsdf_profiles not preserved in round-trip"
+        loaded = p2.bsdf_profiles["my_bsdf"]
+        assert loaded["theta_in"] == profile["theta_in"], "theta_in mismatch"
+        assert loaded["theta_out"] == profile["theta_out"], "theta_out mismatch"
+        assert loaded["refl_intensity"] == profile["refl_intensity"], "refl_intensity mismatch"
+        assert loaded["trans_intensity"] == profile["trans_intensity"], "trans_intensity mismatch"
+    finally:
+        os.unlink(path)

@@ -14,7 +14,7 @@ from backlight_sim.core.detectors import (
     DetectorSurface, DetectorResult, SimulationResult,
     SphereDetector, SphereDetectorResult,
 )
-from backlight_sim.core.solid_body import FACE_NAMES
+from backlight_sim.core.solid_body import FACE_NAMES, SolidCylinder, SolidPrism, CylinderCap, CylinderSide, PrismCap
 from backlight_sim.sim.sampling import (
     sample_isotropic,
     sample_lambertian,
@@ -22,6 +22,8 @@ from backlight_sim.sim.sampling import (
     sample_diffuse_reflection,
     reflect_specular,
     scatter_haze,
+    sample_bsdf,
+    precompute_bsdf_cdfs,
 )
 from backlight_sim.sim.spectral import (
     sample_wavelengths, spectral_bin_centers, N_SPECTRAL_BINS, LAMBDA_MIN, LAMBDA_MAX,
@@ -154,7 +156,11 @@ class RayTracer:
     def cancel(self):
         self._cancelled = True
 
-    def run(self, progress_callback: Callable[[float], None] | None = None) -> SimulationResult:
+    def run(
+        self,
+        progress_callback: Callable[[float], None] | None = None,
+        convergence_callback: Callable[[int, int, float], None] | None = None,
+    ) -> SimulationResult:
         self._cancelled = False
         settings = self.project.settings
 
@@ -172,13 +178,25 @@ class RayTracer:
                 "(spectral + multiprocessing is not yet optimized)",
                 stacklevel=2,
             )
-            return self._run_single(sources, progress_callback)
+            return self._run_single(sources, progress_callback, convergence_callback)
+
+        # Adaptive + MP guard: adaptive per-source convergence checking cannot be
+        # coordinated across processes.  Disable adaptive sampling in MP mode.
+        _adaptive = settings.adaptive_sampling
+        if _adaptive and settings.use_multiprocessing:
+            import warnings
+            warnings.warn(
+                "Adaptive sampling disabled in multiprocessing mode.",
+                stacklevel=2,
+            )
+            _adaptive = False
 
         if (settings.use_multiprocessing and len(sources) > 1
                 and not settings.record_ray_paths):
             return self._run_multiprocess(sources, progress_callback)
 
-        return self._run_single(sources, progress_callback)
+        return self._run_single(sources, progress_callback, convergence_callback,
+                                _adaptive=_adaptive)
 
     def _run_multiprocess(self, sources, progress_callback):
         """Run each source in a separate process and merge results."""
@@ -254,8 +272,12 @@ class RayTracer:
             solid_body_stats=merged_sb_stats,
         )
 
-    def _run_single(self, sources, progress_callback):
+    def _run_single(self, sources, progress_callback, convergence_callback=None,
+                    _adaptive=None):
         settings = self.project.settings
+        # _adaptive defaults to settings.adaptive_sampling unless overridden by caller
+        if _adaptive is None:
+            _adaptive = settings.adaptive_sampling
         surfaces = self.project.surfaces
         detectors = self.project.detectors
         sphere_dets = self.project.sphere_detectors
@@ -312,10 +334,44 @@ class RayTracer:
                 for fid in FACE_NAMES
             }
 
+        # Expand SolidCylinder objects into face-like objects and build lookup
+        # cylinder face map: face_name -> (cyl, face_id, cyl_n, geom_eps)
+        cyl_faces: list = []
+        cyl_face_map: dict[str, tuple] = {}
+        for cyl in getattr(self.project, "solid_cylinders", []):
+            mat = materials.get(cyl.material_name)
+            cyl_n = mat.refractive_index if mat is not None else 1.0
+            geom_eps = max(_EPSILON, min(cyl.radius, cyl.length / 2.0) * 1e-4)
+            for face in cyl.get_faces():
+                cyl_faces.append(face)
+                face_id = face.name.split("::", 1)[1]
+                cyl_face_map[face.name] = (cyl, face_id, cyl_n, geom_eps)
+            sb_stats[cyl.name] = {
+                fid: {"entering_flux": 0.0, "exiting_flux": 0.0}
+                for fid in ("top_cap", "bottom_cap", "side")
+            }
+
+        # Expand SolidPrism objects into face-like objects and build lookup
+        prism_faces: list = []
+        prism_face_map: dict[str, tuple] = {}
+        for prism in getattr(self.project, "solid_prisms", []):
+            mat = materials.get(prism.material_name)
+            prism_n = mat.refractive_index if mat is not None else 1.0
+            geom_eps = max(_EPSILON, min(prism.circumscribed_radius, prism.length / 2.0) * 1e-4)
+            for face in prism.get_faces():
+                prism_faces.append(face)
+                face_id = face.name.split("::", 1)[1]
+                prism_face_map[face.name] = (prism, face_id, prism_n, geom_eps)
+            all_face_ids = ["cap_top", "cap_bottom"] + [f"side_{i}" for i in range(prism.n_sides)]
+            sb_stats[prism.name] = {
+                fid: {"entering_flux": 0.0, "exiting_flux": 0.0}
+                for fid in all_face_ids
+            }
+
         total_emitted_flux = sum(s.effective_flux for s in sources)
 
         if not sources or (not surfaces and not detectors and not sphere_dets
-                           and not solid_faces):
+                           and not solid_faces and not cyl_faces and not prism_faces):
             return SimulationResult(
                 detectors=det_results,
                 sphere_detectors=sph_results,
@@ -366,6 +422,11 @@ class RayTracer:
             bvh_hw      = all_plane_hw
             bvh_hh      = all_plane_hh
 
+        # Pre-compute BSDF CDFs for all profiles in the project
+        bsdf_cdf_cache: dict[str, dict] = {}
+        for bsdf_name, bsdf_profile in (self.project.bsdf_profiles or {}).items():
+            bsdf_cdf_cache[bsdf_name] = precompute_bsdf_cdfs(bsdf_profile)
+
         total_rays = len(sources) * settings.rays_per_source
         rays_processed = 0
         all_paths: list[list[np.ndarray]] = []
@@ -375,44 +436,11 @@ class RayTracer:
             if self._cancelled:
                 break
 
-            n = settings.rays_per_source
-
-            # ---- emit rays ----
-            if source.distribution == "lambertian":
-                directions = sample_lambertian(n, source.direction, self.rng)
-            elif source.distribution == "isotropic":
-                directions = sample_isotropic(n, self.rng)
-            else:
-                profile = distributions.get(source.distribution)
-                if profile and "theta_deg" in profile and "intensity" in profile:
-                    directions = sample_angular_distribution(
-                        n,
-                        source.direction,
-                        np.asarray(profile["theta_deg"], dtype=float),
-                        np.asarray(profile["intensity"], dtype=float),
-                        self.rng,
-                    )
-                else:
-                    directions = sample_isotropic(n, self.rng)
-
-            origins = np.tile(source.position, (n, 1)).copy()
+            n_total = settings.rays_per_source
             eff_flux = source.effective_flux
             if source.flux_tolerance > 0:
                 tol = source.flux_tolerance / 100.0
                 eff_flux *= (1.0 + self.rng.uniform(-tol, tol))
-            weights = np.full(n, eff_flux / n)
-            alive = np.ones(n, dtype=bool)
-            # Per-ray refractive index tracking (starts in air, n=1.0)
-            current_n = np.ones(n, dtype=float)
-
-            # Sample wavelengths per ray (use custom project SPD profiles if available)
-            if has_spectral:
-                wavelengths = sample_wavelengths(
-                    n, source.spd, self.rng,
-                    spd_profiles=self.project.spd_profiles or None,
-                )
-            else:
-                wavelengths = None
 
             # ---- path recording setup ----
             # Distribute recorded rays evenly across all sources
@@ -420,7 +448,7 @@ class RayTracer:
                 per_src = max(1, n_record // len(sources))
                 # Give remainder to earlier sources
                 extra = 1 if src_idx < (n_record % len(sources)) else 0
-                n_rec = min(per_src + extra, n)
+                n_rec = min(per_src + extra, n_total)
             else:
                 n_rec = 0
             record = n_rec > 0
@@ -428,227 +456,464 @@ class RayTracer:
                 [source.position.copy()] for _ in range(n_rec)
             ]
 
-            # ---- bounce loop ----
-            for _bounce in range(settings.max_bounces):
-                if self._cancelled:
-                    break
-                if not alive.any():
-                    break
+            # ---- Adaptive batch loop ----
+            # When _adaptive is True: emit batches of check_interval rays and stop
+            # early when detector CV% converges below convergence_cv_target.
+            # When False: emit all n_total rays as one batch (original behavior).
+            check_interval = max(1, settings.check_interval) if _adaptive else n_total
+            n_rays_traced = 0
+            paths_recorded = False  # path recording happens only in first batch
+            # Per-batch mean flux accumulator for convergence estimation
+            batch_fluxes: list[float] = []
 
-                active_idx = np.where(alive)[0]
-                active_origins = origins[active_idx]
-                active_dirs = directions[active_idx]
-                n_active = len(active_idx)
+            while n_rays_traced < n_total and not self._cancelled:
+                n = min(check_interval, n_total - n_rays_traced)  # batch size
+                batch_n_rec = n_rec if (not paths_recorded and record) else 0
 
-                best_t = np.full(n_active, np.inf)
-                best_type = np.full(n_active, -1, dtype=int)
-                best_obj = np.full(n_active, -1, dtype=int)
-
-                if use_bvh:
-                    # BVH path: single traversal covers all surfaces + solid_faces
-                    bvh_t, bvh_idx = traverse_bvh_batch(
-                        np.ascontiguousarray(active_origins, dtype=np.float64),
-                        np.ascontiguousarray(active_dirs,   dtype=np.float64),
-                        bvh_bounds, bvh_meta, bvh_n_nodes,
-                        bvh_normals, bvh_centers, bvh_u, bvh_v, bvh_hw, bvh_hh,
-                        _EPSILON,
-                    )
-                    hit_mask = bvh_idx >= 0
-                    for ri in np.where(hit_mask)[0]:
-                        idx = int(bvh_idx[ri])
-                        t_val = float(bvh_t[ri])
-                        if t_val < best_t[ri]:
-                            best_t[ri] = t_val
-                            if idx < n_surf_planes:
-                                best_type[ri] = 0
-                                best_obj[ri] = idx
-                            else:
-                                best_type[ri] = 3
-                                best_obj[ri] = idx - n_surf_planes
+                # ---- emit batch of rays ----
+                if source.distribution == "lambertian":
+                    directions = sample_lambertian(n, source.direction, self.rng)
+                elif source.distribution == "isotropic":
+                    directions = sample_isotropic(n, self.rng)
                 else:
-                    # Brute-force path (< _BVH_THRESHOLD surfaces)
-                    for si, surf in enumerate(surfaces):
-                        t = _intersect_plane_accel(active_origins, active_dirs, surf.normal, surf.center,
-                                                   surf.u_axis, surf.v_axis, surf.size)
-                        closer = t < best_t
-                        best_t[closer] = t[closer]
-                        best_type[closer] = 0
-                        best_obj[closer] = si
-
-                    # SolidBox face intersections (type 3)
-                    for sfi, sface in enumerate(solid_faces):
-                        t = _intersect_plane_accel(active_origins, active_dirs,
-                                                   sface.normal, sface.center,
-                                                   sface.u_axis, sface.v_axis, sface.size)
-                        closer = t < best_t
-                        best_t[closer] = t[closer]
-                        best_type[closer] = 3
-                        best_obj[closer] = sfi
-
-                # Detectors and sphere detectors are always tested separately (few, different logic)
-                for di, det in enumerate(detectors):
-                    t = _intersect_plane_accel(active_origins, active_dirs, det.normal, det.center,
-                                               det.u_axis, det.v_axis, det.size)
-                    closer = t < best_t
-                    best_t[closer] = t[closer]
-                    best_type[closer] = 1
-                    best_obj[closer] = di
-
-                for sdi, sd in enumerate(sphere_dets):
-                    t = _intersect_sphere_accel(active_origins, active_dirs, sd.center, sd.radius)
-                    closer = t < best_t
-                    best_t[closer] = t[closer]
-                    best_type[closer] = 2
-                    best_obj[closer] = sdi
-
-                # Rays that escape
-                missed = best_t == np.inf
-                if missed.any():
-                    escaped_flux += float(weights[active_idx[missed]].sum())
-                alive[active_idx[missed]] = False
-
-                # Detector hits — pass-through: accumulate flux then continue
-                for di, det in enumerate(detectors):
-                    mask = (best_type == 1) & (best_obj == di)
-                    if not mask.any():
-                        continue
-                    hit_idx = active_idx[mask]
-                    hit_pts = origins[hit_idx] + best_t[mask, None] * directions[hit_idx]
-                    hit_wl = wavelengths[hit_idx] if wavelengths is not None else None
-                    _accumulate(det, det_results[det.name], hit_pts, weights[hit_idx],
-                                source.color_rgb if has_color else None,
-                                hit_wl, spec_centers)
-                    if n_rec > 0:
-                        for local_i, global_i in enumerate(hit_idx):
-                            if global_i < n_rec:
-                                paths[global_i].append(hit_pts[local_i].copy())
-                    # Advance ray past the detector plane
-                    origins[hit_idx] = hit_pts + directions[hit_idx] * _EPSILON
-
-                # Sphere detector hits — pass-through: accumulate flux then continue
-                for sdi, sd in enumerate(sphere_dets):
-                    mask = (best_type == 2) & (best_obj == sdi)
-                    if not mask.any():
-                        continue
-                    hit_idx = active_idx[mask]
-                    hit_pts = origins[hit_idx] + best_t[mask, None] * directions[hit_idx]
-                    if sd.mode == "far_field":
-                        _accumulate_sphere_farfield(sd, sph_results[sd.name],
-                                                    directions[hit_idx], weights[hit_idx])
+                    profile = distributions.get(source.distribution)
+                    if profile and "theta_deg" in profile and "intensity" in profile:
+                        directions = sample_angular_distribution(
+                            n,
+                            source.direction,
+                            np.asarray(profile["theta_deg"], dtype=float),
+                            np.asarray(profile["intensity"], dtype=float),
+                            self.rng,
+                        )
                     else:
-                        _accumulate_sphere(sd, sph_results[sd.name], hit_pts, weights[hit_idx])
-                    if n_rec > 0:
-                        for local_i, global_i in enumerate(hit_idx):
-                            if global_i < n_rec:
-                                paths[global_i].append(hit_pts[local_i].copy())
-                    # Advance ray past the sphere surface
-                    origins[hit_idx] = hit_pts + directions[hit_idx] * _EPSILON
+                        directions = sample_isotropic(n, self.rng)
 
-                # SolidBox face hits — Fresnel/TIR physics
-                for sfi, sface in enumerate(solid_faces):
-                    mask = (best_type == 3) & (best_obj == sfi)
-                    if not mask.any():
-                        continue
-                    hit_idx = active_idx[mask]
-                    t_vals = best_t[mask]
-                    hit_pts = origins[hit_idx] + t_vals[:, None] * directions[hit_idx]
-                    face_normal = sface.normal   # (3,) static
+                origins = np.tile(source.position, (n, 1)).copy()
+                weights = np.full(n, eff_flux / n_total)
+                alive = np.ones(n, dtype=bool)
+                # Per-ray refractive index tracking (starts in air, n=1.0)
+                current_n = np.ones(n, dtype=float)
 
-                    box, face_id, box_n, geom_eps = solid_face_map[sface.name]
-
-                    # Determine entering vs exiting.
-                    # face_normal is the outward normal (points out of the box).
-                    # dot(d, face_normal) < 0 → ray goes against outward normal → entering.
-                    dot_dn = np.einsum("ij,j->i", directions[hit_idx], face_normal)
-                    entering = dot_dn < 0   # ray going against face normal = entering
-
-                    # on_into: normal pointing INTO the new medium.
-                    # Entering: new medium is box interior → on_into = -face_normal
-                    # Exiting: new medium is air → on_into = +face_normal
-                    on_into = np.where(entering[:, None], -face_normal, face_normal)
-
-                    # on_back: normal pointing TOWARD incoming ray (into old medium = -on_into).
-                    # Used for origin offset after reflection (to push back into old medium).
-                    on_back = -on_into   # points back toward incoming medium
-
-                    n1_arr = current_n[hit_idx].copy()
-                    n2_arr = np.where(entering, box_n, 1.0)
-
-                    # cos_i = dot(d, on_into) because _fresnel_unpolarized convention:
-                    # cos_theta_i is the cosine between ray and normal pointing into new medium,
-                    # which equals dot(d, on_into) for a properly oriented ray.
-                    cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
-
-                    R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
-
-                    # Stochastic Russian roulette: reflect or transmit
-                    roll = self.rng.random(len(hit_idx))
-                    reflects = roll < R_arr
-                    refracts = ~reflects
-
-                    if n_rec > 0:
-                        for local_i, global_i in enumerate(hit_idx):
-                            if global_i < n_rec:
-                                paths[global_i].append(hit_pts[local_i].copy())
-
-                    # Flux accounting
-                    for local_i, global_i in enumerate(hit_idx):
-                        fid = face_id
-                        w = float(weights[global_i])
-                        if entering[local_i]:
-                            sb_stats[box.name][fid]["entering_flux"] += w
-                        else:
-                            sb_stats[box.name][fid]["exiting_flux"] += w
-
-                    # --- Refracted rays ---
-                    if refracts.any():
-                        ri = hit_idx[refracts]
-                        on_r = on_into[refracts]
-                        n1_r = n1_arr[refracts]
-                        n2_r = n2_arr[refracts]
-                        new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
-                        # Update refractive index: entering→box_n, exiting→1.0
-                        current_n[ri] = n2_r
-                        # Offset origin into new medium (along on_into direction)
-                        origins[ri] = hit_pts[refracts] + on_r * geom_eps
-                        directions[ri] = new_dirs
-
-                    # --- Reflected rays ---
-                    if reflects.any():
-                        rfl_i = hit_idx[reflects]
-                        on_b = on_back[reflects]   # points toward incoming ray (old medium)
-                        # Specular reflection: d' = d - 2*(d·n_hat)*n_hat
-                        # where n_hat points TOWARD incoming ray = on_back
-                        d_rfl = directions[rfl_i]
-                        dot_vals = np.einsum("ij,ij->i", d_rfl, on_b)[:, None]
-                        new_dirs = d_rfl - 2.0 * dot_vals * on_b
-                        norms = np.linalg.norm(new_dirs, axis=1, keepdims=True)
-                        new_dirs = new_dirs / np.maximum(norms, 1e-12)
-                        # current_n stays the same for reflected rays
-                        # Offset back into the old medium (along on_back direction)
-                        origins[rfl_i] = hit_pts[reflects] + on_b * geom_eps
-                        directions[rfl_i] = new_dirs
-
-                # Surface hits
-                surf_hit_mask = (best_type == 0) & ~missed
-                if surf_hit_mask.any():
-                    self._bounce_surfaces(
-                        surf_hit_mask, active_idx, best_t, best_obj,
-                        origins, directions, weights, alive, surfaces, materials,
-                        paths, n_rec,
-                        wavelengths=wavelengths,
-                        spectral_material_data=self.project.spectral_material_data or None,
+                # Sample wavelengths per ray (use custom project SPD profiles if available)
+                if has_spectral:
+                    wavelengths = sample_wavelengths(
+                        n, source.spd, self.rng,
+                        spd_profiles=self.project.spd_profiles or None,
                     )
+                else:
+                    wavelengths = None
 
-                alive[weights < settings.energy_threshold] = False
+                # For path recording: only first batch uses paths list
+                if batch_n_rec > 0 and not paths_recorded:
+                    active_paths = paths
+                else:
+                    active_paths = []
+                n_rec_active = batch_n_rec
 
-            # Collect paths for this source
-            if record:
-                all_paths.extend(paths)
+                # ---- bounce loop ----
+                for _bounce in range(settings.max_bounces):
+                    if self._cancelled:
+                        break
+                    if not alive.any():
+                        break
 
-            rays_processed += n
-            if progress_callback:
-                progress_callback(rays_processed / total_rays)
+                    active_idx = np.where(alive)[0]
+                    active_origins = origins[active_idx]
+                    active_dirs = directions[active_idx]
+                    n_active = len(active_idx)
+
+                    best_t = np.full(n_active, np.inf)
+                    best_type = np.full(n_active, -1, dtype=int)
+                    best_obj = np.full(n_active, -1, dtype=int)
+
+                    if use_bvh:
+                        # BVH path: single traversal covers all surfaces + solid_faces
+                        bvh_t, bvh_idx = traverse_bvh_batch(
+                            np.ascontiguousarray(active_origins, dtype=np.float64),
+                            np.ascontiguousarray(active_dirs,   dtype=np.float64),
+                            bvh_bounds, bvh_meta, bvh_n_nodes,
+                            bvh_normals, bvh_centers, bvh_u, bvh_v, bvh_hw, bvh_hh,
+                            _EPSILON,
+                        )
+                        hit_mask = bvh_idx >= 0
+                        for ri in np.where(hit_mask)[0]:
+                            idx = int(bvh_idx[ri])
+                            t_val = float(bvh_t[ri])
+                            if t_val < best_t[ri]:
+                                best_t[ri] = t_val
+                                if idx < n_surf_planes:
+                                    best_type[ri] = 0
+                                    best_obj[ri] = idx
+                                else:
+                                    best_type[ri] = 3
+                                    best_obj[ri] = idx - n_surf_planes
+                    else:
+                        # Brute-force path (< _BVH_THRESHOLD surfaces)
+                        for si, surf in enumerate(surfaces):
+                            t = _intersect_plane_accel(active_origins, active_dirs, surf.normal, surf.center,
+                                                       surf.u_axis, surf.v_axis, surf.size)
+                            closer = t < best_t
+                            best_t[closer] = t[closer]
+                            best_type[closer] = 0
+                            best_obj[closer] = si
+
+                        # SolidBox face intersections (type 3)
+                        for sfi, sface in enumerate(solid_faces):
+                            t = _intersect_plane_accel(active_origins, active_dirs,
+                                                       sface.normal, sface.center,
+                                                       sface.u_axis, sface.v_axis, sface.size)
+                            closer = t < best_t
+                            best_t[closer] = t[closer]
+                            best_type[closer] = 3
+                            best_obj[closer] = sfi
+
+                    # SolidCylinder face intersections (type 4)
+                    for cfi, cface in enumerate(cyl_faces):
+                        if isinstance(cface, CylinderCap):
+                            t = _intersect_rays_disc(
+                                active_origins, active_dirs,
+                                cface.center, cface.normal, cface.radius,
+                            )
+                        else:  # CylinderSide
+                            t = _intersect_rays_cylinder_side(
+                                active_origins, active_dirs,
+                                cface.center, cface.axis, cface.radius, cface.length / 2.0,
+                            )
+                        closer = t < best_t
+                        best_t[closer] = t[closer]
+                        best_type[closer] = 4
+                        best_obj[closer] = cfi
+
+                    # SolidPrism face intersections (type 5)
+                    for pfi, pface in enumerate(prism_faces):
+                        if isinstance(pface, PrismCap):
+                            t = _intersect_prism_cap(active_origins, active_dirs, pface)
+                        else:  # Rectangle side face
+                            t = _intersect_plane_accel(
+                                active_origins, active_dirs,
+                                pface.normal, pface.center,
+                                pface.u_axis, pface.v_axis, pface.size,
+                            )
+                        closer = t < best_t
+                        best_t[closer] = t[closer]
+                        best_type[closer] = 5
+                        best_obj[closer] = pfi
+
+                    # Detectors and sphere detectors are always tested separately (few, different logic)
+                    for di, det in enumerate(detectors):
+                        t = _intersect_plane_accel(active_origins, active_dirs, det.normal, det.center,
+                                                   det.u_axis, det.v_axis, det.size)
+                        closer = t < best_t
+                        best_t[closer] = t[closer]
+                        best_type[closer] = 1
+                        best_obj[closer] = di
+
+                    for sdi, sd in enumerate(sphere_dets):
+                        t = _intersect_sphere_accel(active_origins, active_dirs, sd.center, sd.radius)
+                        closer = t < best_t
+                        best_t[closer] = t[closer]
+                        best_type[closer] = 2
+                        best_obj[closer] = sdi
+
+                    # Rays that escape
+                    missed = best_t == np.inf
+                    if missed.any():
+                        escaped_flux += float(weights[active_idx[missed]].sum())
+                    alive[active_idx[missed]] = False
+
+                    # Detector hits — pass-through: accumulate flux then continue
+                    for di, det in enumerate(detectors):
+                        mask = (best_type == 1) & (best_obj == di)
+                        if not mask.any():
+                            continue
+                        hit_idx = active_idx[mask]
+                        hit_pts = origins[hit_idx] + best_t[mask, None] * directions[hit_idx]
+                        hit_wl = wavelengths[hit_idx] if wavelengths is not None else None
+                        _accumulate(det, det_results[det.name], hit_pts, weights[hit_idx],
+                                    source.color_rgb if has_color else None,
+                                    hit_wl, spec_centers)
+                        if n_rec_active > 0:
+                            for local_i, global_i in enumerate(hit_idx):
+                                if global_i < n_rec_active:
+                                    active_paths[global_i].append(hit_pts[local_i].copy())
+                        # Advance ray past the detector plane
+                        origins[hit_idx] = hit_pts + directions[hit_idx] * _EPSILON
+
+                    # Sphere detector hits — pass-through: accumulate flux then continue
+                    for sdi, sd in enumerate(sphere_dets):
+                        mask = (best_type == 2) & (best_obj == sdi)
+                        if not mask.any():
+                            continue
+                        hit_idx = active_idx[mask]
+                        hit_pts = origins[hit_idx] + best_t[mask, None] * directions[hit_idx]
+                        if sd.mode == "far_field":
+                            _accumulate_sphere_farfield(sd, sph_results[sd.name],
+                                                        directions[hit_idx], weights[hit_idx])
+                        else:
+                            _accumulate_sphere(sd, sph_results[sd.name], hit_pts, weights[hit_idx])
+                        if n_rec_active > 0:
+                            for local_i, global_i in enumerate(hit_idx):
+                                if global_i < n_rec_active:
+                                    active_paths[global_i].append(hit_pts[local_i].copy())
+                        # Advance ray past the sphere surface
+                        origins[hit_idx] = hit_pts + directions[hit_idx] * _EPSILON
+
+                    # SolidBox face hits — Fresnel/TIR physics
+                    for sfi, sface in enumerate(solid_faces):
+                        mask = (best_type == 3) & (best_obj == sfi)
+                        if not mask.any():
+                            continue
+                        hit_idx = active_idx[mask]
+                        t_vals = best_t[mask]
+                        hit_pts = origins[hit_idx] + t_vals[:, None] * directions[hit_idx]
+                        face_normal = sface.normal   # (3,) static
+
+                        box, face_id, box_n, geom_eps = solid_face_map[sface.name]
+
+                        # Determine entering vs exiting.
+                        # face_normal is the outward normal (points out of the box).
+                        # dot(d, face_normal) < 0 → ray goes against outward normal → entering.
+                        dot_dn = np.einsum("ij,j->i", directions[hit_idx], face_normal)
+                        entering = dot_dn < 0   # ray going against face normal = entering
+
+                        # on_into: normal pointing INTO the new medium.
+                        # Entering: new medium is box interior → on_into = -face_normal
+                        # Exiting: new medium is air → on_into = +face_normal
+                        on_into = np.where(entering[:, None], -face_normal, face_normal)
+
+                        # on_back: normal pointing TOWARD incoming ray (into old medium = -on_into).
+                        # Used for origin offset after reflection (to push back into old medium).
+                        on_back = -on_into   # points back toward incoming medium
+
+                        n1_arr = current_n[hit_idx].copy()
+                        n2_arr = np.where(entering, box_n, 1.0)
+
+                        # cos_i = dot(d, on_into) because _fresnel_unpolarized convention:
+                        # cos_theta_i is the cosine between ray and normal pointing into new medium,
+                        # which equals dot(d, on_into) for a properly oriented ray.
+                        cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
+
+                        R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
+
+                        # Stochastic Russian roulette: reflect or transmit
+                        roll = self.rng.random(len(hit_idx))
+                        reflects = roll < R_arr
+                        refracts = ~reflects
+
+                        if n_rec_active > 0:
+                            for local_i, global_i in enumerate(hit_idx):
+                                if global_i < n_rec_active:
+                                    active_paths[global_i].append(hit_pts[local_i].copy())
+
+                        # Flux accounting
+                        for local_i, global_i in enumerate(hit_idx):
+                            fid = face_id
+                            w = float(weights[global_i])
+                            if entering[local_i]:
+                                sb_stats[box.name][fid]["entering_flux"] += w
+                            else:
+                                sb_stats[box.name][fid]["exiting_flux"] += w
+
+                        # --- Refracted rays ---
+                        if refracts.any():
+                            ri = hit_idx[refracts]
+                            on_r = on_into[refracts]
+                            n1_r = n1_arr[refracts]
+                            n2_r = n2_arr[refracts]
+                            new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
+                            # Update refractive index: entering→box_n, exiting→1.0
+                            current_n[ri] = n2_r
+                            # Offset origin into new medium (along on_into direction)
+                            origins[ri] = hit_pts[refracts] + on_r * geom_eps
+                            directions[ri] = new_dirs
+
+                        # --- Reflected rays ---
+                        if reflects.any():
+                            rfl_i = hit_idx[reflects]
+                            on_b = on_back[reflects]   # points toward incoming ray (old medium)
+                            # Specular reflection: d' = d - 2*(d·n_hat)*n_hat
+                            # where n_hat points TOWARD incoming ray = on_back
+                            d_rfl = directions[rfl_i]
+                            dot_vals = np.einsum("ij,ij->i", d_rfl, on_b)[:, None]
+                            new_dirs = d_rfl - 2.0 * dot_vals * on_b
+                            norms = np.linalg.norm(new_dirs, axis=1, keepdims=True)
+                            new_dirs = new_dirs / np.maximum(norms, 1e-12)
+                            # current_n stays the same for reflected rays
+                            # Offset back into the old medium (along on_back direction)
+                            origins[rfl_i] = hit_pts[reflects] + on_b * geom_eps
+                            directions[rfl_i] = new_dirs
+
+                    # SolidCylinder face hits (type 4) -- Fresnel/TIR physics
+                    for cfi, cface in enumerate(cyl_faces):
+                        mask = (best_type == 4) & (best_obj == cfi)
+                        if not mask.any():
+                            continue
+                        hit_idx = active_idx[mask]
+                        t_vals = best_t[mask]
+                        hit_pts = origins[hit_idx] + t_vals[:, None] * directions[hit_idx]
+                        cyl, face_id, cyl_n, geom_eps = cyl_face_map[cface.name]
+                        if isinstance(cface, CylinderSide):
+                            cyl_axis = cface.axis
+                            diff = hit_pts - cyl.center
+                            proj = np.einsum("ij,j->i", diff, cyl_axis)
+                            radial = diff - proj[:, None] * cyl_axis
+                            r_norms = np.linalg.norm(radial, axis=1, keepdims=True)
+                            face_normals = radial / np.maximum(r_norms, 1e-12)
+                            dot_dn = np.einsum("ij,ij->i", directions[hit_idx], face_normals)
+                            entering = dot_dn < 0
+                            on_into = np.where(entering[:, None], -face_normals, face_normals)
+                        else:
+                            face_normal = cface.normal
+                            dot_dn = np.einsum("ij,j->i", directions[hit_idx], face_normal)
+                            entering = dot_dn < 0
+                            on_into = np.where(entering[:, None], -face_normal, face_normal)
+                        on_back = -on_into
+                        n1_arr = current_n[hit_idx].copy()
+                        n2_arr = np.where(entering, cyl_n, 1.0)
+                        cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
+                        R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
+                        roll = self.rng.random(len(hit_idx))
+                        reflects = roll < R_arr
+                        refracts = ~reflects
+                        if n_rec_active > 0:
+                            for local_i, global_i in enumerate(hit_idx):
+                                if global_i < n_rec_active:
+                                    active_paths[global_i].append(hit_pts[local_i].copy())
+                        for local_i, global_i in enumerate(hit_idx):
+                            w = float(weights[global_i])
+                            if entering[local_i]:
+                                sb_stats[cyl.name][face_id]["entering_flux"] += w
+                            else:
+                                sb_stats[cyl.name][face_id]["exiting_flux"] += w
+                        if refracts.any():
+                            ri = hit_idx[refracts]
+                            on_r = on_into[refracts]
+                            n1_r = n1_arr[refracts]
+                            n2_r = n2_arr[refracts]
+                            new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
+                            current_n[ri] = n2_r
+                            origins[ri] = hit_pts[refracts] + on_r * geom_eps
+                            directions[ri] = new_dirs
+                        if reflects.any():
+                            rfl_i = hit_idx[reflects]
+                            on_b = on_back[reflects]
+                            d_rfl = directions[rfl_i]
+                            dot_vals = np.einsum("ij,ij->i", d_rfl, on_b)[:, None]
+                            new_dirs = d_rfl - 2.0 * dot_vals * on_b
+                            norms_r = np.linalg.norm(new_dirs, axis=1, keepdims=True)
+                            new_dirs = new_dirs / np.maximum(norms_r, 1e-12)
+                            origins[rfl_i] = hit_pts[reflects] + on_b * geom_eps
+                            directions[rfl_i] = new_dirs
+
+                    # SolidPrism face hits (type 5) -- Fresnel/TIR physics
+                    for pfi, pface in enumerate(prism_faces):
+                        mask = (best_type == 5) & (best_obj == pfi)
+                        if not mask.any():
+                            continue
+                        hit_idx = active_idx[mask]
+                        t_vals = best_t[mask]
+                        hit_pts = origins[hit_idx] + t_vals[:, None] * directions[hit_idx]
+                        prism, face_id, prism_n, geom_eps = prism_face_map[pface.name]
+                        face_normal = pface.normal
+                        dot_dn = np.einsum("ij,j->i", directions[hit_idx], face_normal)
+                        entering = dot_dn < 0
+                        on_into = np.where(entering[:, None], -face_normal, face_normal)
+                        on_back = -on_into
+                        n1_arr = current_n[hit_idx].copy()
+                        n2_arr = np.where(entering, prism_n, 1.0)
+                        cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
+                        R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
+                        roll = self.rng.random(len(hit_idx))
+                        reflects = roll < R_arr
+                        refracts = ~reflects
+                        if n_rec_active > 0:
+                            for local_i, global_i in enumerate(hit_idx):
+                                if global_i < n_rec_active:
+                                    active_paths[global_i].append(hit_pts[local_i].copy())
+                        for local_i, global_i in enumerate(hit_idx):
+                            w = float(weights[global_i])
+                            if entering[local_i]:
+                                sb_stats[prism.name][face_id]["entering_flux"] += w
+                            else:
+                                sb_stats[prism.name][face_id]["exiting_flux"] += w
+                        if refracts.any():
+                            ri = hit_idx[refracts]
+                            on_r = on_into[refracts]
+                            n1_r = n1_arr[refracts]
+                            n2_r = n2_arr[refracts]
+                            new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
+                            current_n[ri] = n2_r
+                            origins[ri] = hit_pts[refracts] + on_r * geom_eps
+                            directions[ri] = new_dirs
+                        if reflects.any():
+                            rfl_i = hit_idx[reflects]
+                            on_b = on_back[reflects]
+                            d_rfl = directions[rfl_i]
+                            dot_vals = np.einsum("ij,ij->i", d_rfl, on_b)[:, None]
+                            new_dirs = d_rfl - 2.0 * dot_vals * on_b
+                            norms_r = np.linalg.norm(new_dirs, axis=1, keepdims=True)
+                            new_dirs = new_dirs / np.maximum(norms_r, 1e-12)
+                            origins[rfl_i] = hit_pts[reflects] + on_b * geom_eps
+                            directions[rfl_i] = new_dirs
+
+                    # Surface hits
+                    surf_hit_mask = (best_type == 0) & ~missed
+                    if surf_hit_mask.any():
+                        self._bounce_surfaces(
+                            surf_hit_mask, active_idx, best_t, best_obj,
+                            origins, directions, weights, alive, surfaces, materials,
+                            active_paths, n_rec_active,
+                            wavelengths=wavelengths,
+                            spectral_material_data=self.project.spectral_material_data or None,
+                            bsdf_cdf_cache=bsdf_cdf_cache,
+                        )
+
+                    alive[weights < settings.energy_threshold] = False
+
+                # end bounce loop
+                pass
+
+                # ---- Post-batch: path collection, convergence check ----
+                if batch_n_rec > 0 and not paths_recorded:
+                    # First batch: extend all_paths with the recorded paths
+                    # (active_paths IS paths, so no copy needed)
+                    paths_recorded = True
+
+                n_rays_traced += n
+                batch_fluxes.append(sum(dr.total_flux for dr in det_results.values()))
+
+                # Convergence check (requires >= 2 batches and adaptive mode)
+                if _adaptive:
+                    if len(batch_fluxes) >= 2:
+                        mean_f = float(sum(batch_fluxes) / len(batch_fluxes))
+                        var_f = max(0.0, sum((f - mean_f) ** 2 for f in batch_fluxes) / len(batch_fluxes))
+                        std_f = float(var_f ** 0.5)
+                        n_b = len(batch_fluxes)
+                        ci = 1.96 * std_f / max(float(n_b ** 0.5), 1e-12)
+                        cv_pct = ci / max(abs(mean_f), 1e-12) * 100.0
+                        if convergence_callback is not None:
+                            convergence_callback(src_idx, n_rays_traced, cv_pct)
+                        if cv_pct <= settings.convergence_cv_target:
+                            # Converged — stop early
+                            break
+                    else:
+                        # First batch only — report 100% CV (not yet converged)
+                        cv_pct = 100.0
+                        if convergence_callback is not None:
+                            convergence_callback(src_idx, n_rays_traced, cv_pct)
+
+                # end while (adaptive batch loop)
+
+                # n is the last batch_size; use n_total for progress
+                n = n_total  # restore for progress tracking
+
+        # Collect paths for this source
+        if record:
+            all_paths.extend(paths)
+
+        rays_processed += n_total
+        if progress_callback:
+            progress_callback(rays_processed / total_rays)
 
         # Compute far-field candela distributions for far_field sphere detectors
         for sd in sphere_dets:
@@ -687,6 +952,7 @@ class RayTracer:
         surfaces, materials, paths, n_rec,
         wavelengths: np.ndarray | None = None,
         spectral_material_data: dict | None = None,
+        bsdf_cdf_cache: dict | None = None,
     ):
         for si, surf in enumerate(surfaces):
             mask = surf_hit & (best_obj == si)
@@ -714,6 +980,62 @@ class RayTracer:
             flip = dot > 0
             # oriented normal pointing away from the incoming ray
             on = np.where(flip[:, None], -normal, normal)
+
+            # --- BSDF dispatch: overrides all scalar R/T/diffuse behavior ---
+            bsdf_name = getattr(mat, "bsdf_profile_name", "")
+            if bsdf_name and (bsdf_cdf_cache or {}).get(bsdf_name) is not None:
+                bsdf_profile = (self.project.bsdf_profiles or {}).get(bsdf_name, {})
+                cdfs = (bsdf_cdf_cache or {}).get(bsdf_name)
+                n_hit = len(hit_idx)
+                # Apply reflectance weight scaling (energy conservation via material reflectance)
+                weights[hit_idx] *= mat.reflectance
+                # Determine R/T probability from BSDF profile angular distribution
+                # refl_total / trans_total give relative probabilities per theta_in bin
+                theta_in_vals = cdfs["theta_in"]
+                refl_total = cdfs["refl_total"]   # (M,) — sin-weighted integrals
+                trans_total = cdfs["trans_total"]  # (M,)
+                cos_i = np.clip(np.einsum("ij,j->i", -directions[hit_idx], on[0]), 0.0, 1.0)
+                theta_i_deg = np.degrees(np.arccos(cos_i))
+                bin_idx = np.clip(
+                    np.searchsorted(theta_in_vals, theta_i_deg, side="right") - 1,
+                    0, len(theta_in_vals) - 1
+                )
+                r_total_per_ray = refl_total[bin_idx]
+                t_total_per_ray = trans_total[bin_idx]
+                rt_sum = r_total_per_ray + t_total_per_ray
+                # Stochastic decision: reflect or transmit
+                roll = self.rng.random(n_hit)
+                # Probability of reflection: r_total / (r_total + t_total) if any scatter
+                p_refl = np.where(rt_sum > 0, r_total_per_ray / np.maximum(rt_sum, 1e-12), 1.0)
+                reflects_bsdf = roll < p_refl
+                transmits_bsdf = ~reflects_bsdf
+                if reflects_bsdf.any():
+                    ri = hit_idx[reflects_bsdf]
+                    inc = directions[ri]
+                    # oriented surface normal (pointing away from incoming ray) for each hit ray
+                    on_r = on[reflects_bsdf]
+                    # Use first on as surface normal for BSDF (majority normal)
+                    surf_n = on_r[0] if len(on_r) > 0 else normal
+                    new_dirs = sample_bsdf(
+                        int(reflects_bsdf.sum()), inc, surf_n, bsdf_profile, "reflect",
+                        self.rng, cdfs=cdfs,
+                    )
+                    origins[ri] = hit_pts[reflects_bsdf] + on_r * _EPSILON
+                    directions[ri] = new_dirs
+                if transmits_bsdf.any():
+                    ti = hit_idx[transmits_bsdf]
+                    inc = directions[ti]
+                    on_t = on[transmits_bsdf]
+                    surf_n = on_t[0] if len(on_t) > 0 else normal
+                    # Transmit through: opposite side of normal
+                    new_dirs = sample_bsdf(
+                        int(transmits_bsdf.sum()), inc, surf_n, bsdf_profile, "transmit",
+                        self.rng, cdfs=cdfs,
+                    )
+                    through_n = -on_t
+                    origins[ti] = hit_pts[transmits_bsdf] + through_n * _EPSILON
+                    directions[ti] = new_dirs
+                continue
 
             # Resolve spectral material properties (per-wavelength R/T lookup)
             optics_name = getattr(surf, "optical_properties_name", "") or surf.material_name
@@ -844,6 +1166,11 @@ def _trace_single_source(project, source_name, base_seed):
     alive = np.ones(n, dtype=bool)
     current_n = np.ones(n, dtype=float)
     escaped_flux = 0.0
+
+    # Pre-compute BSDF CDFs for all profiles in the project
+    bsdf_cdf_cache_mp: dict[str, dict] = {}
+    for bsdf_nm, bsdf_prof in (getattr(project, "bsdf_profiles", {}) or {}).items():
+        bsdf_cdf_cache_mp[bsdf_nm] = precompute_bsdf_cdfs(bsdf_prof)
 
     # BVH setup for MP path
     n_all_planes_mp = len(surfaces) + len(solid_faces)
@@ -1047,13 +1374,58 @@ def _trace_single_source(project, source_name, base_seed):
                 t_vals = best_t[smask]
                 hit_pts = origins[hit_idx] + t_vals[:, None] * directions[hit_idx]
                 normal = surf.normal
-                mat = materials.get(surf.material_name)
+                # Resolve optical properties (optical_properties_name takes priority)
+                mat = None
+                if getattr(surf, 'optical_properties_name', ''):
+                    mat = project.optical_properties.get(surf.optical_properties_name)
+                if mat is None:
+                    mat = materials.get(surf.material_name)
                 if mat is None or mat.surface_type == "absorber":
                     alive[hit_idx] = False
                     continue
                 dot = np.einsum("ij,j->i", directions[hit_idx], normal)
                 flip = dot > 0
                 on = np.where(flip[:, None], -normal, normal)
+                # BSDF dispatch
+                bsdf_name_mp = getattr(mat, 'bsdf_profile_name', '')
+                if bsdf_name_mp and bsdf_cdf_cache_mp.get(bsdf_name_mp) is not None:
+                    bsdf_prof_mp = (getattr(project, 'bsdf_profiles', {}) or {}).get(bsdf_name_mp, {})
+                    cdfs_mp = bsdf_cdf_cache_mp[bsdf_name_mp]
+                    # Apply reflectance weight scaling (energy conservation)
+                    weights[hit_idx] *= mat.reflectance
+                    # Determine R/T probability from BSDF angular distribution
+                    theta_in_vals_mp = cdfs_mp['theta_in']
+                    refl_total_mp = cdfs_mp['refl_total']
+                    trans_total_mp = cdfs_mp['trans_total']
+                    cos_i_mp = np.clip(np.einsum('ij,j->i', -directions[hit_idx], on[0]), 0.0, 1.0)
+                    theta_i_deg_mp = np.degrees(np.arccos(cos_i_mp))
+                    bin_idx_mp = np.clip(
+                        np.searchsorted(theta_in_vals_mp, theta_i_deg_mp, side='right') - 1,
+                        0, len(theta_in_vals_mp) - 1
+                    )
+                    r_total_mp = refl_total_mp[bin_idx_mp]
+                    t_total_mp = trans_total_mp[bin_idx_mp]
+                    rt_sum_mp = r_total_mp + t_total_mp
+                    roll_mp = rng.random(len(hit_idx))
+                    p_refl_mp = np.where(rt_sum_mp > 0, r_total_mp / np.maximum(rt_sum_mp, 1e-12), 1.0)
+                    refl_bsdf_mp = roll_mp < p_refl_mp
+                    trans_bsdf_mp = ~refl_bsdf_mp
+                    if refl_bsdf_mp.any():
+                        ri = hit_idx[refl_bsdf_mp]
+                        on_r = on[refl_bsdf_mp]
+                        surf_n_mp = on_r[0] if len(on_r) > 0 else normal
+                        new_dirs = sample_bsdf(int(refl_bsdf_mp.sum()), directions[ri], surf_n_mp, bsdf_prof_mp, 'reflect', rng, cdfs=cdfs_mp)
+                        origins[ri] = hit_pts[refl_bsdf_mp] + on_r * _EPSILON
+                        directions[ri] = new_dirs
+                    if trans_bsdf_mp.any():
+                        ti2 = hit_idx[trans_bsdf_mp]
+                        on_t = on[trans_bsdf_mp]
+                        surf_n_mp = on_t[0] if len(on_t) > 0 else normal
+                        new_dirs = sample_bsdf(int(trans_bsdf_mp.sum()), directions[ti2], surf_n_mp, bsdf_prof_mp, 'transmit', rng, cdfs=cdfs_mp)
+                        through_n = -on_t
+                        origins[ti2] = hit_pts[trans_bsdf_mp] + through_n * _EPSILON
+                        directions[ti2] = new_dirs
+                    continue
                 if mat.surface_type == "reflector":
                     weights[hit_idx] *= mat.reflectance
                     new_dirs = _reflect_batch(directions[hit_idx], on, mat.is_diffuse, rng)
@@ -1103,6 +1475,98 @@ def _reflect_batch(dirs, oriented_normals, is_diffuse, rng):
     else:
         return reflect_specular(dirs, oriented_normals[0])
 
+
+
+# ---------------------------------------------------------------------------
+# Cylinder / Prism intersection helpers
+# ---------------------------------------------------------------------------
+
+def _intersect_rays_cylinder_side(origins, directions, center, axis, radius, half_length):
+    """Analytic ray-cylinder intersection (curved surface). Returns (N,) t values."""
+    n_rays = len(origins)
+    result = np.full(n_rays, np.inf)
+    oc = origins - center
+    d_axis = np.einsum("ij,j->i", directions, axis)
+    oc_axis = np.einsum("ij,j->i", oc, axis)
+    d_perp = directions - d_axis[:, None] * axis
+    oc_perp = oc - oc_axis[:, None] * axis
+    a = np.einsum("ij,ij->i", d_perp, d_perp)
+    b = 2.0 * np.einsum("ij,ij->i", d_perp, oc_perp)
+    c = np.einsum("ij,ij->i", oc_perp, oc_perp) - radius * radius
+    disc = b * b - 4.0 * a * c
+    hit_mask = (a > 1e-14) & (disc >= 0.0)
+    if not hit_mask.any():
+        return result
+    sqrt_disc = np.sqrt(np.maximum(disc[hit_mask], 0.0))
+    a_h = a[hit_mask]
+    b_h = b[hit_mask]
+    t1 = (-b_h - sqrt_disc) / (2.0 * a_h)
+    t2 = (-b_h + sqrt_disc) / (2.0 * a_h)
+    hit_idx = np.where(hit_mask)[0]
+    for k, global_i in enumerate(hit_idx):
+        for t_cand in (float(t1[k]), float(t2[k])):
+            if t_cand <= _EPSILON:
+                continue
+            hit_pt = origins[global_i] + t_cand * directions[global_i]
+            proj = float(np.dot(hit_pt - center, axis))
+            if abs(proj) <= half_length:
+                result[global_i] = t_cand
+                break
+    return result
+
+
+def _intersect_rays_disc(origins, directions, center, normal, radius):
+    """Ray-disc intersection (circular flat cap). Returns (N,) t values."""
+    n_rays = len(origins)
+    result = np.full(n_rays, np.inf)
+    denom = directions @ normal
+    nonzero = np.abs(denom) > 1e-12
+    if not nonzero.any():
+        return result
+    d_plane = float(normal @ center)
+    t = np.full(n_rays, np.inf)
+    t[nonzero] = (d_plane - origins[nonzero] @ normal) / denom[nonzero]
+    valid = nonzero & (t > _EPSILON)
+    if not valid.any():
+        return result
+    hit_pts = origins[valid] + t[valid, None] * directions[valid]
+    diff = hit_pts - center
+    dist_sq = np.einsum("ij,ij->i", diff, diff)
+    in_disc = dist_sq <= radius * radius
+    valid_idx = np.where(valid)[0]
+    result[valid_idx[in_disc]] = t[valid][in_disc]
+    return result
+
+
+def _intersect_prism_cap(origins, directions, cap):
+    """Ray-polygon cap intersection using precomputed edge normals. Returns (N,) t values."""
+    n_rays = len(origins)
+    result = np.full(n_rays, np.inf)
+    normal = cap.normal
+    denom = directions @ normal
+    nonzero = np.abs(denom) > 1e-12
+    if not nonzero.any():
+        return result
+    d_plane = float(normal @ cap.center)
+    t = np.full(n_rays, np.inf)
+    t[nonzero] = (d_plane - origins[nonzero] @ normal) / denom[nonzero]
+    valid = nonzero & (t > _EPSILON)
+    if not valid.any():
+        return result
+    hit_pts = origins[valid] + t[valid, None] * directions[valid]
+    local = hit_pts - cap.center
+    u_coord = local @ cap.u_axis
+    v_coord = local @ cap.v_axis
+    verts = cap.vertices_2d
+    enorms = cap.edge_normals_2d
+    hit_pts_2d = np.column_stack([u_coord, v_coord])
+    inside = np.ones(len(hit_pts_2d), dtype=bool)
+    for j in range(len(verts)):
+        diff_2d = hit_pts_2d - verts[j]
+        inside &= (diff_2d @ enorms[j]) <= 0.0
+    valid_idx = np.where(valid)[0]
+    result[valid_idx[inside]] = t[valid][inside]
+    return result
 
 def _intersect_rays_plane(
     origins: np.ndarray,
