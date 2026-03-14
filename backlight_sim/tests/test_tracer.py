@@ -977,6 +977,94 @@ def test_farfield_simulation_end_to_end():
 
 
 # ------------------------------------------------------------------
+# Phase 4 Plan 02 — IES export and far-field KPI helpers (Task 2)
+# ------------------------------------------------------------------
+
+
+def test_export_ies_roundtrip():
+    """export_ies writes a file that can be re-read by load_ies (approximately)."""
+    import tempfile, os
+    from backlight_sim.io.ies_parser import export_ies, load_ies
+
+    n_theta, n_phi = 9, 4
+    # Theta from 0 to 160 in 9 steps
+    theta_deg = np.linspace(0, 160, n_theta)
+    # Simple lambertian-like pattern: cd = cos(theta)
+    theta_rad = np.deg2rad(theta_deg)
+    cd_1d = np.maximum(np.cos(theta_rad), 0.0)
+    candela_grid = np.tile(cd_1d[:, None], (1, n_phi))  # uniform across phi
+    total_lm = 100.0
+
+    with tempfile.NamedTemporaryFile(suffix=".ies", delete=False, mode="w") as f:
+        path = f.name
+    try:
+        export_ies(path, theta_deg, candela_grid, total_lm)
+        profile = load_ies(path)
+        assert "theta_deg" in profile
+        assert "intensity" in profile
+        assert len(profile["theta_deg"]) == n_theta
+        # Normalized peak should be 1.0
+        assert max(profile["intensity"]) == pytest.approx(1.0)
+        # Intensity at theta=0 should be highest (lambertian)
+        assert profile["intensity"][0] == pytest.approx(1.0)
+    finally:
+        os.unlink(path)
+
+
+def test_export_farfield_csv_row_count():
+    """export_farfield_csv produces n_theta * n_phi data rows plus header."""
+    import tempfile, os
+    from backlight_sim.io.ies_parser import export_farfield_csv
+
+    n_theta, n_phi = 18, 36
+    theta_deg = np.linspace(0, 170, n_theta)
+    phi_deg = np.linspace(0, 350, n_phi)
+    candela_grid = np.ones((n_theta, n_phi))
+
+    with tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w") as f:
+        path = f.name
+    try:
+        export_farfield_csv(path, theta_deg, phi_deg, candela_grid)
+        lines = open(path).readlines()
+        # 1 header + n_theta * n_phi data rows
+        assert len(lines) == 1 + n_theta * n_phi, (
+            f"Expected {1 + n_theta * n_phi} lines, got {len(lines)}"
+        )
+        # Header check
+        assert lines[0].strip() == "theta_deg,phi_deg,candela"
+    finally:
+        os.unlink(path)
+
+
+def test_farfield_kpis_lambertian_beam_angle():
+    """compute_farfield_kpis on Lambertian pattern: beam angle ~ 120 deg (cos drops to 0.5 at 60 deg)."""
+    from backlight_sim.io.ies_parser import compute_farfield_kpis
+
+    n_theta, n_phi = 180, 36
+    theta_deg = np.linspace(0.5, 179.5, n_theta)  # bin centers
+    theta_rad = np.deg2rad(theta_deg)
+    cd_1d = np.maximum(np.cos(theta_rad), 0.0)
+    candela_grid = np.tile(cd_1d[:, None], (1, n_phi))
+
+    kpis = compute_farfield_kpis(candela_grid, theta_deg)
+
+    assert "peak_cd" in kpis
+    assert "total_lm" in kpis
+    assert "beam_angle" in kpis
+    assert "field_angle" in kpis
+    assert "asymmetry" in kpis
+
+    assert kpis["peak_cd"] == pytest.approx(1.0, abs=0.01)
+    # Lambertian: cd=1 at 0 deg, drops to 0.5 at 60 deg → beam angle ~ 120 deg
+    assert abs(kpis["beam_angle"] - 120.0) < 5.0, (
+        f"Expected beam_angle ~ 120 deg for Lambertian, got {kpis['beam_angle']:.1f}"
+    )
+    assert kpis["total_lm"] > 0
+    # Symmetric distribution → asymmetry should be near 1.0
+    assert kpis["asymmetry"] == pytest.approx(1.0, abs=0.01)
+
+
+# ------------------------------------------------------------------
 # Phase 3 Plan 02 — BVH acceleration tests
 # ------------------------------------------------------------------
 
