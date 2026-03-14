@@ -1935,3 +1935,56 @@ def test_bsdf_project_io_roundtrip():
         assert loaded["trans_intensity"] == profile["trans_intensity"], "trans_intensity mismatch"
     finally:
         os.unlink(path)
+
+
+# ------------------------------------------------------------------
+# Phase 4 Plan 05 — Sphere detector in multiprocessing mode
+# ------------------------------------------------------------------
+
+
+def _make_farfield_mp_scene() -> Project:
+    """Box scene with a far-field sphere detector and two sources for MP mode."""
+    from backlight_sim.core.detectors import SphereDetector
+    materials = {
+        "wall": Material(name="wall", surface_type="reflector",
+                         reflectance=0.9, absorption=0.1),
+    }
+    surfaces = [
+        Rectangle.axis_aligned("floor",      [0, 0, -5], (20, 20), 2, -1.0, "wall"),
+        Rectangle.axis_aligned("wall_left",  [-10, 0, 0], (20, 10), 0, -1.0, "wall"),
+        Rectangle.axis_aligned("wall_right", [10, 0, 0],  (20, 10), 0,  1.0, "wall"),
+        Rectangle.axis_aligned("wall_front", [0, -10, 0], (20, 10), 1, -1.0, "wall"),
+        Rectangle.axis_aligned("wall_back",  [0, 10, 0],  (20, 10), 1,  1.0, "wall"),
+    ]
+    # Two sources so that multiprocessing is engaged (requires > 1 source)
+    sources = [
+        PointSource("src1", np.array([0.0, 0.0, 0.0]), flux=1000.0),
+        PointSource("src2", np.array([1.0, 0.0, 0.0]), flux=1000.0),
+    ]
+    settings = SimulationSettings(
+        rays_per_source=2000,
+        max_bounces=10,
+        energy_threshold=0.001,
+        random_seed=42,
+        record_ray_paths=0,
+        use_multiprocessing=True,
+    )
+    proj = Project(name="farfield_mp_test", sources=sources, surfaces=surfaces,
+                   materials=materials, detectors=[], settings=settings)
+    # Add a far-field sphere detector at center, large radius to catch all rays
+    sd = SphereDetector(name="ff_sphere", center=np.array([0.0, 0.0, 0.0]),
+                        radius=50.0, resolution=(36, 18), mode="far_field")
+    proj.sphere_detectors = [sd]
+    return proj
+
+
+def test_farfield_sphere_multiprocessing_produces_candela_grid():
+    """Far-field sphere detector produces a non-None candela_grid in MP mode."""
+    proj = _make_farfield_mp_scene()
+    result = RayTracer(proj).run()
+    assert hasattr(result, "sphere_detectors"), "SimulationResult missing sphere_detectors"
+    sd_result = result.sphere_detectors.get("ff_sphere")
+    assert sd_result is not None, "ff_sphere result missing from sphere_detectors"
+    assert sd_result.candela_grid is not None, "candela_grid is None — far-field not computed in MP"
+    assert sd_result.candela_grid.sum() > 0, "candela_grid is all zeros"
+    assert sd_result.total_hits > 0, "no rays hit the far-field sphere detector"

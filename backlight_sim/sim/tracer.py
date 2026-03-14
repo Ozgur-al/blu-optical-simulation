@@ -202,11 +202,19 @@ class RayTracer:
         """Run each source in a separate process and merge results."""
         settings = self.project.settings
         detectors = self.project.detectors
+        sphere_dets = self.project.sphere_detectors
 
         det_results: dict[str, DetectorResult] = {}
         for det in detectors:
             grid = np.zeros((det.resolution[1], det.resolution[0]), dtype=float)
             det_results[det.name] = DetectorResult(detector_name=det.name, grid=grid)
+
+        # Initialize merged sphere detector results
+        sph_results: dict[str, SphereDetectorResult] = {}
+        for sd in sphere_dets:
+            n_phi, n_theta = sd.resolution
+            grid = np.zeros((n_theta, n_phi), dtype=float)
+            sph_results[sd.name] = SphereDetectorResult(detector_name=sd.name, grid=grid)
 
         # Initialize merged solid_body_stats
         merged_sb_stats: dict[str, dict[str, dict[str, float]]] = {}
@@ -248,6 +256,12 @@ class RayTracer:
                     det_results[det_name].total_hits += grid_data["hits"]
                     det_results[det_name].total_flux += grid_data["flux"]
                 escaped_total += result["escaped"]
+                # Merge sphere detector grids
+                for sph_name, sph_data in result.get("sph_grids", {}).items():
+                    if sph_name in sph_results:
+                        sph_results[sph_name].grid += sph_data["grid"]
+                        sph_results[sph_name].total_hits += sph_data["hits"]
+                        sph_results[sph_name].total_flux += sph_data["flux"]
                 # Merge solid_body_stats
                 for box_name, face_map in result.get("sb_stats", {}).items():
                     if box_name in merged_sb_stats:
@@ -264,8 +278,14 @@ class RayTracer:
                     f"{len(errors)} source(s) failed in multiprocessing: {errors[0]}"
                 )
 
+        # Compute far-field candela distributions for far_field sphere detectors
+        for sd in sphere_dets:
+            if sd.mode == "far_field":
+                compute_farfield_candela(sd, sph_results[sd.name])
+
         return SimulationResult(
             detectors=det_results,
+            sphere_detectors=sph_results,
             total_emitted_flux=total_emitted_flux,
             escaped_flux=escaped_total,
             source_count=len(sources),
@@ -1110,6 +1130,7 @@ def _trace_single_source(project, source_name, base_seed):
     settings = project.settings
     surfaces = project.surfaces
     detectors = project.detectors
+    sphere_dets = project.sphere_detectors
     materials = project.materials
     distributions = project.angular_distributions
 
@@ -1117,6 +1138,16 @@ def _trace_single_source(project, source_name, base_seed):
     for det in detectors:
         det_grids[det.name] = {
             "grid": np.zeros((det.resolution[1], det.resolution[0]), dtype=float),
+            "hits": 0,
+            "flux": 0.0,
+        }
+
+    # Initialize sphere detector grids for this source
+    sph_grids: dict[str, dict] = {}
+    for sd in sphere_dets:
+        n_phi, n_theta = sd.resolution
+        sph_grids[sd.name] = {
+            "grid": np.zeros((n_theta, n_phi), dtype=float),
             "hits": 0,
             "flux": 0.0,
         }
@@ -1277,6 +1308,14 @@ def _trace_single_source(project, source_name, base_seed):
             best_type[closer] = 1
             best_obj[closer] = di
 
+        # Sphere detectors tested separately (type 2)
+        for sdi, sd in enumerate(sphere_dets):
+            t = _intersect_sphere_accel(active_origins, active_dirs, sd.center, sd.radius)
+            closer = t < best_t
+            best_t[closer] = t[closer]
+            best_type[closer] = 2
+            best_obj[closer] = sdi
+
         missed = best_t == np.inf
         if missed.any():
             escaped_flux += float(weights[active_idx[missed]].sum())
@@ -1301,6 +1340,44 @@ def _trace_single_source(project, source_name, base_seed):
             det_grids[det.name]["hits"] += len(hw_arr)
             det_grids[det.name]["flux"] += float(hw_arr.sum())
             # Pass-through: advance ray past the detector plane
+            origins[hit_idx] = hit_pts + directions[hit_idx] * _EPSILON
+
+        # Sphere detector hits — pass-through (accumulate flux then continue)
+        for sdi, sd in enumerate(sphere_dets):
+            mask = (best_type == 2) & (best_obj == sdi)
+            if not mask.any():
+                continue
+            hit_idx = active_idx[mask]
+            hit_pts = origins[hit_idx] + best_t[mask, None] * directions[hit_idx]
+            if sd.mode == "far_field":
+                # Inline far-field accumulation using outgoing direction
+                d_out = -directions[hit_idx]
+                r_norm = np.linalg.norm(d_out, axis=1, keepdims=True)
+                r_norm = np.maximum(r_norm, 1e-12)
+                d_norm = d_out / r_norm
+                theta = np.arccos(np.clip(d_norm[:, 2], -1.0, 1.0))
+                phi = np.arctan2(d_norm[:, 1], d_norm[:, 0])
+                phi = np.where(phi < 0, phi + 2.0 * np.pi, phi)
+                n_phi_sd, n_theta_sd = sd.resolution
+                i_theta = np.clip((theta / np.pi * n_theta_sd).astype(int), 0, n_theta_sd - 1)
+                i_phi = np.clip((phi / (2.0 * np.pi) * n_phi_sd).astype(int), 0, n_phi_sd - 1)
+                accumulate_sphere_jit(sph_grids[sd.name]["grid"], i_theta, i_phi, weights[hit_idx])
+            else:
+                # Near-field: accumulate by position
+                d_pos = hit_pts - sd.center
+                r_pos = np.linalg.norm(d_pos, axis=1, keepdims=True)
+                r_pos = np.maximum(r_pos, 1e-12)
+                d_norm_pos = d_pos / r_pos
+                theta_pos = np.arccos(np.clip(d_norm_pos[:, 2], -1.0, 1.0))
+                phi_pos = np.arctan2(d_norm_pos[:, 1], d_norm_pos[:, 0])
+                phi_pos = np.where(phi_pos < 0, phi_pos + 2.0 * np.pi, phi_pos)
+                n_phi_sd, n_theta_sd = sd.resolution
+                i_theta = np.clip((theta_pos / np.pi * n_theta_sd).astype(int), 0, n_theta_sd - 1)
+                i_phi = np.clip((phi_pos / (2.0 * np.pi) * n_phi_sd).astype(int), 0, n_phi_sd - 1)
+                accumulate_sphere_jit(sph_grids[sd.name]["grid"], i_theta, i_phi, weights[hit_idx])
+            sph_grids[sd.name]["hits"] += len(hit_idx)
+            sph_grids[sd.name]["flux"] += float(weights[hit_idx].sum())
+            # Pass-through: advance ray past the sphere
             origins[hit_idx] = hit_pts + directions[hit_idx] * _EPSILON
 
         # SolidBox face hits — Fresnel/TIR physics
@@ -1457,7 +1534,7 @@ def _trace_single_source(project, source_name, base_seed):
 
         alive[weights < settings.energy_threshold] = False
 
-    return {"grids": det_grids, "escaped": escaped_flux, "sb_stats": sb_stats}
+    return {"grids": det_grids, "escaped": escaped_flux, "sb_stats": sb_stats, "sph_grids": sph_grids}
 
 
 def _reflect_batch(dirs, oriented_normals, is_diffuse, rng):
