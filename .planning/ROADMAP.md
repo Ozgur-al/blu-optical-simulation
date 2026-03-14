@@ -16,6 +16,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Spectral Engine** - Per-ray wavelength, wavelength-dependent materials, spectral detector grids, CIE color display (completed 2026-03-14)
 - [x] **Phase 3: Performance Acceleration** - Numba JIT for inner loops, BVH spatial acceleration, adaptive sampling (completed 2026-03-14)
 - [x] **Phase 4: Advanced Materials and Geometry** - Tabulated BRDF, far-field detector, cylinder and prism solid bodies (completed 2026-03-14)
+- [ ] **Phase 6: Tracer Cross-Phase Wiring** - Fix Cylinder/Prism MP dispatch, SolidBox face_optics, spectral solid body Fresnel, BSDF+spectral exclusion
+- [ ] **Phase 7: UI + Spectral Display Fixes** - Wire duplicate action, tab state persistence, chromaticity scatter update, live preview spectral color
 
 ## Phase Details
 
@@ -100,10 +102,34 @@ Plans:
 - [x] 05-03-PLAN.md — Collapsible properties panel (CollapsibleSection widget) + object tree icons and context menus
 - [ ] 05-04-PLAN.md — Enhanced heatmap (colormap selector, crosshair, KPI cards) + live simulation preview
 
+### Phase 6: Tracer Cross-Phase Wiring
+**Goal**: All solid body geometries participate correctly in multiprocessing, spectral, and BSDF simulation paths — closing 4 integration gaps and 3 broken E2E flows
+**Depends on**: Phases 1-4
+**Requirements**: GEOM-02, GEOM-03, LGP-01, SPEC-04, BRDF-01
+**Gap Closure:** Closes integration/flow gaps from v1.0 audit
+**Success Criteria** (what must be TRUE):
+  1. Cylinder and Prism solid bodies produce correct flux when `use_multiprocessing=True`
+  2. SolidBox.face_optics per-face material overrides are consumed by the tracer during bounce dispatch
+  3. Wavelength-dependent R/T from spectral_material_data is applied in Fresnel branches for SolidBox/Cylinder/Prism (type=3/4/5)
+  4. Surfaces with both BSDF and spectral data apply wavelength-dependent R/T before BSDF scattering (no silent exclusion)
+**Plans**: TBD
+
+### Phase 7: UI + Spectral Display Fixes
+**Goal**: All UI features work end-to-end (duplicate action, tab persistence) and spectral display paths are complete (chromaticity scatter, live preview color mode)
+**Depends on**: Phase 5, Phase 2
+**Requirements**: UI-02, UI-06, SPEC-03
+**Gap Closure:** Closes requirement gaps UI-02/UI-06 and display integration gaps from v1.0 audit
+**Success Criteria** (what must be TRUE):
+  1. Tab state (which tabs are open, their order) persists between sessions via QSettings
+  2. Right-clicking a scene object and selecting Duplicate creates a copy of that object
+  3. SpectralDataPanel chromaticity scatter overlay updates after simulation completes
+  4. Live heatmap preview shows spectral color mode during spectral simulations (grid_spectral included in partial results)
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -112,3 +138,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 3. Performance Acceleration | 2/2 | Complete   | 2026-03-14 |
 | 4. Advanced Materials and Geometry | 5/5 | Complete   | 2026-03-14 |
 | 5. UI Revamp | 4/4 | Complete   | 2026-03-14 |
+| 6. Tracer Cross-Phase Wiring | 0/? | Planned   | — |
+| 7. UI + Spectral Display Fixes | 0/? | Planned   | — |

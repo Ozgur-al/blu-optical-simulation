@@ -44,11 +44,11 @@ Requirements for Phase 2 release. Each maps to roadmap phases.
 ### UI / UX
 
 - [x] **UI-01**: Application uses a dark theme with teal/cyan accent across all widgets including pyqtgraph plots and 3D viewport
-- [x] **UI-02**: Left sidebar (scene tree + properties) with central tabbed panel area; panels openable from Window menu; tab state persists between sessions via QSettings
+- [ ] **UI-02**: Left sidebar (scene tree + properties) with central tabbed panel area; panels openable from Window menu; tab state persists between sessions via QSettings
 - [x] **UI-03**: Top toolbar with icon+text buttons for common actions (New, Open, Save, Run, Cancel) and quick-add buttons (LED, Surface, Detector, SolidBox)
 - [x] **UI-04**: Full undo/redo system (Ctrl+Z / Ctrl+Y) using QUndoStack for all scene mutations (add, delete, property edit)
 - [x] **UI-05**: Properties panel uses collapsible sections for property groups with expand/collapse arrows
-- [x] **UI-06**: Object tree shows per-type colored icons and enhanced context menus with Duplicate action
+- [ ] **UI-06**: Object tree shows per-type colored icons and enhanced context menus with Duplicate action
 - [x] **UI-07**: Heatmap panel has selectable colormaps, crosshair cursor with live pixel values, and KPI cards with color-coded thresholds (green/yellow/red)
 - [x] **UI-08**: Live heatmap preview updates during simulation at 5% intervals, with auto-focus on heatmap dock after completion
 
@@ -119,17 +119,19 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BRDF-01 | Phase 4 | Complete |
 | DET-01 | Phase 4 | Complete |
 | UI-01 | Phase 5 | Complete |
-| UI-02 | Phase 5 | Complete |
+| UI-02 | Phase 7 | Pending |
 | UI-03 | Phase 5 | Complete |
 | UI-04 | Phase 5 | Complete |
 | UI-05 | Phase 5 | Complete |
-| UI-06 | Phase 5 | Complete |
+| UI-06 | Phase 7 | Pending |
 | UI-07 | Phase 5 | Complete |
 | UI-08 | Phase 5 | Complete |
 
 **Coverage:**
 - v1 requirements: 24 total
 - Mapped to phases: 24
+- Complete: 22
+- Pending (gap closure): 2 (UI-02, UI-06)
 - Unmapped: 0
 
 ---
