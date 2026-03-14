@@ -31,6 +31,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from backlight_sim.gui.widgets.collapsible_section import CollapsibleSection
+
 from backlight_sim.core.detectors import DetectorSurface, SphereDetector
 from backlight_sim.core.geometry import Rectangle
 from backlight_sim.core.solid_body import SolidBox, SolidCylinder, SolidPrism, FACE_NAMES
@@ -204,24 +206,50 @@ class SourceForm(QWidget):
 
     def __init__(self):
         super().__init__()
-        fl = QFormLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        content = QWidget()
+        vbox = QVBoxLayout(content)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(2)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+        # ---- Identity section (name + enabled) ----
+        sec_identity = CollapsibleSection("Identity", collapsed=False)
+        fl_identity = QFormLayout()
         self._name = _name_edit()
+        self._enabled = QCheckBox()
+        self._enabled.setChecked(True)
+        fl_identity.addRow("Name:", self._name)
+        fl_identity.addRow("Enabled:", self._enabled)
+        sec_identity.addLayout(fl_identity)
+        vbox.addWidget(sec_identity)
+
+        # ---- Position section ----
+        sec_pos = CollapsibleSection("Position", collapsed=False)
+        fl_pos = QFormLayout()
         self._px = _dspin()
         self._py = _dspin()
         self._pz = _dspin()
-        self._flux = _dspin(0, 1e7, 1, 100.0, 10.0)
-        self._dist = QComboBox()
-        self._dist.addItems(["isotropic", "lambertian"])
-        self._enabled = QCheckBox()
-        self._enabled.setChecked(True)
-        fl.addRow("Name:", self._name)
-        fl.addRow("Enabled:", self._enabled)
-        fl.addRow("X:", self._px)
-        fl.addRow("Y:", self._py)
-        fl.addRow("Z:", self._pz)
-        fl.addRow("Flux:", self._flux)
+        fl_pos.addRow("X:", self._px)
+        fl_pos.addRow("Y:", self._py)
+        fl_pos.addRow("Z:", self._pz)
+        sec_pos.addLayout(fl_pos)
+        vbox.addWidget(sec_pos)
 
-        # Peak intensity helper (read/convert) ──────────────────────────
+        # ---- Emission section (flux, distribution, peak cd) ----
+        sec_emission = CollapsibleSection("Emission", collapsed=False)
+        fl_emission = QFormLayout()
+        self._flux = _dspin(0, 1e7, 1, 100.0, 10.0)
+        fl_emission.addRow("Flux:", self._flux)
+
+        # Peak intensity helper (read/convert)
         peak_row = QHBoxLayout()
         self._peak_spin = _dspin(0.01, 1e8, 3, 31.83, 10.0)
         self._peak_spin.setToolTip(
@@ -236,26 +264,32 @@ class SourceForm(QWidget):
         self._peak_set_btn.clicked.connect(self._apply_peak)
         peak_row.addWidget(self._peak_spin)
         peak_row.addWidget(self._peak_set_btn)
-        self._peak_lbl = QLabel("")          # holds the formatted estimate
+        self._peak_lbl = QLabel("")
         self._peak_lbl.setStyleSheet("color: gray; font-size: 10px;")
-        fl.addRow("Peak cd:", peak_row)
-        # ────────────────────────────────────────────────────────────────
+        fl_emission.addRow("Peak cd:", peak_row)
 
-        fl.addRow("Distribution:", self._dist)
+        self._dist = QComboBox()
+        self._dist.addItems(["isotropic", "lambertian"])
+        fl_emission.addRow("Distribution:", self._dist)
+        sec_emission.addLayout(fl_emission)
+        vbox.addWidget(sec_emission)
 
-        # Bin tolerance, current scaling, thermal derating
+        # ---- Thermal / Binning section (collapsed by default) ----
+        sec_thermal = CollapsibleSection("Thermal / Binning", collapsed=True)
+        fl_thermal = QFormLayout()
         self._tolerance = _dspin(0, 100, 1, 0.0, 1.0)
         self._tolerance.setToolTip("LED flux bin tolerance ±% (0 = exact)")
-        fl.addRow("Flux tolerance ±%:", self._tolerance)
+        fl_thermal.addRow("Flux tolerance ±%:", self._tolerance)
         self._current = _dspin(0, 1e5, 1, 0.0, 1.0)
         self._current.setToolTip("Drive current in mA (0 = use flux directly)")
-        fl.addRow("Current (mA):", self._current)
+        fl_thermal.addRow("Current (mA):", self._current)
         self._flux_per_mA = _dspin(0, 1e5, 4, 0.0, 0.01)
         self._flux_per_mA.setToolTip("Flux per mA (lm/mA). When >0, flux = current × flux_per_mA")
-        fl.addRow("Flux/mA:", self._flux_per_mA)
+        fl_thermal.addRow("Flux/mA:", self._flux_per_mA)
         self._thermal = _dspin(0, 1, 3, 1.0, 0.01)
         self._thermal.setToolTip("Thermal derating factor 0–1 (1 = no derating)")
-        fl.addRow("Thermal derate:", self._thermal)
+        fl_thermal.addRow("Thermal derate:", self._thermal)
+
         # LED color (RGB)
         color_row = QHBoxLayout()
         self._cr = _dspin(0, 1, 2, 1.0, 0.05)
@@ -270,8 +304,8 @@ class SourceForm(QWidget):
         color_row.addWidget(self._cg)
         color_row.addWidget(QLabel("B:"))
         color_row.addWidget(self._cb)
-        fl.addRow("LED Color:", color_row)
-        # Spectral power distribution
+        fl_thermal.addRow("LED Color:", color_row)
+
         self._spd = QComboBox()
         self._spd.addItems(["white", "warm_white", "cool_white",
                             "mono_450", "mono_525", "mono_630"])
@@ -282,7 +316,10 @@ class SourceForm(QWidget):
             "Monochromatic: mono_<nm> (e.g. mono_550)\n"
             "Or type a custom SPD name."
         )
-        fl.addRow("SPD:", self._spd)
+        fl_thermal.addRow("SPD:", self._spd)
+        sec_thermal.addLayout(fl_thermal)
+        vbox.addWidget(sec_thermal)
+        vbox.addStretch()
 
         self._src = None
         self._loading = False
@@ -404,36 +441,74 @@ class SurfaceForm(QWidget):
 
     def __init__(self):
         super().__init__()
-        fl = QFormLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        content = QWidget()
+        vbox = QVBoxLayout(content)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(2)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+        # ---- Identity section ----
+        sec_identity = CollapsibleSection("Identity", collapsed=False)
+        fl_identity = QFormLayout()
         self._name = _name_edit()
+        self._mat = QComboBox()
+        self._opt_prop = QComboBox()
+        self._opt_prop.setToolTip("Override material's optical behavior with specific optical properties")
+        fl_identity.addRow("Name:", self._name)
+        fl_identity.addRow("Material:", self._mat)
+        fl_identity.addRow("Optical Props:", self._opt_prop)
+        sec_identity.addLayout(fl_identity)
+        vbox.addWidget(sec_identity)
+
+        # ---- Position section ----
+        sec_pos = CollapsibleSection("Position", collapsed=False)
+        fl_pos = QFormLayout()
         self._cx = _dspin()
         self._cy = _dspin()
         self._cz = _dspin()
-        self._sw = _dspin(0.01, 9999, 2, 10.0)
-        self._sh = _dspin(0.01, 9999, 2, 10.0)
+        fl_pos.addRow("Center X:", self._cx)
+        fl_pos.addRow("Center Y:", self._cy)
+        fl_pos.addRow("Center Z:", self._cz)
+        sec_pos.addLayout(fl_pos)
+        vbox.addWidget(sec_pos)
+
+        # ---- Orientation section ----
+        sec_orient = CollapsibleSection("Orientation", collapsed=False)
+        fl_orient = QFormLayout()
         self._face = QComboBox()
         self._face.addItems(["+X face", "-X face", "+Y face", "-Y face", "+Z face", "-Z face"])
         self._rx = _dspin(-180.0, 180.0, 2, 0.0, 1.0)
         self._ry = _dspin(-180.0, 180.0, 2, 0.0, 1.0)
         self._rz = _dspin(-180.0, 180.0, 2, 0.0, 1.0)
-        self._mat = QComboBox()
         self._normal_lbl = QLabel("normal: ?")
         self._normal_lbl.setStyleSheet("color: gray; font-size: 11px;")
-        fl.addRow("Name:", self._name)
-        fl.addRow("Center X:", self._cx)
-        fl.addRow("Center Y:", self._cy)
-        fl.addRow("Center Z:", self._cz)
-        fl.addRow("Width:", self._sw)
-        fl.addRow("Height:", self._sh)
-        fl.addRow("Face direction:", self._face)
-        fl.addRow("Rotate X (deg):", self._rx)
-        fl.addRow("Rotate Y (deg):", self._ry)
-        fl.addRow("Rotate Z (deg):", self._rz)
-        self._opt_prop = QComboBox()
-        self._opt_prop.setToolTip("Override material's optical behavior with specific optical properties")
-        fl.addRow("Material:", self._mat)
-        fl.addRow("Optical Props:", self._opt_prop)
-        fl.addRow("", self._normal_lbl)
+        fl_orient.addRow("Face direction:", self._face)
+        fl_orient.addRow("Rotate X (deg):", self._rx)
+        fl_orient.addRow("Rotate Y (deg):", self._ry)
+        fl_orient.addRow("Rotate Z (deg):", self._rz)
+        fl_orient.addRow("", self._normal_lbl)
+        sec_orient.addLayout(fl_orient)
+        vbox.addWidget(sec_orient)
+
+        # ---- Size section ----
+        sec_size = CollapsibleSection("Size", collapsed=False)
+        fl_size = QFormLayout()
+        self._sw = _dspin(0.01, 9999, 2, 10.0)
+        self._sh = _dspin(0.01, 9999, 2, 10.0)
+        fl_size.addRow("Width:", self._sw)
+        fl_size.addRow("Height:", self._sh)
+        sec_size.addLayout(fl_size)
+        vbox.addWidget(sec_size)
+        vbox.addStretch()
+
         self._surf = None
         self._loading = False
         for w in (self._cx, self._cy, self._cz, self._sw, self._sh, self._rx, self._ry, self._rz):
@@ -524,15 +599,26 @@ class MaterialForm(QWidget):
         # Wrap everything in a scroll area so the form + spectral section fit
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setContentsMargins(4, 4, 4, 4)
+        scroll_layout.setSpacing(2)
 
-        # ---- Standard material properties ----
-        fl = QFormLayout()
+        # ---- Identity section ----
+        sec_identity = CollapsibleSection("Identity", collapsed=False)
+        fl_identity = QFormLayout()
         self._name = _name_edit()
         self._type = QComboBox()
         self._type.addItems(["reflector", "absorber", "diffuser"])
+        fl_identity.addRow("Name:", self._name)
+        fl_identity.addRow("Type:", self._type)
+        sec_identity.addLayout(fl_identity)
+        scroll_layout.addWidget(sec_identity)
+
+        # ---- Optical section ----
+        sec_optical = CollapsibleSection("Optical", collapsed=False)
+        fl_optical = QFormLayout()
         self._ref = _dspin(0, 1, 3, 0.9, 0.01)
         self._abs = _dspin(0, 1, 3, 0.1, 0.01)
         self._trn = _dspin(0, 1, 3, 0.0, 0.01)
@@ -542,20 +628,25 @@ class MaterialForm(QWidget):
         self._haze.setToolTip("Haze / scatter half-angle in degrees (specular only, 0 = perfect mirror)")
         self._ri = _dspin(0.1, 10.0, 3, 1.0, 0.01)
         self._ri.setToolTip("Index of refraction (1.0 = air, 1.5 = glass, 2.4 = diamond)")
+        fl_optical.addRow("Reflectance:", self._ref)
+        fl_optical.addRow("Absorption:", self._abs)
+        fl_optical.addRow("Transmittance:", self._trn)
+        fl_optical.addRow("Reflection:", self._mode)
+        fl_optical.addRow("Haze (deg):", self._haze)
+        fl_optical.addRow("Refractive Index:", self._ri)
+        sec_optical.addLayout(fl_optical)
+        scroll_layout.addWidget(sec_optical)
+
+        # ---- Visual section (color, collapsed by default) ----
+        sec_visual = CollapsibleSection("Visual", collapsed=True)
+        fl_visual = QFormLayout()
         self._color_btn = QPushButton()
         self._color_btn.clicked.connect(self._pick_color)
-        fl.addRow("Name:", self._name)
-        fl.addRow("Type:", self._type)
-        fl.addRow("Reflectance:", self._ref)
-        fl.addRow("Absorption:", self._abs)
-        fl.addRow("Transmittance:", self._trn)
-        fl.addRow("Reflection:", self._mode)
-        fl.addRow("Haze (deg):", self._haze)
-        fl.addRow("Refractive Index:", self._ri)
-        fl.addRow("Color:", self._color_btn)
-        scroll_layout.addLayout(fl)
+        fl_visual.addRow("Color:", self._color_btn)
+        sec_visual.addLayout(fl_visual)
+        scroll_layout.addWidget(sec_visual)
 
-        # ---- Spectral R/T section ----
+        # ---- Spectral R/T section (collapsed by default) ----
         self._spec_group = QGroupBox("Spectral R/T")
         self._spec_group.setCheckable(True)
         self._spec_group.setChecked(False)
@@ -984,37 +1075,75 @@ class DetectorForm(QWidget):
 
     def __init__(self):
         super().__init__()
-        fl = QFormLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        content = QWidget()
+        vbox = QVBoxLayout(content)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(2)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+        # ---- Identity section ----
+        sec_identity = CollapsibleSection("Identity", collapsed=False)
+        fl_identity = QFormLayout()
         self._name = _name_edit()
+        fl_identity.addRow("Name:", self._name)
+        sec_identity.addLayout(fl_identity)
+        vbox.addWidget(sec_identity)
+
+        # ---- Position section ----
+        sec_pos = CollapsibleSection("Position", collapsed=False)
+        fl_pos = QFormLayout()
         self._cx = _dspin()
         self._cy = _dspin()
         self._cz = _dspin(val=5.0)
-        self._sw = _dspin(0.01, 9999, 2, 10.0)
-        self._sh = _dspin(0.01, 9999, 2, 10.0)
+        fl_pos.addRow("Center X:", self._cx)
+        fl_pos.addRow("Center Y:", self._cy)
+        fl_pos.addRow("Center Z:", self._cz)
+        sec_pos.addLayout(fl_pos)
+        vbox.addWidget(sec_pos)
+
+        # ---- Orientation section ----
+        sec_orient = CollapsibleSection("Orientation", collapsed=False)
+        fl_orient = QFormLayout()
         self._face = QComboBox()
         self._face.addItems(["+X face", "-X face", "+Y face", "-Y face", "+Z face", "-Z face"])
         self._face.setCurrentIndex(4)
         self._rx = _dspin(-180.0, 180.0, 2, 0.0, 1.0)
         self._ry = _dspin(-180.0, 180.0, 2, 0.0, 1.0)
         self._rz = _dspin(-180.0, 180.0, 2, 0.0, 1.0)
+        fl_orient.addRow("Face direction:", self._face)
+        fl_orient.addRow("Rotate X (deg):", self._rx)
+        fl_orient.addRow("Rotate Y (deg):", self._ry)
+        fl_orient.addRow("Rotate Z (deg):", self._rz)
+        sec_orient.addLayout(fl_orient)
+        vbox.addWidget(sec_orient)
+
+        # ---- Size & Resolution section ----
+        sec_size = CollapsibleSection("Size & Resolution", collapsed=False)
+        fl_size = QFormLayout()
+        self._sw = _dspin(0.01, 9999, 2, 10.0)
+        self._sh = _dspin(0.01, 9999, 2, 10.0)
         self._rx_res = QSpinBox()
         self._rx_res.setRange(10, 2000)
         self._rx_res.setValue(100)
         self._ry_res = QSpinBox()
         self._ry_res.setRange(10, 2000)
         self._ry_res.setValue(100)
-        fl.addRow("Name:", self._name)
-        fl.addRow("Center X:", self._cx)
-        fl.addRow("Center Y:", self._cy)
-        fl.addRow("Center Z:", self._cz)
-        fl.addRow("Width:", self._sw)
-        fl.addRow("Height:", self._sh)
-        fl.addRow("Face direction:", self._face)
-        fl.addRow("Rotate X (deg):", self._rx)
-        fl.addRow("Rotate Y (deg):", self._ry)
-        fl.addRow("Rotate Z (deg):", self._rz)
-        fl.addRow("Resolution X:", self._rx_res)
-        fl.addRow("Resolution Y:", self._ry_res)
+        fl_size.addRow("Width:", self._sw)
+        fl_size.addRow("Height:", self._sh)
+        fl_size.addRow("Resolution X:", self._rx_res)
+        fl_size.addRow("Resolution Y:", self._ry_res)
+        sec_size.addLayout(fl_size)
+        vbox.addWidget(sec_size)
+        vbox.addStretch()
+
         self._det = None
         self._loading = False
         for w in (self._cx, self._cy, self._cz, self._sw, self._sh, self._rx, self._ry, self._rz):
@@ -1162,12 +1291,22 @@ class SettingsForm(QWidget):
     changed = Signal()
 
     def __init__(self):
-        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout
         super().__init__()
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        # Quality preset row
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        content = QWidget()
+        vbox = QVBoxLayout(content)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(2)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+        # Quality preset row (always visible, outside sections)
         preset_row = QHBoxLayout()
         preset_row.addWidget(QLabel("Quality:"))
         for name, vals in _QUALITY_PRESETS.items():
@@ -1176,11 +1315,11 @@ class SettingsForm(QWidget):
             btn.clicked.connect(lambda _=False, v=vals: self._apply_preset(v))
             preset_row.addWidget(btn)
         preset_row.addStretch()
-        outer.addLayout(preset_row)
+        vbox.addLayout(preset_row)
 
-        fl = QFormLayout()
-        outer.addLayout(fl)
-
+        # ---- Ray Tracing section ----
+        sec_rt = CollapsibleSection("Ray Tracing", collapsed=False)
+        fl_rt = QFormLayout()
         self._rays = QSpinBox()
         self._rays.setRange(100, 10_000_000)
         self._rays.setValue(10_000)
@@ -1189,22 +1328,15 @@ class SettingsForm(QWidget):
         self._bounce.setRange(1, 500)
         self._bounce.setValue(50)
         self._thresh = _dspin(0, 1, 6, 0.001, 0.0001)
-        self._seed = QSpinBox()
-        self._seed.setRange(0, 999999)
-        self._seed.setValue(42)
-        self._rec = QSpinBox()
-        self._rec.setRange(0, 5000)
-        self._rec.setValue(200)
-        self._unit = QComboBox()
-        self._unit.addItems(["mm", "cm", "m", "in"])
-        self._flux_unit = QComboBox()
-        self._flux_unit.addItems(["lm", "mW", "W"])
-        self._angle_unit = QComboBox()
-        self._angle_unit.addItems(["deg", "rad"])
-        self._mp = QCheckBox("Enable multiprocessing")
-        self._mp.setToolTip("Parallelize across sources (no ray path recording)")
+        fl_rt.addRow("Rays per source:", self._rays)
+        fl_rt.addRow("Max bounces:", self._bounce)
+        fl_rt.addRow("Energy threshold:", self._thresh)
+        sec_rt.addLayout(fl_rt)
+        vbox.addWidget(sec_rt)
 
-        # Adaptive sampling controls
+        # ---- Convergence section (collapsed by default) ----
+        sec_conv = CollapsibleSection("Convergence", collapsed=True)
+        fl_conv = QFormLayout()
         self._adaptive = QCheckBox("Adaptive sampling")
         self._adaptive.setToolTip(
             "Stop ray generation per source when detector CV% drops below threshold"
@@ -1224,19 +1356,39 @@ class SettingsForm(QWidget):
         self._check_interval.setSingleStep(100)
         self._check_interval.setValue(1000)
         self._check_interval.setToolTip("Check convergence every N rays per source")
+        fl_conv.addRow("", self._adaptive)
+        fl_conv.addRow("CV target:", self._cv_target)
+        fl_conv.addRow("Check interval:", self._check_interval)
+        sec_conv.addLayout(fl_conv)
+        vbox.addWidget(sec_conv)
 
-        fl.addRow("Rays per source:", self._rays)
-        fl.addRow("Max bounces:", self._bounce)
-        fl.addRow("Energy threshold:", self._thresh)
-        fl.addRow("Random seed:", self._seed)
-        fl.addRow("Record ray paths:", self._rec)
-        fl.addRow("Distance unit:", self._unit)
-        fl.addRow("Flux unit:", self._flux_unit)
-        fl.addRow("Angle unit:", self._angle_unit)
-        fl.addRow("", self._mp)
-        fl.addRow("", self._adaptive)
-        fl.addRow("CV target:", self._cv_target)
-        fl.addRow("Check interval:", self._check_interval)
+        # ---- Advanced section (collapsed by default) ----
+        sec_adv = CollapsibleSection("Advanced", collapsed=True)
+        fl_adv = QFormLayout()
+        self._seed = QSpinBox()
+        self._seed.setRange(0, 999999)
+        self._seed.setValue(42)
+        self._rec = QSpinBox()
+        self._rec.setRange(0, 5000)
+        self._rec.setValue(200)
+        self._unit = QComboBox()
+        self._unit.addItems(["mm", "cm", "m", "in"])
+        self._flux_unit = QComboBox()
+        self._flux_unit.addItems(["lm", "mW", "W"])
+        self._angle_unit = QComboBox()
+        self._angle_unit.addItems(["deg", "rad"])
+        self._mp = QCheckBox("Enable multiprocessing")
+        self._mp.setToolTip("Parallelize across sources (no ray path recording)")
+        fl_adv.addRow("Random seed:", self._seed)
+        fl_adv.addRow("Record ray paths:", self._rec)
+        fl_adv.addRow("Distance unit:", self._unit)
+        fl_adv.addRow("Flux unit:", self._flux_unit)
+        fl_adv.addRow("Angle unit:", self._angle_unit)
+        fl_adv.addRow("", self._mp)
+        sec_adv.addLayout(fl_adv)
+        vbox.addWidget(sec_adv)
+        vbox.addStretch()
+
         self._s = None
         self._loading = False
         self._rays.valueChanged.connect(self._apply)
@@ -1615,36 +1767,66 @@ class SolidBoxForm(QWidget):
     changed = Signal()
 
     def __init__(self):
-        from PySide6.QtWidgets import QListWidget, QListWidgetItem
         super().__init__()
-        fl = QFormLayout(self)
-        fl.addRow(QLabel("<b>Solid Box</b>"))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        content = QWidget()
+        vbox = QVBoxLayout(content)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(2)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+        # ---- Identity section ----
+        sec_identity = CollapsibleSection("Identity", collapsed=False)
+        fl_identity = QFormLayout()
         self._name = _name_edit()
+        self._mat = QComboBox()
+        fl_identity.addRow("Name:", self._name)
+        fl_identity.addRow("Material:", self._mat)
+        sec_identity.addLayout(fl_identity)
+        vbox.addWidget(sec_identity)
+
+        # ---- Position section ----
+        sec_pos = CollapsibleSection("Position", collapsed=False)
+        fl_pos = QFormLayout()
         self._cx = _dspin()
         self._cy = _dspin()
         self._cz = _dspin()
+        fl_pos.addRow("Center X:", self._cx)
+        fl_pos.addRow("Center Y:", self._cy)
+        fl_pos.addRow("Center Z:", self._cz)
+        sec_pos.addLayout(fl_pos)
+        vbox.addWidget(sec_pos)
+
+        # ---- Dimensions section ----
+        sec_dim = CollapsibleSection("Dimensions", collapsed=False)
+        fl_dim = QFormLayout()
         self._dw = _dspin(0.1, 9999, 2, 50.0)
         self._dh = _dspin(0.1, 9999, 2, 30.0)
         self._dd = _dspin(0.1, 9999, 2, 3.0)
-        self._mat = QComboBox()
+        fl_dim.addRow("Width (X):", self._dw)
+        fl_dim.addRow("Height (Y):", self._dh)
+        fl_dim.addRow("Depth (Z):", self._dd)
+        sec_dim.addLayout(fl_dim)
+        vbox.addWidget(sec_dim)
 
-        fl.addRow("Name:", self._name)
-        fl.addRow("Center X:", self._cx)
-        fl.addRow("Center Y:", self._cy)
-        fl.addRow("Center Z:", self._cz)
-        fl.addRow("Width (X):", self._dw)
-        fl.addRow("Height (Y):", self._dh)
-        fl.addRow("Depth (Z):", self._dd)
-        fl.addRow("Material:", self._mat)
-
-        # Coupling edges checkboxes
-        fl.addRow(QLabel("Coupling edges:"))
+        # ---- Coupling Edges section (collapsed by default) ----
+        sec_edges = CollapsibleSection("Coupling Edges", collapsed=True)
+        fl_edges = QFormLayout()
         self._edge_checks: dict[str, QCheckBox] = {}
         for edge_id in ("left", "right", "front", "back"):
             cb = QCheckBox(edge_id)
-            fl.addRow("", cb)
+            fl_edges.addRow("", cb)
             self._edge_checks[edge_id] = cb
+        sec_edges.addLayout(fl_edges)
+        vbox.addWidget(sec_edges)
+        vbox.addStretch()
 
         self._box: SolidBox | None = None
         self._loading = False
