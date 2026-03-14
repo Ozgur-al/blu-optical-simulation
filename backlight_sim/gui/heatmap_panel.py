@@ -93,6 +93,11 @@ class HeatmapPanel(QWidget):
         self._selector = QComboBox()
         self._selector.currentTextChanged.connect(self._on_detector_changed)
         top.addWidget(self._selector)
+        self._color_mode = QComboBox()
+        self._color_mode.addItems(["Intensity (mono)", "Color (RGB)", "Spectral Color"])
+        self._color_mode.currentIndexChanged.connect(self._on_color_mode_changed)
+        top.addWidget(QLabel("Display:"))
+        top.addWidget(self._color_mode)
         top.addStretch()
         layout.addLayout(top)
 
@@ -103,11 +108,29 @@ class HeatmapPanel(QWidget):
         self._plot.hideAxis("bottom")
         self._img = pg.ImageItem()
         self._plot.addItem(self._img)
+        # Interactive ROI for custom region stats
+        self._roi = pg.RectROI([10, 10], [30, 30], pen=pg.mkPen('c', width=2))
+        self._roi.addScaleHandle([1, 1], [0, 0])
+        self._roi.addScaleHandle([0, 0], [1, 1])
+        self._plot.addItem(self._roi)
+        self._roi.sigRegionChangeFinished.connect(self._update_roi_stats)
+        self._roi.hide()
         self._cbar = pg.ColorBarItem(
             values=(0, 1), colorMap=pg.colormap.get("inferno"),
         )
         self._cbar.setImageItem(self._img)
         layout.addWidget(self._plot, stretch=3)
+
+        # ---- ROI stats ----
+        roi_row = QHBoxLayout()
+        self._roi_toggle = QPushButton("Show ROI")
+        self._roi_toggle.setCheckable(True)
+        self._roi_toggle.toggled.connect(self._toggle_roi)
+        roi_row.addWidget(self._roi_toggle)
+        self._roi_lbl = QLabel("ROI: --")
+        self._roi_lbl.setStyleSheet("font-family: monospace; color: cyan;")
+        roi_row.addWidget(self._roi_lbl, 1)
+        layout.addLayout(roi_row)
 
         # ---- grid statistics ----
         stats_box = QGroupBox("Grid Statistics")
@@ -165,6 +188,34 @@ class HeatmapPanel(QWidget):
         eg.addWidget(QLabel("LED count:"),   0, 2); eg.addWidget(self._lbl_leds,   0, 3)
         eg.addWidget(QLabel("Absorbed:"),    1, 0); eg.addWidget(self._lbl_absorb, 1, 1)
         eg.addWidget(QLabel("Escaped:"),     1, 2); eg.addWidget(self._lbl_esc,    1, 3)
+
+        # LGP-specific KPI rows (hidden when no solid bodies)
+        self._lbl_lgp_coupling_key   = QLabel("Edge Coupling:")
+        self._lbl_lgp_extraction_key = QLabel("Extraction Eff:")
+        self._lbl_lgp_overall_key    = QLabel("Overall LGP Eff:")
+        self._lbl_lgp_coupling   = _lbl()
+        self._lbl_lgp_extraction = _lbl()
+        self._lbl_lgp_overall    = _lbl()
+        self._lbl_lgp_coupling.setToolTip(
+            "Fraction of emitted flux entering LGP through coupling edge(s)")
+        self._lbl_lgp_extraction.setToolTip(
+            "Fraction of coupled flux reaching the detector")
+        self._lbl_lgp_overall.setToolTip(
+            "End-to-end efficiency (coupling \u00d7 extraction)")
+
+        eg.addWidget(self._lbl_lgp_coupling_key,   2, 0)
+        eg.addWidget(self._lbl_lgp_coupling,        2, 1)
+        eg.addWidget(self._lbl_lgp_extraction_key, 2, 2)
+        eg.addWidget(self._lbl_lgp_extraction,      2, 3)
+        eg.addWidget(self._lbl_lgp_overall_key,    3, 0)
+        eg.addWidget(self._lbl_lgp_overall,         3, 1)
+
+        # Hide LGP rows by default
+        for w in (self._lbl_lgp_coupling_key, self._lbl_lgp_extraction_key,
+                  self._lbl_lgp_overall_key,
+                  self._lbl_lgp_coupling, self._lbl_lgp_extraction, self._lbl_lgp_overall):
+            w.hide()
+
         layout.addWidget(energy_box, stretch=0)
 
         # ---- weighted design score ----
@@ -199,15 +250,22 @@ class HeatmapPanel(QWidget):
         btn_png  = QPushButton("Export PNG")
         btn_kpi  = QPushButton("Export KPI CSV")
         btn_grid = QPushButton("Export Grid CSV")
+        btn_html = QPushButton("Export HTML Report")
+        btn_zip  = QPushButton("Export Batch (ZIP)")
         btn_png.clicked.connect(self._export_png)
         btn_kpi.clicked.connect(self._export_kpi_csv)
         btn_grid.clicked.connect(self._export_grid_csv)
+        btn_html.clicked.connect(self._export_html)
+        btn_zip.clicked.connect(self._export_batch_zip)
         btn_row.addWidget(btn_png)
         btn_row.addWidget(btn_kpi)
         btn_row.addWidget(btn_grid)
+        btn_row.addWidget(btn_html)
+        btn_row.addWidget(btn_zip)
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
+        self._project = None  # set externally for HTML report
         self._sim_result: SimulationResult | None = None
         self._current_result: DetectorResult | None = None
         # Latest KPIs cached for the weighted score widget
@@ -230,16 +288,50 @@ class HeatmapPanel(QWidget):
         if self._sim_result and name in self._sim_result.detectors:
             self._show_result(self._sim_result.detectors[name])
 
+    def _on_color_mode_changed(self, _idx: int):
+        if self._current_result is not None:
+            self._show_result(self._current_result)
+
     def _show_result(self, result: DetectorResult):
         self._current_result = result
         grid = result.grid
         if grid.size == 0:
             return
 
-        self._img.setImage(grid.T)
-        vmin, vmax = float(grid.min()), float(grid.max())
-        if vmax > vmin:
-            self._cbar.setLevels(values=(vmin, vmax))
+        # Choose display mode
+        mode_idx = self._color_mode.currentIndex()
+        use_rgb = (mode_idx == 1 and result.grid_rgb is not None)
+        use_spectral = (mode_idx == 2 and result.grid_spectral is not None)
+
+        if use_spectral:
+            try:
+                from backlight_sim.sim.spectral import spectral_grid_to_rgb, spectral_bin_centers
+            except ImportError:
+                use_spectral = False
+        if use_spectral:
+            wl = spectral_bin_centers(result.grid_spectral.shape[2])
+            rgb = spectral_grid_to_rgb(result.grid_spectral, wl)
+            ny, nx = rgb.shape[:2]
+            rgba = np.ones((ny, nx, 4), dtype=np.float32)
+            rgba[:, :, :3] = rgb
+            self._img.setImage(rgba.transpose(1, 0, 2))
+            self._cbar.setLevels(values=(0, 1))
+        elif use_rgb:
+            rgb = result.grid_rgb.copy()
+            mx = rgb.max()
+            if mx > 0:
+                rgb = rgb / mx  # normalize to 0-1
+            # Convert to RGBA (ny, nx, 4) for ImageItem
+            ny, nx = rgb.shape[:2]
+            rgba = np.ones((ny, nx, 4), dtype=np.float32)
+            rgba[:, :, :3] = rgb.astype(np.float32)
+            self._img.setImage(rgba.transpose(1, 0, 2))  # ImageItem expects (width, height, 4)
+            self._cbar.setLevels(values=(0, 1))
+        else:
+            self._img.setImage(grid.T)
+            vmin, vmax = float(grid.min()), float(grid.max())
+            if vmax > vmin:
+                self._cbar.setLevels(values=(vmin, vmax))
 
         avg  = float(grid.mean())
         peak = float(grid.max())
@@ -296,7 +388,65 @@ class HeatmapPanel(QWidget):
             for lbl in (self._lbl_eff, self._lbl_absorb, self._lbl_esc, self._lbl_leds):
                 lbl.setText("--")
 
+        # --- LGP metrics (only when solid bodies with coupling edges exist) ---
+        show_lgp = (
+            self._sim_result is not None
+            and hasattr(self._sim_result, "solid_body_stats")
+            and bool(self._sim_result.solid_body_stats)
+            and self._project is not None
+            and bool(getattr(self._project, "solid_bodies", []))
+        )
+
+        lgp_widgets = (
+            self._lbl_lgp_coupling_key, self._lbl_lgp_extraction_key,
+            self._lbl_lgp_overall_key,
+            self._lbl_lgp_coupling, self._lbl_lgp_extraction, self._lbl_lgp_overall,
+        )
+
+        if show_lgp:
+            emitted = self._sim_result.total_emitted_flux
+            # Compute coupling efficiency: flux entering through coupling faces
+            total_coupling_flux = 0.0
+            for box in self._project.solid_bodies:
+                box_stats = self._sim_result.solid_body_stats.get(box.name, {})
+                for edge_id in box.coupling_edges:
+                    face_data = box_stats.get(edge_id, {})
+                    total_coupling_flux += face_data.get("entering_flux", 0.0)
+
+            if emitted > 0:
+                coupling_eff = total_coupling_flux / emitted
+            else:
+                coupling_eff = None
+
+            det_flux = sum(dr.total_flux for dr in self._sim_result.detectors.values())
+            if total_coupling_flux > 0:
+                extraction_eff = det_flux / total_coupling_flux
+            else:
+                extraction_eff = None
+
+            if coupling_eff is not None and extraction_eff is not None:
+                overall_eff = coupling_eff * extraction_eff
+            else:
+                overall_eff = None
+
+            self._lbl_lgp_coupling.setText(
+                f"{coupling_eff * 100:.1f} %" if coupling_eff is not None else "N/A"
+            )
+            self._lbl_lgp_extraction.setText(
+                f"{extraction_eff * 100:.1f} %" if extraction_eff is not None else "N/A"
+            )
+            self._lbl_lgp_overall.setText(
+                f"{overall_eff * 100:.1f} %" if overall_eff is not None else "N/A"
+            )
+            for w in lgp_widgets:
+                w.show()
+        else:
+            for w in lgp_widgets:
+                w.hide()
+
         self._update_score()
+        if self._roi_toggle.isChecked():
+            self._update_roi_stats()
 
     def _update_score(self, _=None):
         """Recompute the weighted design score from cached KPIs and weight spinboxes."""
@@ -315,6 +465,39 @@ class HeatmapPanel(QWidget):
         hot_norm = 1.0 / self._last_hot if self._last_hot > 0 else 0.0  # close to 1 = good
         score = (w_e * eta_norm + w_u * uni_norm + w_h * hot_norm) / total_w
         self._lbl_score.setText(f"{score:.3f}")
+
+    def _toggle_roi(self, on: bool):
+        if on:
+            self._roi.show()
+            self._update_roi_stats()
+        else:
+            self._roi.hide()
+            self._roi_lbl.setText("ROI: --")
+
+    def _update_roi_stats(self):
+        if self._current_result is None:
+            return
+        grid = self._current_result.grid
+        if grid.size == 0:
+            return
+        # Get ROI region from image data
+        try:
+            roi_data = self._roi.getArrayRegion(grid.T, self._img)
+        except Exception as exc:
+            self._roi_lbl.setText(f"ROI: error ({exc})")
+            return
+        if roi_data is None or roi_data.size == 0:
+            self._roi_lbl.setText("ROI: empty")
+            return
+        avg = float(roi_data.mean())
+        mn = float(roi_data.min())
+        mx = float(roi_data.max())
+        u_ma = mn / avg if avg > 0 else 0.0
+        u_mm = mn / mx if mx > 0 else 0.0
+        self._roi_lbl.setText(
+            f"ROI: avg={avg:.4g}  min={mn:.4g}  max={mx:.4g}  "
+            f"min/avg={u_ma:.3f}  min/max={u_mm:.3f}"
+        )
 
     def clear(self):
         self._img.clear()
@@ -335,6 +518,11 @@ class HeatmapPanel(QWidget):
             lbl.setText("--")
         for la, lm in self._uni_labels.values():
             la.setText("--"); lm.setText("--")
+        # Hide LGP rows
+        for w in (self._lbl_lgp_coupling_key, self._lbl_lgp_extraction_key,
+                  self._lbl_lgp_overall_key,
+                  self._lbl_lgp_coupling, self._lbl_lgp_extraction, self._lbl_lgp_overall):
+            w.hide()
 
     # ------------------------------------------------------------------
     # Export helpers
@@ -407,6 +595,29 @@ class HeatmapPanel(QWidget):
 
         with open(path, "w", newline="", encoding="utf-8") as f:
             csv.writer(f).writerows(rows)
+
+    def set_project(self, project):
+        self._project = project
+
+    def _export_html(self):
+        if self._sim_result is None or self._project is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export HTML Report", "report.html", "HTML files (*.html)")
+        if not path:
+            return
+        from backlight_sim.io.report import generate_html_report
+        generate_html_report(self._project, self._sim_result, path)
+
+    def _export_batch_zip(self):
+        if self._sim_result is None or self._project is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Batch ZIP", "results.zip", "ZIP files (*.zip)")
+        if not path:
+            return
+        from backlight_sim.io.batch_export import export_batch_zip
+        export_batch_zip(self._project, self._sim_result, path)
 
     def _export_grid_csv(self):
         if self._current_result is None:
