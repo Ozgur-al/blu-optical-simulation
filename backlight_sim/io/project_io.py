@@ -62,6 +62,7 @@ def _sph_det_to_dict(d: SphereDetector) -> dict:
         "center": _v(d.center),
         "radius": d.radius,
         "resolution": list(d.resolution),
+        "mode": d.mode,
     }
 
 
@@ -214,6 +215,7 @@ def _dict_to_sph_det(d: dict) -> SphereDetector:
         center=_a(d["center"]),
         radius=d.get("radius", 10.0),
         resolution=tuple(d.get("resolution", [72, 36])),
+        mode=d.get("mode", "near_field"),
     )
 
 

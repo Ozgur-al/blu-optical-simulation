@@ -33,9 +33,15 @@ from backlight_sim.sim.accel import (
     intersect_sphere as _intersect_sphere_accel,
     accumulate_grid_jit,
     accumulate_sphere_jit,
+    compute_surface_aabbs,
+    build_bvh_flat,
+    traverse_bvh_batch,
 )
 
 _EPSILON = 1e-6
+
+# BVH activation threshold: use BVH when total plane surfaces >= this count
+_BVH_THRESHOLD = 50
 
 
 # ------------------------------------------------------------------
@@ -318,6 +324,48 @@ class RayTracer:
                 solid_body_stats=sb_stats,
             )
 
+        # ---- BVH setup for plane surfaces (activated when total plane count >= threshold) ----
+        n_all_planes = len(surfaces) + len(solid_faces)
+        use_bvh = n_all_planes >= _BVH_THRESHOLD
+        bvh_bounds = bvh_meta = bvh_n_nodes = None
+        bvh_normals = bvh_centers = bvh_u = bvh_v = bvh_hw = bvh_hh = None
+        n_surf_planes = len(surfaces)  # boundary index: idx < n_surf_planes -> surface, else solid face
+
+        if use_bvh and n_all_planes > 0:
+            # Build flat arrays for all plane objects (surfaces + solid_faces)
+            all_plane_normals = np.empty((n_all_planes, 3), dtype=np.float64)
+            all_plane_centers = np.empty((n_all_planes, 3), dtype=np.float64)
+            all_plane_u       = np.empty((n_all_planes, 3), dtype=np.float64)
+            all_plane_v       = np.empty((n_all_planes, 3), dtype=np.float64)
+            all_plane_hw      = np.empty(n_all_planes, dtype=np.float64)
+            all_plane_hh      = np.empty(n_all_planes, dtype=np.float64)
+            for i, surf in enumerate(surfaces):
+                all_plane_normals[i] = surf.normal
+                all_plane_centers[i] = surf.center
+                all_plane_u[i]       = surf.u_axis
+                all_plane_v[i]       = surf.v_axis
+                all_plane_hw[i]      = surf.size[0] / 2.0
+                all_plane_hh[i]      = surf.size[1] / 2.0
+            for i, sface in enumerate(solid_faces):
+                j = n_surf_planes + i
+                all_plane_normals[j] = sface.normal
+                all_plane_centers[j] = sface.center
+                all_plane_u[j]       = sface.u_axis
+                all_plane_v[j]       = sface.v_axis
+                all_plane_hw[j]      = sface.size[0] / 2.0
+                all_plane_hh[j]      = sface.size[1] / 2.0
+            aabbs = compute_surface_aabbs(
+                all_plane_normals, all_plane_centers,
+                all_plane_u, all_plane_v, all_plane_hw, all_plane_hh,
+            )
+            bvh_bounds, bvh_meta, bvh_n_nodes = build_bvh_flat(aabbs)
+            bvh_normals = all_plane_normals
+            bvh_centers = all_plane_centers
+            bvh_u       = all_plane_u
+            bvh_v       = all_plane_v
+            bvh_hw      = all_plane_hw
+            bvh_hh      = all_plane_hh
+
         total_rays = len(sources) * settings.rays_per_source
         rays_processed = 0
         all_paths: list[list[np.ndarray]] = []
@@ -396,14 +444,48 @@ class RayTracer:
                 best_type = np.full(n_active, -1, dtype=int)
                 best_obj = np.full(n_active, -1, dtype=int)
 
-                for si, surf in enumerate(surfaces):
-                    t = _intersect_plane_accel(active_origins, active_dirs, surf.normal, surf.center,
-                                               surf.u_axis, surf.v_axis, surf.size)
-                    closer = t < best_t
-                    best_t[closer] = t[closer]
-                    best_type[closer] = 0
-                    best_obj[closer] = si
+                if use_bvh:
+                    # BVH path: single traversal covers all surfaces + solid_faces
+                    bvh_t, bvh_idx = traverse_bvh_batch(
+                        np.ascontiguousarray(active_origins, dtype=np.float64),
+                        np.ascontiguousarray(active_dirs,   dtype=np.float64),
+                        bvh_bounds, bvh_meta, bvh_n_nodes,
+                        bvh_normals, bvh_centers, bvh_u, bvh_v, bvh_hw, bvh_hh,
+                        _EPSILON,
+                    )
+                    hit_mask = bvh_idx >= 0
+                    for ri in np.where(hit_mask)[0]:
+                        idx = int(bvh_idx[ri])
+                        t_val = float(bvh_t[ri])
+                        if t_val < best_t[ri]:
+                            best_t[ri] = t_val
+                            if idx < n_surf_planes:
+                                best_type[ri] = 0
+                                best_obj[ri] = idx
+                            else:
+                                best_type[ri] = 3
+                                best_obj[ri] = idx - n_surf_planes
+                else:
+                    # Brute-force path (< _BVH_THRESHOLD surfaces)
+                    for si, surf in enumerate(surfaces):
+                        t = _intersect_plane_accel(active_origins, active_dirs, surf.normal, surf.center,
+                                                   surf.u_axis, surf.v_axis, surf.size)
+                        closer = t < best_t
+                        best_t[closer] = t[closer]
+                        best_type[closer] = 0
+                        best_obj[closer] = si
 
+                    # SolidBox face intersections (type 3)
+                    for sfi, sface in enumerate(solid_faces):
+                        t = _intersect_plane_accel(active_origins, active_dirs,
+                                                   sface.normal, sface.center,
+                                                   sface.u_axis, sface.v_axis, sface.size)
+                        closer = t < best_t
+                        best_t[closer] = t[closer]
+                        best_type[closer] = 3
+                        best_obj[closer] = sfi
+
+                # Detectors and sphere detectors are always tested separately (few, different logic)
                 for di, det in enumerate(detectors):
                     t = _intersect_plane_accel(active_origins, active_dirs, det.normal, det.center,
                                                det.u_axis, det.v_axis, det.size)
@@ -418,16 +500,6 @@ class RayTracer:
                     best_t[closer] = t[closer]
                     best_type[closer] = 2
                     best_obj[closer] = sdi
-
-                # SolidBox face intersections (type 3)
-                for sfi, sface in enumerate(solid_faces):
-                    t = _intersect_plane_accel(active_origins, active_dirs,
-                                               sface.normal, sface.center,
-                                               sface.u_axis, sface.v_axis, sface.size)
-                    closer = t < best_t
-                    best_t[closer] = t[closer]
-                    best_type[closer] = 3
-                    best_obj[closer] = sfi
 
                 # Rays that escape
                 missed = best_t == np.inf
@@ -460,7 +532,11 @@ class RayTracer:
                         continue
                     hit_idx = active_idx[mask]
                     hit_pts = origins[hit_idx] + best_t[mask, None] * directions[hit_idx]
-                    _accumulate_sphere(sd, sph_results[sd.name], hit_pts, weights[hit_idx])
+                    if sd.mode == "far_field":
+                        _accumulate_sphere_farfield(sd, sph_results[sd.name],
+                                                    directions[hit_idx], weights[hit_idx])
+                    else:
+                        _accumulate_sphere(sd, sph_results[sd.name], hit_pts, weights[hit_idx])
                     if n_rec > 0:
                         for local_i, global_i in enumerate(hit_idx):
                             if global_i < n_rec:
@@ -573,6 +649,11 @@ class RayTracer:
             rays_processed += n
             if progress_callback:
                 progress_callback(rays_processed / total_rays)
+
+        # Compute far-field candela distributions for far_field sphere detectors
+        for sd in sphere_dets:
+            if sd.mode == "far_field":
+                compute_farfield_candela(sd, sph_results[sd.name])
 
         return SimulationResult(
             detectors=det_results,
@@ -1034,7 +1115,7 @@ def _intersect_rays_sphere(
 
 def _accumulate_sphere(sd: "SphereDetector", result: "SphereDetectorResult",
                        hit_pts: np.ndarray, hit_weights: np.ndarray):
-    """Bin hit points on a sphere into (theta, phi) grid."""
+    """Bin hit points on a sphere into (theta, phi) grid (near_field mode)."""
     d = hit_pts - sd.center                       # (M, 3)
     r = np.linalg.norm(d, axis=1, keepdims=True)
     r = np.maximum(r, 1e-12)
@@ -1052,6 +1133,47 @@ def _accumulate_sphere(sd: "SphereDetector", result: "SphereDetectorResult",
     accumulate_sphere_jit(result.grid, i_theta, i_phi, hit_weights)
     result.total_hits += len(hit_weights)
     result.total_flux += float(hit_weights.sum())
+
+
+def _accumulate_sphere_farfield(sd: "SphereDetector", result: "SphereDetectorResult",
+                                directions_at_hit: np.ndarray, hit_weights: np.ndarray):
+    """Bin ray directions into (theta, phi) grid for far-field accumulation.
+
+    Uses the ray direction at the moment of sphere intersection (negated to give
+    the outgoing direction from the luminaire region).
+    """
+    # Negate: rays travel toward the sphere; outgoing direction = -ray_direction
+    d = -directions_at_hit                        # (M, 3) outgoing directions
+    r = np.linalg.norm(d, axis=1, keepdims=True)
+    r = np.maximum(r, 1e-12)
+    d_norm = d / r
+    # theta: angle from +Z (0=north pole, pi=south pole)
+    theta = np.arccos(np.clip(d_norm[:, 2], -1.0, 1.0))
+    # phi: azimuthal angle (0..2pi)
+    phi = np.arctan2(d_norm[:, 1], d_norm[:, 0])
+    phi = np.where(phi < 0, phi + 2.0 * np.pi, phi)
+
+    n_phi, n_theta = sd.resolution
+    i_theta = np.clip((theta / np.pi * n_theta).astype(int), 0, n_theta - 1)
+    i_phi = np.clip((phi / (2.0 * np.pi) * n_phi).astype(int), 0, n_phi - 1)
+
+    accumulate_sphere_jit(result.grid, i_theta, i_phi, hit_weights)
+    result.total_hits += len(hit_weights)
+    result.total_flux += float(hit_weights.sum())
+
+
+def compute_farfield_candela(sd: "SphereDetector", result: "SphereDetectorResult"):
+    """Compute candela distribution from raw flux grid using solid angle normalization.
+
+    candela_grid[i, j] = result.grid[i, j] / solid_angle_per_bin[i]
+    where solid_angle_per_bin[i] = (pi / n_theta) * (2*pi / n_phi) * sin(theta_center[i])
+    with a floor of 1e-6 on sin(theta) to avoid division by zero at poles.
+    """
+    n_phi, n_theta = sd.resolution
+    theta_centers = (np.arange(n_theta) + 0.5) * np.pi / n_theta  # (n_theta,)
+    sin_theta = np.maximum(np.sin(theta_centers), 1e-6)             # floor at poles
+    solid_angle_per_bin = (np.pi / n_theta) * (2.0 * np.pi / n_phi) * sin_theta  # (n_theta,)
+    result.candela_grid = result.grid / solid_angle_per_bin[:, None]
 
 
 def _accumulate(det: DetectorSurface, result: DetectorResult,

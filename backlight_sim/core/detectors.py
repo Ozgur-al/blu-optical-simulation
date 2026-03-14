@@ -70,6 +70,7 @@ class SphereDetector:
     center: np.ndarray         # (3,)
     radius: float = 10.0
     resolution: tuple[int, int] = (72, 36)  # (n_phi, n_theta) bins
+    mode: str = "near_field"   # "near_field" (position-based) or "far_field" (direction-based)
 
     def __post_init__(self):
         self.center = np.asarray(self.center, dtype=float)
@@ -92,9 +93,10 @@ class SphereDetectorResult:
     """Result for a sphere detector — (n_theta, n_phi) grid."""
 
     detector_name: str
-    grid: np.ndarray   # (n_theta, n_phi) accumulated flux per bin
+    grid: np.ndarray           # (n_theta, n_phi) accumulated flux per bin
     total_hits: int = 0
     total_flux: float = 0.0
+    candela_grid: np.ndarray | None = None  # (n_theta, n_phi) candela per bin, computed for far_field
 
 
 @dataclass
