@@ -29,7 +29,7 @@ Requirements for Phase 2 release. Each maps to roadmap phases.
 
 ### Performance
 
-- [ ] **PERF-01**: Ray-surface intersection and accumulation inner loops are Numba JIT-compiled for 10-50x speedup
+- [x] **PERF-01**: Ray-surface intersection and accumulation inner loops are Numba JIT-compiled for 10-50x speedup
 - [ ] **PERF-02**: BVH spatial acceleration is used for scenes with 50+ surfaces
 - [ ] **PERF-03**: Adaptive sampling stops ray generation per source when detector variance is below threshold
 
@@ -102,7 +102,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | GEOM-01 | Phase 1 | Complete |
 | GEOM-02 | Phase 4 | Pending |
 | GEOM-03 | Phase 4 | Pending |
-| PERF-01 | Phase 3 | Pending |
+| PERF-01 | Phase 3 | Complete |
 | PERF-02 | Phase 3 | Pending |
 | PERF-03 | Phase 3 | Pending |
 | BRDF-01 | Phase 4 | Pending |

@@ -2,39 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-14T14:56:00.548Z"
-progress:
-  total_phases: 4
-  completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
----
-
----
-gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: unknown
-last_updated: "2026-03-14T13:47:46.268Z"
-progress:
-  total_phases: 4
-  completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
----
-
----
-gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
 status: in-progress
-last_updated: "2026-03-14T10:15:00.000Z"
+last_updated: "2026-03-14T18:08:44Z"
 progress:
   total_phases: 4
-  completed_phases: 1
-  total_plans: 7
-  completed_plans: 4
+  completed_phases: 2
+  total_plans: 8
+  completed_plans: 6
 ---
 
 # Project State
@@ -44,16 +18,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-14)
 
 **Core value:** Engineers can iterate on both direct-lit and edge-lit BLU designs with physically accurate, wavelength-aware simulation — fast enough for real workloads.
-**Current focus:** Phase 2 — Spectral Engine
+**Current focus:** Phase 3 — Performance Acceleration
 
 ## Current Position
 
-Phase: 2 of 4 (Spectral Engine) — COMPLETE
-Plan: 2 of 2 in current phase — COMPLETE
-Status: Phase 2 complete. Plan 02-02 (Spectral Engine GUI: CIE 1931 chromaticity diagram, Color Uniformity KPIs, click-to-inspect spectrum, Spectral Color heatmap mode) complete and verified.
-Last activity: 2026-03-14 — Plan 02-02 complete (Spectral GUI: chromaticity diagram, Color Uniformity KPIs, spectral color mode, click-to-inspect, CSV/HTML export extensions)
+Phase: 3 of 4 (Performance Acceleration) — IN PROGRESS
+Plan: 1 of 3 in current phase — COMPLETE
+Status: Phase 3 Plan 01 complete. Numba JIT kernels (sim/accel.py) wired into tracer with graceful NumPy fallback, status bar indicator, eager warmup, and PyInstaller bundling.
+Last activity: 2026-03-14 — Plan 03-01 complete (Numba JIT: accel.py kernels, tracer dispatch, GUI status label, spec update)
 
-Progress: [██████░░░░] 60%
+Progress: [███████░░░] 70%
 
 ## Performance Metrics
 
@@ -68,9 +42,10 @@ Progress: [██████░░░░] 60%
 |-------|-------|-------|----------|
 | Phase 01 | 3 | 19 min | 6.3 min |
 | Phase 02 | 2 | 36 min | 18 min |
+| Phase 03 | 1 (so far) | 3.6 min | 3.6 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-02 (3 min, 2 tasks, 4 files), 01-03 (8 min, 2 tasks, 5 files), 02-01 (12 min, 1 task TDD, 5 files), 02-02 (24 min, 3 tasks, 5 files)
+- Last 5 plans: 01-03 (8 min, 2 tasks, 5 files), 02-01 (12 min, 1 task TDD, 5 files), 02-02 (24 min, 3 tasks, 5 files), 03-01 (3.6 min, 2 tasks TDD, 6 files)
 - Trend: stable
 
 *Updated after each plan completion*
@@ -79,6 +54,7 @@ Progress: [██████░░░░] 60%
 | Phase 01 P03 | 8 min | 2 tasks | 5 files |
 | Phase 02 P01 | 12 min | 1 task TDD | 5 files |
 | Phase 02 P02 | 24 min | 3 tasks | 5 files |
+| Phase 03 P01 | 3.6 min | 2 tasks TDD | 6 files |
 
 ## Accumulated Context
 
@@ -108,6 +84,14 @@ Recent decisions affecting current work:
 - [Phase 02-02]: Spectral locus filters CIE sum < 1e-3 of peak — removes 780nm region collapse to (0,0) artifact
 - [Phase 02-02]: Fixed CIE 1931 view range [0,0.85]x[0,0.92] enforced both at init and after scatter update — pyqtgraph auto-range must not override diagram
 - [Phase 02-02]: Spectral Color mode uses _displayed flag + orange status QLabel — user sees explicit feedback when grid_spectral is None instead of silent intensity fallback
+- [Phase 03-01]: No-op njit fallback handles both @njit and @njit(cache=True) calling conventions via len(args)==1 check
+- [Phase 03-01]: accumulate_*_jit uses @njit(cache=True) without fastmath to preserve exact scatter-add semantics
+- [Phase 03-01]: Wrapper functions (intersect_plane/intersect_sphere) handle tuple→scalar conversion so JIT kernels receive primitive types only
+- [Phase 03-01]: warmup_jit_kernels() returns bool; JIT label uses addWidget (left-aligned) not addPermanentWidget
+
+### Roadmap Evolution
+
+- Phase 5 added: ui rewamp
 
 ### Pending Todos
 
@@ -118,10 +102,10 @@ None yet.
 - ~~Phase 1: Fix _EPSILON to geometry-relative value before any LGP code (thin-slab TIR loss pitfall)~~ RESOLVED in 01-01
 - ~~Phase 1: Use oriented normal `on` not `surf.normal` in Fresnel impl (normal orientation pitfall)~~ RESOLVED in 01-01
 - ~~Phase 2: Add single-thread guard before enabling spectral + multiprocessing together~~ RESOLVED in 02-01
-- Phase 3: np.add.at scatter-add pattern throughout tracer is not Numba-compatible — must refactor before JIT
+- ~~Phase 3: np.add.at scatter-add pattern throughout tracer is not Numba-compatible — must refactor before JIT~~ RESOLVED in 03-01
 
 ## Session Continuity
 
 Last session: 2026-03-14
-Stopped at: Completed 02-02-PLAN.md (Spectral Engine GUI: CIE 1931 chromaticity diagram, Color Uniformity KPIs, Spectral Color mode with status feedback, click-to-inspect, CSV/HTML exports)
+Stopped at: Completed 03-01-PLAN.md (Numba JIT: sim/accel.py kernels, tracer dispatch, GUI JIT status label, PyInstaller spec update)
 Resume file: None

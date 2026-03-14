@@ -61,7 +61,7 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 03-01: Accumulator refactor for Numba compatibility and JIT kernel implementation
+- [x] 03-01-PLAN.md — Numba JIT kernels (sim/accel.py), tracer dispatch, GUI status indicator, PyInstaller spec update
 - [ ] 03-02: BVH build and traversal, adaptive sampling convergence criterion
 
 ### Phase 4: Advanced Materials and Geometry
@@ -87,5 +87,15 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Refractive Physics and LGP | 3/3 | Complete   | 2026-03-14 |
 | 2. Spectral Engine | 2/2 | Complete   | 2026-03-14 |
-| 3. Performance Acceleration | 0/2 | Not started | - |
+| 3. Performance Acceleration | 1/2 | In Progress | - |
 | 4. Advanced Materials and Geometry | 0/2 | Not started | - |
+
+### Phase 5: ui rewamp
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 4
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 5 to break down)
