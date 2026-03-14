@@ -13,7 +13,7 @@ Phase 2 extends a complete direct-lit Monte Carlo tracer into a full-fidelity op
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Refractive Physics and LGP** - Snell's law, Fresnel/TIR, solid box body, and end-to-end edge-lit LGP simulation (completed 2026-03-14)
-- [ ] **Phase 2: Spectral Engine** - Per-ray wavelength, wavelength-dependent materials, spectral detector grids, CIE color display
+- [x] **Phase 2: Spectral Engine** - Per-ray wavelength, wavelength-dependent materials, spectral detector grids, CIE color display (completed 2026-03-14)
 - [ ] **Phase 3: Performance Acceleration** - Numba JIT for inner loops, BVH spatial acceleration, adaptive sampling
 - [ ] **Phase 4: Advanced Materials and Geometry** - Tabulated BRDF, far-field detector, cylinder and prism solid bodies
 
@@ -86,6 +86,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Refractive Physics and LGP | 3/3 | Complete   | 2026-03-14 |
-| 2. Spectral Engine | 1/2 | In Progress|  |
+| 2. Spectral Engine | 2/2 | Complete   | 2026-03-14 |
 | 3. Performance Acceleration | 0/2 | Not started | - |
 | 4. Advanced Materials and Geometry | 0/2 | Not started | - |

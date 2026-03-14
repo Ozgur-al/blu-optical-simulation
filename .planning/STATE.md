@@ -2,6 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
+status: unknown
+last_updated: "2026-03-14T13:47:46.268Z"
+progress:
+  total_phases: 4
+  completed_phases: 2
+  total_plans: 5
+  completed_plans: 5
+---
+
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
 status: in-progress
 last_updated: "2026-03-14T10:15:00.000Z"
 progress:
@@ -75,6 +88,9 @@ Recent decisions affecting current work:
 - [Phase 02-01]: blackbody_spd exponent clamped to [0, 700] to prevent float overflow at short wavelengths
 - [Phase 02-01]: get_spd_from_project follows same check-custom-first pattern as angular_distributions lookup
 - [Phase 02-01]: MP+spectral guard uses stacklevel=2 so warning points to user call site
+- [Phase 02-spectral-engine]: Robertson 1968 31-entry isotherm table inlined for CCT estimation; clamped to [1000, 25000] K
+- [Phase 02-spectral-engine]: Color Uniformity KPI section hidden by default; shown when grid_spectral is not None
+- [Phase 02-spectral-engine]: compute_color_kpis uses luminance-weighted mean CCT (by Y channel)
 
 ### Pending Todos
 
