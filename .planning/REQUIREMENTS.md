@@ -15,10 +15,10 @@ Requirements for Phase 2 release. Each maps to roadmap phases.
 
 ### Spectral Simulation
 
-- [ ] **SPEC-01**: Each ray carries a sampled wavelength and material interactions are wavelength-dependent
-- [ ] **SPEC-02**: Detector accumulates flux per wavelength bin into a spectral grid
+- [x] **SPEC-01**: Each ray carries a sampled wavelength and material interactions are wavelength-dependent
+- [x] **SPEC-02**: Detector accumulates flux per wavelength bin into a spectral grid
 - [ ] **SPEC-03**: User can view detector result as a CIE XYZ / sRGB color image
-- [ ] **SPEC-04**: Material reflectance and transmittance can be defined as wavelength-dependent tables
+- [x] **SPEC-04**: Material reflectance and transmittance can be defined as wavelength-dependent tables
 - [ ] **SPEC-05**: User can see color uniformity KPIs (delta-CCx, delta-CCy) after spectral simulation
 
 ### 3D Solid Geometry
@@ -94,10 +94,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LGP-01 | Phase 1 | Complete |
 | LGP-02 | Phase 1 | Complete |
 | LGP-03 | Phase 1 | Complete |
-| SPEC-01 | Phase 2 | Pending |
-| SPEC-02 | Phase 2 | Pending |
+| SPEC-01 | Phase 2 | Complete |
+| SPEC-02 | Phase 2 | Complete |
 | SPEC-03 | Phase 2 | Pending |
-| SPEC-04 | Phase 2 | Pending |
+| SPEC-04 | Phase 2 | Complete |
 | SPEC-05 | Phase 2 | Pending |
 | GEOM-01 | Phase 1 | Complete |
 | GEOM-02 | Phase 4 | Pending |
