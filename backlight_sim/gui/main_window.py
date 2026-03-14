@@ -11,7 +11,17 @@ from PySide6.QtWidgets import (
     QTextEdit, QLabel, QToolBar, QSplitter, QTabWidget, QWidget,
 )
 from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSettings, QSize
-from PySide6.QtGui import QActionGroup, QKeySequence, QAction, QShortcut
+from PySide6.QtGui import QActionGroup, QKeySequence, QAction, QShortcut, QUndoStack
+
+from backlight_sim.gui.commands import (
+    AddSourceCommand, DeleteSourceCommand,
+    AddSurfaceCommand, DeleteSurfaceCommand,
+    AddDetectorCommand, DeleteDetectorCommand,
+    AddSphereDetectorCommand, DeleteSphereDetectorCommand,
+    AddMaterialCommand, DeleteMaterialCommand,
+    AddOpticalPropertiesCommand, DeleteOpticalPropertiesCommand,
+    AddSolidBodyCommand, DeleteSolidBodyCommand,
+)
 
 from backlight_sim.core.project_model import Project
 from backlight_sim.core.geometry import Rectangle
@@ -80,6 +90,10 @@ class MainWindow(QMainWindow):
         # Design history: list of (label, Project) — newest first, capped at 20
         self._history: list[tuple[str, "Project"]] = []
         self._history_menu = None
+
+        # Undo/redo stack
+        self._undo_stack = QUndoStack(self)
+        self._undo_stack.indexChanged.connect(lambda _: self._mark_dirty())
 
         # Debounce timer: coalesces rapid property edits into a single refresh
         self._refresh_timer = QTimer(self)
@@ -153,9 +167,10 @@ class MainWindow(QMainWindow):
         # Registry: maps tab title -> widget (for opening/focusing existing tabs)
         self._tab_registry: dict[str, QWidget] = {}
 
-        # Default tabs: 3D View and Heatmap
+        # Default tabs: 3D View, Heatmap, and BSDF
         self._open_tab("3D View", self._viewport, closable=False)
         self._open_tab("Heatmap", self._heatmap, closable=False)
+        self._open_tab("BSDF", self._bsdf_panel)
 
         # Main splitter: left sidebar | center tabs
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -273,6 +288,16 @@ class MainWindow(QMainWindow):
         act = fm.addAction("Exit", self.close)
         act.setShortcut(QKeySequence.StandardKey.Quit)
 
+        em = mb.addMenu("&Edit")
+        undo_action = self._undo_stack.createUndoAction(self, "Undo")
+        undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        redo_action = self._undo_stack.createRedoAction(self, "Redo")
+        redo_action.setShortcut(QKeySequence("Ctrl+Y"))
+        em.addAction(undo_action)
+        em.addAction(redo_action)
+        self._undo_action = undo_action
+        self._redo_action = redo_action
+
         pm = mb.addMenu("&Presets")
         from backlight_sim.io.presets import PRESETS
         for name, factory in PRESETS.items():
@@ -285,6 +310,8 @@ class MainWindow(QMainWindow):
         am.addAction("Sphere Detector",    lambda: self._add_object("Sphere Detectors"))
         am.addAction("Material",           lambda: self._add_object("Materials"))
         am.addAction("Optical Properties", lambda: self._add_object("Optical Properties"))
+        am.addAction("Cylinder",           lambda: self._add_object("Solid Bodies:cylinder"))
+        am.addAction("Prism",              lambda: self._add_object("Solid Bodies:prism"))
 
         bm = mb.addMenu("&Build")
         bm.addAction("Geometry Builder...", self._open_geometry_builder)
@@ -354,6 +381,11 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self._save_action)
         toolbar.addSeparator()
 
+        # Undo/Redo actions (created after _setup_menu is called)
+        toolbar.addAction(self._undo_action)
+        toolbar.addAction(self._redo_action)
+        toolbar.addSeparator()
+
         # Simulation actions
         toolbar.addAction(self._run_action)
         toolbar.addAction(self._cancel_action)
@@ -365,6 +397,8 @@ class MainWindow(QMainWindow):
             ("Add Surface",  "Surfaces"),
             ("Add Detector", "Detectors"),
             ("Add SolidBox", "Solid Bodies:box"),
+            ("Add Cylinder", "Solid Bodies:cylinder"),
+            ("Add Prism",    "Solid Bodies:prism"),
         ):
             act = QAction(label, self)
             act.triggered.connect(lambda _=False, g=group: self._add_object(g))
@@ -504,6 +538,7 @@ class MainWindow(QMainWindow):
         merge_default_profiles(self._project)
         self._counter = {k: 0 for k in self._counter}
         self._last_save_path = None
+        self._undo_stack.clear()
         self._clear_selected_object()
         self._ang_dist.set_project(self._project)
         self._heatmap.set_project(self._project)
@@ -529,6 +564,7 @@ class MainWindow(QMainWindow):
             self._dirty = False
             self._last_save_path = path
             self._counter = {k: 0 for k in self._counter}
+            self._undo_stack.clear()
             self._clear_selected_object()
             self._ang_dist.set_project(self._project)
             self._heatmap.set_project(self._project)
@@ -576,6 +612,7 @@ class MainWindow(QMainWindow):
         self._dirty = False
         self._counter = {k: 0 for k in self._counter}
         self._last_save_path = None
+        self._undo_stack.clear()
         self._clear_selected_object()
         self._ang_dist.set_project(self._project)
         self._heatmap.set_project(self._project)
@@ -692,7 +729,6 @@ class MainWindow(QMainWindow):
         self._refresh_all()
 
     def _add_object(self, group):
-        self._mark_dirty()
         # Normalize legacy group key for counter lookup
         counter_key = group.split(":")[0] if ":" in group else group
         if counter_key not in self._counter:
@@ -700,97 +736,132 @@ class MainWindow(QMainWindow):
         self._counter[counter_key] += 1
         n = self._counter[counter_key]
         default_mat = next(iter(self._project.materials), "pmma")
+
         if group == "Sources":
-            self._project.sources.append(
-                PointSource(f"Source_{n}", np.array([0.0, 0.0, 0.5]),
-                            flux=100.0, direction=np.array([0.0, 0.0, 1.0]),
-                            distribution="lambertian"))
+            src = PointSource(f"Source_{n}", np.array([0.0, 0.0, 0.5]),
+                              flux=100.0, direction=np.array([0.0, 0.0, 1.0]),
+                              distribution="lambertian")
+            self._undo_stack.push(AddSourceCommand(self._project, src, self._refresh_all))
         elif group == "Surfaces":
-            self._project.surfaces.append(
-                Rectangle.axis_aligned(f"Surface_{n}", [0, 0, 0], (10, 10), 2, 1.0))
+            surf = Rectangle.axis_aligned(f"Surface_{n}", [0, 0, 0], (10, 10), 2, 1.0)
+            self._undo_stack.push(AddSurfaceCommand(self._project, surf, self._refresh_all))
         elif group == "Detectors":
-            self._project.detectors.append(
-                DetectorSurface.axis_aligned(f"Detector_{n}", [0, 0, 5], (10, 10), 2, 1.0))
+            det = DetectorSurface.axis_aligned(f"Detector_{n}", [0, 0, 5], (10, 10), 2, 1.0)
+            self._undo_stack.push(AddDetectorCommand(self._project, det, self._refresh_all))
         elif group == "Materials":
             mn = f"Material_{n}"
-            self._project.materials[mn] = Material(mn)
+            mat = Material(mn)
+            self._undo_stack.push(AddMaterialCommand(self._project, mn, mat, self._refresh_all))
         elif group == "Sphere Detectors":
-            self._project.sphere_detectors.append(
-                SphereDetector(f"SphereDetector_{n}", np.array([0.0, 0.0, 0.0]), radius=20.0))
+            sd = SphereDetector(f"SphereDetector_{n}", np.array([0.0, 0.0, 0.0]), radius=20.0)
+            self._undo_stack.push(AddSphereDetectorCommand(self._project, sd, self._refresh_all))
         elif group == "Optical Properties":
             from backlight_sim.core.materials import OpticalProperties
             on = f"OptProp_{n}"
-            self._project.optical_properties[on] = OpticalProperties(on)
+            op = OpticalProperties(on)
+            self._undo_stack.push(AddOpticalPropertiesCommand(self._project, on, op, self._refresh_all))
         elif group in ("Solid Bodies", "Solid Bodies:box"):
             box_name = f"Box_{n}"
-            self._project.solid_bodies.append(
-                SolidBox(
-                    name=box_name,
-                    center=np.array([0.0, 0.0, 0.0]),
-                    dimensions=(50.0, 30.0, 3.0),
-                    material_name=default_mat,
-                )
+            box = SolidBox(
+                name=box_name,
+                center=np.array([0.0, 0.0, 0.0]),
+                dimensions=(50.0, 30.0, 3.0),
+                material_name=default_mat,
             )
+            self._undo_stack.push(AddSolidBodyCommand(self._project, box, "box", self._refresh_all))
         elif group == "Solid Bodies:cylinder":
-            cyl_name = f"Cylinder_{n}"
             if not hasattr(self._project, "solid_cylinders"):
                 self._project.solid_cylinders = []
-            self._project.solid_cylinders.append(
-                SolidCylinder(
-                    name=cyl_name,
-                    center=np.array([0.0, 0.0, 0.0]),
-                    axis=np.array([0.0, 0.0, 1.0]),
-                    radius=5.0,
-                    length=10.0,
-                    material_name=default_mat,
-                )
+            cyl = SolidCylinder(
+                name=f"Cylinder_{n}",
+                center=np.array([0.0, 0.0, 0.0]),
+                axis=np.array([0.0, 0.0, 1.0]),
+                radius=5.0,
+                length=10.0,
+                material_name=default_mat,
             )
+            self._undo_stack.push(AddSolidBodyCommand(self._project, cyl, "cylinder", self._refresh_all))
         elif group == "Solid Bodies:prism":
-            prism_name = f"Prism_{n}"
             if not hasattr(self._project, "solid_prisms"):
                 self._project.solid_prisms = []
-            self._project.solid_prisms.append(
-                SolidPrism(
-                    name=prism_name,
-                    center=np.array([0.0, 0.0, 0.0]),
-                    axis=np.array([0.0, 0.0, 1.0]),
-                    n_sides=6,
-                    circumscribed_radius=5.0,
-                    length=10.0,
-                    material_name=default_mat,
-                )
+            prism = SolidPrism(
+                name=f"Prism_{n}",
+                center=np.array([0.0, 0.0, 0.0]),
+                axis=np.array([0.0, 0.0, 1.0]),
+                n_sides=6,
+                circumscribed_radius=5.0,
+                length=10.0,
+                material_name=default_mat,
             )
-        self._refresh_all()
+            self._undo_stack.push(AddSolidBodyCommand(self._project, prism, "prism", self._refresh_all))
 
     def _delete_object(self, group, name):
-        self._mark_dirty()
+        # Clear selection first regardless of what we delete
+        self._clear_selected_object()
+        self._properties.clear_selection()
+
         if group == "Sources":
-            self._project.sources = [s for s in self._project.sources if s.name != name]
+            obj = next((s for s in self._project.sources if s.name == name), None)
+            if obj is None:
+                return
+            idx = self._project.sources.index(obj)
+            self._undo_stack.push(DeleteSourceCommand(self._project, obj, idx, self._refresh_all))
         elif group == "Surfaces":
-            self._project.surfaces = [s for s in self._project.surfaces if s.name != name]
+            obj = next((s for s in self._project.surfaces if s.name == name), None)
+            if obj is None:
+                return
+            idx = self._project.surfaces.index(obj)
+            self._undo_stack.push(DeleteSurfaceCommand(self._project, obj, idx, self._refresh_all))
         elif group == "Detectors":
-            self._project.detectors = [d for d in self._project.detectors if d.name != name]
+            obj = next((d for d in self._project.detectors if d.name == name), None)
+            if obj is None:
+                return
+            idx = self._project.detectors.index(obj)
+            self._undo_stack.push(DeleteDetectorCommand(self._project, obj, idx, self._refresh_all))
         elif group == "Sphere Detectors":
-            self._project.sphere_detectors = [d for d in self._project.sphere_detectors if d.name != name]
+            obj = next((d for d in self._project.sphere_detectors if d.name == name), None)
+            if obj is None:
+                return
+            idx = self._project.sphere_detectors.index(obj)
+            self._undo_stack.push(DeleteSphereDetectorCommand(self._project, obj, idx, self._refresh_all))
         elif group == "Materials":
-            self._project.materials.pop(name, None)
+            obj = self._project.materials.get(name)
+            if obj is None:
+                return
+            self._undo_stack.push(DeleteMaterialCommand(self._project, name, obj, self._refresh_all))
         elif group == "Optical Properties":
-            self._project.optical_properties.pop(name, None)
+            obj = self._project.optical_properties.get(name)
+            if obj is None:
+                return
+            self._undo_stack.push(DeleteOpticalPropertiesCommand(self._project, name, obj, self._refresh_all))
         elif group == "Solid Bodies" and "::" in name:
-            # Face node — clear the face optics override
+            # Face node — clear the face optics override (not undoable for now)
             box_name, face_id = name.split("::", 1)
             box = next((b for b in self._project.solid_bodies if b.name == box_name), None)
             if box:
                 box.face_optics.pop(face_id, None)
+            self._mark_dirty()
+            self._refresh_all()
         elif group == "Solid Bodies:box":
-            self._project.solid_bodies = [b for b in self._project.solid_bodies if b.name != name]
+            obj = next((b for b in self._project.solid_bodies if b.name == name), None)
+            if obj is None:
+                return
+            idx = self._project.solid_bodies.index(obj)
+            self._undo_stack.push(DeleteSolidBodyCommand(self._project, obj, "box", idx, self._refresh_all))
         elif group == "Solid Bodies:cylinder":
-            self._project.solid_cylinders = [c for c in getattr(self._project, "solid_cylinders", []) if c.name != name]
+            lst = getattr(self._project, "solid_cylinders", [])
+            obj = next((c for c in lst if c.name == name), None)
+            if obj is None:
+                return
+            idx = lst.index(obj)
+            self._undo_stack.push(DeleteSolidBodyCommand(self._project, obj, "cylinder", idx, self._refresh_all))
         elif group == "Solid Bodies:prism":
-            self._project.solid_prisms = [p for p in getattr(self._project, "solid_prisms", []) if p.name != name]
-        self._clear_selected_object()
-        self._properties.clear_selection()
-        self._refresh_all()
+            lst = getattr(self._project, "solid_prisms", [])
+            obj = next((p for p in lst if p.name == name), None)
+            if obj is None:
+                return
+            idx = lst.index(obj)
+            self._undo_stack.push(DeleteSolidBodyCommand(self._project, obj, "prism", idx, self._refresh_all))
 
     # ------------------------------------------------------------------
     # Variant management (#6)
@@ -842,6 +913,7 @@ class MainWindow(QMainWindow):
         self._dirty = False
         self._counter = {k: 0 for k in self._counter}
         self._last_save_path = None
+        self._undo_stack.clear()
         self._clear_selected_object()
         self._ang_dist.set_project(self._project)
         self._heatmap.set_project(self._project)
@@ -910,6 +982,7 @@ class MainWindow(QMainWindow):
         self._dirty = False
         self._counter = {k: 0 for k in self._counter}
         self._last_save_path = None
+        self._undo_stack.clear()
         self._clear_selected_object()
         self._ang_dist.set_project(self._project)
         self._heatmap.set_project(self._project)
@@ -998,21 +1071,25 @@ class MainWindow(QMainWindow):
         self._receiver_3d.update_results(result)
 
         # Update far-field panel if any far-field sphere detector has results
+        showed_farfield = False
         for sd in self._project.sphere_detectors:
             if getattr(sd, "mode", "near_field") == "far_field":
                 sd_result = result.sphere_detectors.get(sd.name) if hasattr(result, "sphere_detectors") else None
                 if sd_result is not None and getattr(sd_result, "candela_grid", None) is not None:
                     self._far_field_panel.show_result(sd, sd_result)
+                    self._open_tab("Far-field", self._far_field_panel)
                     self._viewport.clear_farfield_lobe()
                     self._viewport.refresh(self._project)
                     try:
                         self._viewport._draw_farfield_lobe(sd, sd_result)
                     except Exception:
                         pass
+                    showed_farfield = True
                     break
 
-        # Focus the heatmap tab after simulation completes
-        self._open_tab("Heatmap", self._heatmap, closable=False)
+        # Focus the heatmap tab only when no far-field results were shown
+        if not showed_farfield:
+            self._open_tab("Heatmap", self._heatmap, closable=False)
         if result.ray_paths:
             self._viewport.show_ray_paths(result.ray_paths)
 
