@@ -110,6 +110,12 @@ class Viewport3D(QWidget):
                     width=4,
                 )
 
+        # Sphere detectors
+        for sd in project.sphere_detectors:
+            is_selected = self._selected_group == "Sphere Detectors" and sd.name == self._selected_name
+            color = (0.0, 1.0, 1.0, 0.35) if not is_selected else (1.0, 1.0, 0.0, 0.5)
+            self._draw_sphere_wire(sd.center, sd.radius, color)
+
         det_base = (0.0, 0.85, 0.85)
         for det in project.detectors:
             is_selected = self._selected_group == "Detectors" and det.name == self._selected_name
@@ -123,6 +129,47 @@ class Viewport3D(QWidget):
                     color=(1.0, 1.0, 0.0, 1.0),
                     width=4,
                 )
+
+        # Solid Bodies (LGP slabs)
+        for box in getattr(project, "solid_bodies", []):
+            is_selected = (
+                self._selected_group == "Solid Bodies" and
+                (self._selected_name == box.name or
+                 (self._selected_name and self._selected_name.startswith(f"{box.name}::")))
+            )
+            self._draw_solid_box(box, is_selected)
+
+    def _draw_solid_box(self, box, is_selected: bool = False):
+        """Render a SolidBox as a semi-transparent solid with visible edges."""
+        lgp_color = (0.4, 0.7, 1.0)
+        edge_color = (1.0, 1.0, 0.0, 1.0) if is_selected else (0.4, 0.7, 1.0, 1.0)
+        edge_width = 4 if is_selected else 2
+
+        faces = box.get_faces()
+        for face_rect in faces:
+            if self._view_mode == "wireframe":
+                self._draw_rect_wire(
+                    face_rect.center, face_rect.u_axis, face_rect.v_axis,
+                    face_rect.size, edge_color, edge_width
+                )
+            else:
+                alpha = 0.25 if self._view_mode == "transparent" else 0.5
+                verts, face_indices = _rect_mesh(face_rect.center, face_rect.u_axis, face_rect.v_axis, face_rect.size)
+                colors = np.array([[lgp_color[0], lgp_color[1], lgp_color[2], alpha]] * len(face_indices))
+                mesh = gl.GLMeshItem(
+                    vertexes=verts,
+                    faces=face_indices,
+                    faceColors=colors,
+                    smooth=False,
+                    drawEdges=True,
+                    edgeColor=edge_color,
+                )
+                if self._view_mode == "transparent":
+                    mesh.setGLOptions("translucent")
+                else:
+                    mesh.setGLOptions("translucent")  # solid box always uses translucent for see-through
+                self._view.addItem(mesh)
+                self._scene_items.append(mesh)
 
     def _draw_rect(self, center, u_axis, v_axis, size, base_rgb, is_detector=False):
         if self._view_mode == "wireframe":
@@ -151,6 +198,24 @@ class Viewport3D(QWidget):
             mesh.setGLOptions("translucent")
         self._view.addItem(mesh)
         self._scene_items.append(mesh)
+
+    def _draw_sphere_wire(self, center, radius, color, n_pts=48):
+        """Draw three orthogonal circle rings to represent a sphere."""
+        t = np.linspace(0, 2 * np.pi, n_pts + 1)
+        for pts_arr in (
+            np.column_stack([np.cos(t) * radius + center[0],
+                             np.sin(t) * radius + center[1],
+                             np.full(n_pts + 1, center[2])]),
+            np.column_stack([np.cos(t) * radius + center[0],
+                             np.full(n_pts + 1, center[1]),
+                             np.sin(t) * radius + center[2]]),
+            np.column_stack([np.full(n_pts + 1, center[0]),
+                             np.cos(t) * radius + center[1],
+                             np.sin(t) * radius + center[2]]),
+        ):
+            item = gl.GLLinePlotItem(pos=pts_arr.astype(float), color=color, width=2, mode="line_strip")
+            self._view.addItem(item)
+            self._scene_items.append(item)
 
     def _draw_rect_wire(self, center, u_axis, v_axis, size, color, width=2):
         pts = _rect_loop(center, u_axis, v_axis, size)

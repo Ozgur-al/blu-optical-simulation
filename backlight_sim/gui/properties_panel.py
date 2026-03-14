@@ -21,8 +21,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from backlight_sim.core.detectors import DetectorSurface
+from backlight_sim.core.detectors import DetectorSurface, SphereDetector
 from backlight_sim.core.geometry import Rectangle
+from backlight_sim.core.solid_body import SolidBox, FACE_NAMES
 
 
 _AXIS_MAP = {
@@ -41,6 +42,13 @@ def _dspin(lo=-9999.0, hi=9999.0, dec=2, val=0.0, step=0.1):
     w.setDecimals(dec)
     w.setValue(val)
     w.setSingleStep(step)
+    return w
+
+
+def _name_edit(max_length: int = 128) -> QLineEdit:
+    """Create a QLineEdit for object names with a max-length constraint."""
+    w = QLineEdit()
+    w.setMaxLength(max_length)
     return w
 
 
@@ -103,7 +111,7 @@ class PropertiesPanel(QStackedWidget):
         empty.setStyleSheet("color: gray; padding: 8px;")
         self.addWidget(empty)
 
-        for form_cls in (SourceForm, SurfaceForm, MaterialForm, DetectorForm, SettingsForm):
+        for form_cls in (SourceForm, SurfaceForm, MaterialForm, OpticalPropertiesForm, DetectorForm, SphereDetectorForm, SettingsForm, BatchForm, SolidBoxForm, FaceForm):
             form = form_cls()
             form.changed.connect(self.properties_changed)
             self.addWidget(form)
@@ -113,16 +121,15 @@ class PropertiesPanel(QStackedWidget):
         focus = QApplication.focusWidget()
         if focus is not None and self.isAncestorOf(focus):
             focus.clearFocus()
-            QApplication.processEvents()
 
     def show_source(self, src, distribution_names=None):
         self._finalize_active_editor()
         self._sourceform.load(src, distribution_names=distribution_names)
         self.setCurrentWidget(self._sourceform)
 
-    def show_surface(self, surf, mat_names):
+    def show_surface(self, surf, mat_names, opt_prop_names=None):
         self._finalize_active_editor()
-        self._surfaceform.load(surf, mat_names)
+        self._surfaceform.load(surf, mat_names, opt_prop_names)
         self.setCurrentWidget(self._surfaceform)
 
     def show_material(self, mat):
@@ -135,10 +142,35 @@ class PropertiesPanel(QStackedWidget):
         self._detectorform.load(det)
         self.setCurrentWidget(self._detectorform)
 
+    def show_sphere_detector(self, det):
+        self._finalize_active_editor()
+        self._spheredetectorform.load(det)
+        self.setCurrentWidget(self._spheredetectorform)
+
     def show_settings(self, settings):
         self._finalize_active_editor()
         self._settingsform.load(settings)
         self.setCurrentWidget(self._settingsform)
+
+    def show_optical_properties(self, op):
+        self._finalize_active_editor()
+        self._opticalpropertiesform.load(op)
+        self.setCurrentWidget(self._opticalpropertiesform)
+
+    def show_batch(self, group: str, objects: list, distribution_names=None, mat_names=None):
+        self._finalize_active_editor()
+        self._batchform.load(group, objects, distribution_names=distribution_names, mat_names=mat_names)
+        self.setCurrentWidget(self._batchform)
+
+    def show_solid_box(self, box: "SolidBox", mat_names: list[str]):
+        self._finalize_active_editor()
+        self._solidboxform.load(box, mat_names)
+        self.setCurrentWidget(self._solidboxform)
+
+    def show_face(self, box: "SolidBox", face_id: str, opt_prop_names: list[str]):
+        self._finalize_active_editor()
+        self._faceform.load(box, face_id, opt_prop_names)
+        self.setCurrentWidget(self._faceform)
 
     def clear_selection(self):
         self._finalize_active_editor()
@@ -151,7 +183,7 @@ class SourceForm(QWidget):
     def __init__(self):
         super().__init__()
         fl = QFormLayout(self)
-        self._name = QLineEdit()
+        self._name = _name_edit()
         self._px = _dspin()
         self._py = _dspin()
         self._pz = _dspin()
@@ -188,11 +220,56 @@ class SourceForm(QWidget):
         # ────────────────────────────────────────────────────────────────
 
         fl.addRow("Distribution:", self._dist)
+
+        # Bin tolerance, current scaling, thermal derating
+        self._tolerance = _dspin(0, 100, 1, 0.0, 1.0)
+        self._tolerance.setToolTip("LED flux bin tolerance ±% (0 = exact)")
+        fl.addRow("Flux tolerance ±%:", self._tolerance)
+        self._current = _dspin(0, 1e5, 1, 0.0, 1.0)
+        self._current.setToolTip("Drive current in mA (0 = use flux directly)")
+        fl.addRow("Current (mA):", self._current)
+        self._flux_per_mA = _dspin(0, 1e5, 4, 0.0, 0.01)
+        self._flux_per_mA.setToolTip("Flux per mA (lm/mA). When >0, flux = current × flux_per_mA")
+        fl.addRow("Flux/mA:", self._flux_per_mA)
+        self._thermal = _dspin(0, 1, 3, 1.0, 0.01)
+        self._thermal.setToolTip("Thermal derating factor 0–1 (1 = no derating)")
+        fl.addRow("Thermal derate:", self._thermal)
+        # LED color (RGB)
+        color_row = QHBoxLayout()
+        self._cr = _dspin(0, 1, 2, 1.0, 0.05)
+        self._cg = _dspin(0, 1, 2, 1.0, 0.05)
+        self._cb = _dspin(0, 1, 2, 1.0, 0.05)
+        self._cr.setToolTip("Red weight 0–1")
+        self._cg.setToolTip("Green weight 0–1")
+        self._cb.setToolTip("Blue weight 0–1")
+        color_row.addWidget(QLabel("R:"))
+        color_row.addWidget(self._cr)
+        color_row.addWidget(QLabel("G:"))
+        color_row.addWidget(self._cg)
+        color_row.addWidget(QLabel("B:"))
+        color_row.addWidget(self._cb)
+        fl.addRow("LED Color:", color_row)
+        # Spectral power distribution
+        self._spd = QComboBox()
+        self._spd.addItems(["white", "warm_white", "cool_white",
+                            "mono_450", "mono_525", "mono_630"])
+        self._spd.setEditable(True)
+        self._spd.setToolTip(
+            "Spectral power distribution.\n"
+            "Built-in: white, warm_white, cool_white\n"
+            "Monochromatic: mono_<nm> (e.g. mono_550)\n"
+            "Or type a custom SPD name."
+        )
+        fl.addRow("SPD:", self._spd)
+
         self._src = None
         self._loading = False
-        for w in (self._px, self._py, self._pz, self._flux):
+        for w in (self._px, self._py, self._pz, self._flux, self._tolerance,
+                  self._current, self._flux_per_mA, self._thermal,
+                  self._cr, self._cg, self._cb):
             w.valueChanged.connect(self._apply)
         self._dist.currentIndexChanged.connect(self._apply)
+        self._spd.currentTextChanged.connect(self._apply)
         self._name.editingFinished.connect(self._apply)
         self._enabled.toggled.connect(self._apply)
 
@@ -207,6 +284,14 @@ class SourceForm(QWidget):
             QSignalBlocker(self._flux),
             QSignalBlocker(self._dist),
             QSignalBlocker(self._enabled),
+            QSignalBlocker(self._tolerance),
+            QSignalBlocker(self._current),
+            QSignalBlocker(self._flux_per_mA),
+            QSignalBlocker(self._thermal),
+            QSignalBlocker(self._cr),
+            QSignalBlocker(self._cg),
+            QSignalBlocker(self._cb),
+            QSignalBlocker(self._spd),
         ]
         self._name.setText(src.name)
         self._enabled.setChecked(src.enabled)
@@ -214,6 +299,16 @@ class SourceForm(QWidget):
         self._py.setValue(src.position[1])
         self._pz.setValue(src.position[2])
         self._flux.setValue(src.flux)
+        self._tolerance.setValue(src.flux_tolerance)
+        self._current.setValue(src.current_mA)
+        self._flux_per_mA.setValue(src.flux_per_mA)
+        self._thermal.setValue(src.thermal_derate)
+        self._cr.setValue(src.color_rgb[0])
+        self._cg.setValue(src.color_rgb[1])
+        self._cb.setValue(src.color_rgb[2])
+        if self._spd.findText(src.spd) < 0:
+            self._spd.addItem(src.spd)
+        self._spd.setCurrentText(src.spd)
         base = ["isotropic", "lambertian"]
         extra = [name for name in (distribution_names or []) if name not in base]
         self._dist.clear()
@@ -262,11 +357,20 @@ class SourceForm(QWidget):
     def _apply(self):
         if self._src is None or self._loading:
             return
-        self._src.name = self._name.text()
+        name = self._name.text().strip()
+        if not name:
+            return
+        self._src.name = name
         self._src.enabled = self._enabled.isChecked()
         self._src.position = np.array([self._px.value(), self._py.value(), self._pz.value()])
         self._src.flux = self._flux.value()
         self._src.distribution = self._dist.currentText()
+        self._src.flux_tolerance = self._tolerance.value()
+        self._src.current_mA = self._current.value()
+        self._src.flux_per_mA = self._flux_per_mA.value()
+        self._src.thermal_derate = self._thermal.value()
+        self._src.color_rgb = (self._cr.value(), self._cg.value(), self._cb.value())
+        self._src.spd = self._spd.currentText()
         self._update_peak_display()
         self.changed.emit()
 
@@ -279,7 +383,7 @@ class SurfaceForm(QWidget):
     def __init__(self):
         super().__init__()
         fl = QFormLayout(self)
-        self._name = QLineEdit()
+        self._name = _name_edit()
         self._cx = _dspin()
         self._cy = _dspin()
         self._cz = _dspin()
@@ -303,7 +407,10 @@ class SurfaceForm(QWidget):
         fl.addRow("Rotate X (deg):", self._rx)
         fl.addRow("Rotate Y (deg):", self._ry)
         fl.addRow("Rotate Z (deg):", self._rz)
+        self._opt_prop = QComboBox()
+        self._opt_prop.setToolTip("Override material's optical behavior with specific optical properties")
         fl.addRow("Material:", self._mat)
+        fl.addRow("Optical Props:", self._opt_prop)
         fl.addRow("", self._normal_lbl)
         self._surf = None
         self._loading = False
@@ -311,9 +418,10 @@ class SurfaceForm(QWidget):
             w.valueChanged.connect(self._apply)
         self._face.currentIndexChanged.connect(self._apply)
         self._mat.currentIndexChanged.connect(self._apply)
+        self._opt_prop.currentIndexChanged.connect(self._apply)
         self._name.editingFinished.connect(self._apply)
 
-    def load(self, surf: Rectangle, mat_names: list[str]):
+    def load(self, surf: Rectangle, mat_names: list[str], opt_prop_names: list[str] | None = None):
         self._loading = True
         self._surf = surf
         blockers = [
@@ -328,6 +436,7 @@ class SurfaceForm(QWidget):
             QSignalBlocker(self._ry),
             QSignalBlocker(self._rz),
             QSignalBlocker(self._mat),
+            QSignalBlocker(self._opt_prop),
         ]
         self._name.setText(surf.name)
         self._cx.setValue(surf.center[0])
@@ -347,6 +456,14 @@ class SurfaceForm(QWidget):
         midx = self._mat.findText(surf.material_name)
         if midx >= 0:
             self._mat.setCurrentIndex(midx)
+        self._opt_prop.clear()
+        self._opt_prop.addItem("(none)")
+        if opt_prop_names:
+            self._opt_prop.addItems(opt_prop_names)
+        if surf.optical_properties_name:
+            oidx = self._opt_prop.findText(surf.optical_properties_name)
+            if oidx >= 0:
+                self._opt_prop.setCurrentIndex(oidx)
         n = surf.normal
         self._normal_lbl.setText(f"normal: ({n[0]:.2f}, {n[1]:.2f}, {n[2]:.2f})")
         self._loading = False
@@ -355,7 +472,10 @@ class SurfaceForm(QWidget):
     def _apply(self):
         if self._surf is None or self._loading:
             return
-        self._surf.name = self._name.text()
+        name = self._name.text().strip()
+        if not name:
+            return
+        self._surf.name = name
         self._surf.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
         self._surf.size = (self._sw.value(), self._sh.value())
         key = self._FACE_KEYS[self._face.currentIndex()]
@@ -364,6 +484,8 @@ class SurfaceForm(QWidget):
         self._surf.v_axis = v.copy()
         if self._mat.currentText():
             self._surf.material_name = self._mat.currentText()
+        op_text = self._opt_prop.currentText()
+        self._surf.optical_properties_name = "" if op_text == "(none)" else op_text
         n = self._surf.normal
         self._normal_lbl.setText(f"normal: ({n[0]:.2f}, {n[1]:.2f}, {n[2]:.2f})")
         self.changed.emit()
@@ -375,7 +497,7 @@ class MaterialForm(QWidget):
     def __init__(self):
         super().__init__()
         fl = QFormLayout(self)
-        self._name = QLineEdit()
+        self._name = _name_edit()
         self._type = QComboBox()
         self._type.addItems(["reflector", "absorber", "diffuser"])
         self._ref = _dspin(0, 1, 3, 0.9, 0.01)
@@ -383,6 +505,10 @@ class MaterialForm(QWidget):
         self._trn = _dspin(0, 1, 3, 0.0, 0.01)
         self._mode = QComboBox()
         self._mode.addItems(["Diffuse (Lambertian)", "Specular"])
+        self._haze = _dspin(0, 90, 1, 0.0, 1.0)
+        self._haze.setToolTip("Haze / scatter half-angle in degrees (specular only, 0 = perfect mirror)")
+        self._ri = _dspin(0.1, 10.0, 3, 1.0, 0.01)
+        self._ri.setToolTip("Index of refraction (1.0 = air, 1.5 = glass, 2.4 = diamond)")
         self._color_btn = QPushButton()
         self._color_btn.clicked.connect(self._pick_color)
         fl.addRow("Name:", self._name)
@@ -391,11 +517,13 @@ class MaterialForm(QWidget):
         fl.addRow("Absorption:", self._abs)
         fl.addRow("Transmittance:", self._trn)
         fl.addRow("Reflection:", self._mode)
+        fl.addRow("Haze (deg):", self._haze)
+        fl.addRow("Refractive Index:", self._ri)
         fl.addRow("Color:", self._color_btn)
         self._mat = None
         self._loading = False
         self._color = (0.55, 0.65, 1.0)
-        for w in (self._ref, self._abs, self._trn):
+        for w in (self._ref, self._abs, self._trn, self._haze, self._ri):
             w.valueChanged.connect(self._apply)
         self._type.currentIndexChanged.connect(self._apply)
         self._mode.currentIndexChanged.connect(self._apply)
@@ -412,6 +540,8 @@ class MaterialForm(QWidget):
             QSignalBlocker(self._abs),
             QSignalBlocker(self._trn),
             QSignalBlocker(self._mode),
+            QSignalBlocker(self._haze),
+            QSignalBlocker(self._ri),
         ]
         self._name.setText(mat.name)
         self._type.setCurrentIndex(["reflector", "absorber", "diffuser"].index(mat.surface_type))
@@ -419,6 +549,8 @@ class MaterialForm(QWidget):
         self._abs.setValue(mat.absorption)
         self._trn.setValue(mat.transmittance)
         self._mode.setCurrentIndex(0 if mat.is_diffuse else 1)
+        self._haze.setValue(mat.haze)
+        self._ri.setValue(mat.refractive_index)
         self._color = tuple(mat.color)
         self._update_color_button()
         self._loading = False
@@ -445,13 +577,108 @@ class MaterialForm(QWidget):
     def _apply(self):
         if self._mat is None or self._loading:
             return
-        self._mat.name = self._name.text()
+        name = self._name.text().strip()
+        if not name:
+            return
+        self._mat.name = name
         self._mat.surface_type = self._type.currentText()
         self._mat.reflectance = self._ref.value()
         self._mat.absorption = self._abs.value()
         self._mat.transmittance = self._trn.value()
         self._mat.is_diffuse = self._mode.currentIndex() == 0
+        self._mat.haze = self._haze.value()
+        self._mat.refractive_index = self._ri.value()
         self._mat.color = self._color
+        self.changed.emit()
+
+
+class OpticalPropertiesForm(QWidget):
+    """Editor for OpticalProperties (per-surface optical behavior)."""
+
+    changed = Signal()
+
+    def __init__(self):
+        super().__init__()
+        fl = QFormLayout(self)
+        self._name = _name_edit()
+        self._type = QComboBox()
+        self._type.addItems(["reflector", "absorber", "diffuser"])
+        self._ref = _dspin(0, 1, 3, 0.9, 0.01)
+        self._abs = _dspin(0, 1, 3, 0.1, 0.01)
+        self._trn = _dspin(0, 1, 3, 0.0, 0.01)
+        self._mode = QComboBox()
+        self._mode.addItems(["Diffuse (Lambertian)", "Specular"])
+        self._haze = _dspin(0, 90, 1, 0.0, 1.0)
+        self._color_btn = QPushButton()
+        self._color_btn.clicked.connect(self._pick_color)
+        fl.addRow(QLabel("<b>Optical Properties</b>"))
+        fl.addRow("Name:", self._name)
+        fl.addRow("Surface type:", self._type)
+        fl.addRow("Reflectance:", self._ref)
+        fl.addRow("Absorption:", self._abs)
+        fl.addRow("Transmittance:", self._trn)
+        fl.addRow("Reflection:", self._mode)
+        fl.addRow("Haze (deg):", self._haze)
+        fl.addRow("Color:", self._color_btn)
+        self._op = None
+        self._loading = False
+        self._color = (0.55, 0.65, 1.0)
+        for w in (self._ref, self._abs, self._trn, self._haze):
+            w.valueChanged.connect(self._apply)
+        self._type.currentIndexChanged.connect(self._apply)
+        self._mode.currentIndexChanged.connect(self._apply)
+        self._name.editingFinished.connect(self._apply)
+        self._update_color_button()
+
+    def load(self, op):
+        self._loading = True
+        self._op = op
+        blockers = [QSignalBlocker(w) for w in (
+            self._name, self._type, self._ref, self._abs, self._trn, self._mode, self._haze)]
+        self._name.setText(op.name)
+        self._type.setCurrentIndex(["reflector", "absorber", "diffuser"].index(op.surface_type))
+        self._ref.setValue(op.reflectance)
+        self._abs.setValue(op.absorption)
+        self._trn.setValue(op.transmittance)
+        self._mode.setCurrentIndex(0 if op.is_diffuse else 1)
+        self._haze.setValue(op.haze)
+        self._color = tuple(op.color)
+        self._update_color_button()
+        self._loading = False
+        del blockers
+
+    def _update_color_button(self):
+        r = int(round(self._color[0] * 255))
+        g = int(round(self._color[1] * 255))
+        b = int(round(self._color[2] * 255))
+        self._color_btn.setText(f"#{r:02X}{g:02X}{b:02X}")
+        self._color_btn.setStyleSheet(f"background-color: rgb({r}, {g}, {b});")
+
+    def _pick_color(self):
+        if self._op is None:
+            return
+        start = QColor.fromRgbF(self._color[0], self._color[1], self._color[2])
+        picked = QColorDialog.getColor(start, self, "Choose Color")
+        if not picked.isValid():
+            return
+        self._color = (picked.redF(), picked.greenF(), picked.blueF())
+        self._update_color_button()
+        self._apply()
+
+    def _apply(self):
+        if self._op is None or self._loading:
+            return
+        name = self._name.text().strip()
+        if not name:
+            return
+        self._op.name = name
+        self._op.surface_type = self._type.currentText()
+        self._op.reflectance = self._ref.value()
+        self._op.absorption = self._abs.value()
+        self._op.transmittance = self._trn.value()
+        self._op.is_diffuse = self._mode.currentIndex() == 0
+        self._op.haze = self._haze.value()
+        self._op.color = self._color
         self.changed.emit()
 
 
@@ -463,7 +690,7 @@ class DetectorForm(QWidget):
     def __init__(self):
         super().__init__()
         fl = QFormLayout(self)
-        self._name = QLineEdit()
+        self._name = _name_edit()
         self._cx = _dspin()
         self._cy = _dspin()
         self._cz = _dspin(val=5.0)
@@ -540,7 +767,10 @@ class DetectorForm(QWidget):
     def _apply(self):
         if self._det is None or self._loading:
             return
-        self._det.name = self._name.text()
+        name = self._name.text().strip()
+        if not name:
+            return
+        self._det.name = name
         self._det.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
         self._det.size = (self._sw.value(), self._sh.value())
         key = self._FACE_KEYS[self._face.currentIndex()]
@@ -548,6 +778,67 @@ class DetectorForm(QWidget):
         self._det.u_axis = u.copy()
         self._det.v_axis = v.copy()
         self._det.resolution = (self._rx_res.value(), self._ry_res.value())
+        self.changed.emit()
+
+
+class SphereDetectorForm(QWidget):
+    changed = Signal()
+
+    def __init__(self):
+        super().__init__()
+        fl = QFormLayout(self)
+        self._name = _name_edit()
+        self._cx = _dspin()
+        self._cy = _dspin()
+        self._cz = _dspin(val=0.0)
+        self._radius = _dspin(0.1, 9999, 2, 10.0, 1.0)
+        self._n_phi = QSpinBox()
+        self._n_phi.setRange(8, 360)
+        self._n_phi.setValue(72)
+        self._n_theta = QSpinBox()
+        self._n_theta.setRange(4, 180)
+        self._n_theta.setValue(36)
+        fl.addRow(QLabel("<b>Sphere Detector</b>"))
+        fl.addRow("Name:", self._name)
+        fl.addRow("Center X:", self._cx)
+        fl.addRow("Center Y:", self._cy)
+        fl.addRow("Center Z:", self._cz)
+        fl.addRow("Radius:", self._radius)
+        fl.addRow("Phi bins:", self._n_phi)
+        fl.addRow("Theta bins:", self._n_theta)
+        self._det = None
+        self._loading = False
+        for w in (self._cx, self._cy, self._cz, self._radius):
+            w.valueChanged.connect(self._apply)
+        self._n_phi.valueChanged.connect(self._apply)
+        self._n_theta.valueChanged.connect(self._apply)
+        self._name.editingFinished.connect(self._apply)
+
+    def load(self, det: SphereDetector):
+        self._loading = True
+        self._det = det
+        blockers = [QSignalBlocker(w) for w in (
+            self._name, self._cx, self._cy, self._cz, self._radius, self._n_phi, self._n_theta)]
+        self._name.setText(det.name)
+        self._cx.setValue(det.center[0])
+        self._cy.setValue(det.center[1])
+        self._cz.setValue(det.center[2])
+        self._radius.setValue(det.radius)
+        self._n_phi.setValue(det.resolution[0])
+        self._n_theta.setValue(det.resolution[1])
+        self._loading = False
+        del blockers
+
+    def _apply(self):
+        if self._det is None or self._loading:
+            return
+        name = self._name.text().strip()
+        if not name:
+            return
+        self._det.name = name
+        self._det.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
+        self._det.radius = self._radius.value()
+        self._det.resolution = (self._n_phi.value(), self._n_theta.value())
         self.changed.emit()
 
 
@@ -597,12 +888,21 @@ class SettingsForm(QWidget):
         self._rec.setValue(200)
         self._unit = QComboBox()
         self._unit.addItems(["mm", "cm", "m", "in"])
+        self._flux_unit = QComboBox()
+        self._flux_unit.addItems(["lm", "mW", "W"])
+        self._angle_unit = QComboBox()
+        self._angle_unit.addItems(["deg", "rad"])
+        self._mp = QCheckBox("Enable multiprocessing")
+        self._mp.setToolTip("Parallelize across sources (no ray path recording)")
         fl.addRow("Rays per source:", self._rays)
         fl.addRow("Max bounces:", self._bounce)
         fl.addRow("Energy threshold:", self._thresh)
         fl.addRow("Random seed:", self._seed)
         fl.addRow("Record ray paths:", self._rec)
         fl.addRow("Distance unit:", self._unit)
+        fl.addRow("Flux unit:", self._flux_unit)
+        fl.addRow("Angle unit:", self._angle_unit)
+        fl.addRow("", self._mp)
         self._s = None
         self._loading = False
         self._rays.valueChanged.connect(self._apply)
@@ -611,6 +911,9 @@ class SettingsForm(QWidget):
         self._seed.valueChanged.connect(self._apply)
         self._rec.valueChanged.connect(self._apply)
         self._unit.currentIndexChanged.connect(self._apply)
+        self._flux_unit.currentIndexChanged.connect(self._apply)
+        self._angle_unit.currentIndexChanged.connect(self._apply)
+        self._mp.toggled.connect(self._apply)
 
     def load(self, s):
         self._loading = True
@@ -622,6 +925,9 @@ class SettingsForm(QWidget):
             QSignalBlocker(self._seed),
             QSignalBlocker(self._rec),
             QSignalBlocker(self._unit),
+            QSignalBlocker(self._flux_unit),
+            QSignalBlocker(self._angle_unit),
+            QSignalBlocker(self._mp),
         ]
         self._rays.setValue(s.rays_per_source)
         self._bounce.setValue(s.max_bounces)
@@ -631,6 +937,13 @@ class SettingsForm(QWidget):
         idx = self._unit.findText(s.distance_unit)
         if idx >= 0:
             self._unit.setCurrentIndex(idx)
+        idx = self._flux_unit.findText(s.flux_unit)
+        if idx >= 0:
+            self._flux_unit.setCurrentIndex(idx)
+        idx = self._angle_unit.findText(s.angle_unit)
+        if idx >= 0:
+            self._angle_unit.setCurrentIndex(idx)
+        self._mp.setChecked(s.use_multiprocessing)
         self._loading = False
         del blockers
 
@@ -649,4 +962,237 @@ class SettingsForm(QWidget):
         self._s.random_seed = self._seed.value()
         self._s.record_ray_paths = self._rec.value()
         self._s.distance_unit = self._unit.currentText()
+        self._s.flux_unit = self._flux_unit.currentText()
+        self._s.angle_unit = self._angle_unit.currentText()
+        self._s.use_multiprocessing = self._mp.isChecked()
+        self.changed.emit()
+
+
+class BatchForm(QWidget):
+    """Batch-edit form for multiple selected objects of the same type."""
+
+    changed = Signal()
+
+    def __init__(self):
+        super().__init__()
+        fl = QFormLayout(self)
+        self._header = QLabel("Batch Edit")
+        self._header.setStyleSheet("font-weight: bold; padding: 4px;")
+        fl.addRow(self._header)
+
+        # Source batch fields
+        self._flux = _dspin(0, 1e7, 1, 100.0, 10.0)
+        self._dist = QComboBox()
+        self._dist.addItems(["isotropic", "lambertian"])
+        self._enabled = QCheckBox()
+        self._enabled.setChecked(True)
+        self._tolerance = _dspin(0, 100, 1, 0.0, 1.0)
+        self._thermal = _dspin(0, 1, 3, 1.0, 0.01)
+        self._src_widgets = []
+        for label, w in [
+            ("Flux:", self._flux),
+            ("Distribution:", self._dist),
+            ("Enabled:", self._enabled),
+            ("Flux tolerance ±%:", self._tolerance),
+            ("Thermal derate:", self._thermal),
+        ]:
+            fl.addRow(label, w)
+            self._src_widgets.extend([fl.itemAt(fl.count() - 1), fl.itemAt(fl.count() - 2)])
+
+        # Surface batch fields
+        self._mat = QComboBox()
+        fl.addRow("Material:", self._mat)
+
+        self._apply_btn = QPushButton("Apply to All Selected")
+        self._apply_btn.clicked.connect(self._apply)
+        fl.addRow("", self._apply_btn)
+
+        self._objects = []
+        self._group = ""
+        self._loading = False
+
+    def load(self, group: str, objects: list, distribution_names=None, mat_names=None):
+        self._loading = True
+        self._group = group
+        self._objects = objects
+        self._header.setText(f"Batch Edit — {len(objects)} {group}")
+
+        # Show/hide relevant fields
+        is_src = group == "Sources"
+        is_surf = group == "Surfaces"
+        self._flux.setVisible(is_src)
+        self._dist.setVisible(is_src)
+        self._enabled.setVisible(is_src)
+        self._tolerance.setVisible(is_src)
+        self._thermal.setVisible(is_src)
+        self._mat.setVisible(is_surf)
+
+        if is_src and distribution_names:
+            base = ["isotropic", "lambertian"]
+            extra = [n for n in distribution_names if n not in base]
+            self._dist.clear()
+            self._dist.addItems(base + extra)
+
+        if is_surf and mat_names:
+            self._mat.clear()
+            self._mat.addItems(mat_names)
+
+        self._loading = False
+
+    def _apply(self):
+        if not self._objects or self._loading:
+            return
+        if self._group == "Sources":
+            for src in self._objects:
+                src.flux = self._flux.value()
+                src.distribution = self._dist.currentText()
+                src.enabled = self._enabled.isChecked()
+                src.flux_tolerance = self._tolerance.value()
+                src.thermal_derate = self._thermal.value()
+        elif self._group == "Surfaces":
+            mat = self._mat.currentText()
+            if mat:
+                for surf in self._objects:
+                    surf.material_name = mat
+        self.changed.emit()
+
+
+class SolidBoxForm(QWidget):
+    """Property editor for a SolidBox (box-level properties)."""
+
+    changed = Signal()
+
+    def __init__(self):
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+        super().__init__()
+        fl = QFormLayout(self)
+        fl.addRow(QLabel("<b>Solid Box</b>"))
+
+        self._name = _name_edit()
+        self._cx = _dspin()
+        self._cy = _dspin()
+        self._cz = _dspin()
+        self._dw = _dspin(0.1, 9999, 2, 50.0)
+        self._dh = _dspin(0.1, 9999, 2, 30.0)
+        self._dd = _dspin(0.1, 9999, 2, 3.0)
+        self._mat = QComboBox()
+
+        fl.addRow("Name:", self._name)
+        fl.addRow("Center X:", self._cx)
+        fl.addRow("Center Y:", self._cy)
+        fl.addRow("Center Z:", self._cz)
+        fl.addRow("Width (X):", self._dw)
+        fl.addRow("Height (Y):", self._dh)
+        fl.addRow("Depth (Z):", self._dd)
+        fl.addRow("Material:", self._mat)
+
+        # Coupling edges checkboxes
+        fl.addRow(QLabel("Coupling edges:"))
+        self._edge_checks: dict[str, QCheckBox] = {}
+        for edge_id in ("left", "right", "front", "back"):
+            cb = QCheckBox(edge_id)
+            fl.addRow("", cb)
+            self._edge_checks[edge_id] = cb
+
+        self._box: SolidBox | None = None
+        self._loading = False
+
+        for w in (self._cx, self._cy, self._cz, self._dw, self._dh, self._dd):
+            w.valueChanged.connect(self._apply)
+        self._mat.currentIndexChanged.connect(self._apply)
+        self._name.editingFinished.connect(self._apply)
+        for cb in self._edge_checks.values():
+            cb.toggled.connect(self._apply)
+
+    def load(self, box: SolidBox, mat_names: list[str]):
+        self._loading = True
+        self._box = box
+        blockers = [
+            QSignalBlocker(self._name),
+            QSignalBlocker(self._cx), QSignalBlocker(self._cy), QSignalBlocker(self._cz),
+            QSignalBlocker(self._dw), QSignalBlocker(self._dh), QSignalBlocker(self._dd),
+            QSignalBlocker(self._mat),
+        ] + [QSignalBlocker(cb) for cb in self._edge_checks.values()]
+        self._name.setText(box.name)
+        self._cx.setValue(float(box.center[0]))
+        self._cy.setValue(float(box.center[1]))
+        self._cz.setValue(float(box.center[2]))
+        self._dw.setValue(float(box.dimensions[0]))
+        self._dh.setValue(float(box.dimensions[1]))
+        self._dd.setValue(float(box.dimensions[2]))
+        self._mat.clear()
+        self._mat.addItems(mat_names)
+        midx = self._mat.findText(box.material_name)
+        if midx >= 0:
+            self._mat.setCurrentIndex(midx)
+        for edge_id, cb in self._edge_checks.items():
+            cb.setChecked(edge_id in box.coupling_edges)
+        self._loading = False
+        del blockers
+
+    def _apply(self):
+        if self._box is None or self._loading:
+            return
+        name = self._name.text().strip()
+        if not name:
+            return
+        self._box.name = name
+        self._box.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
+        self._box.dimensions = (self._dw.value(), self._dh.value(), self._dd.value())
+        if self._mat.currentText():
+            self._box.material_name = self._mat.currentText()
+        self._box.coupling_edges = [eid for eid, cb in self._edge_checks.items() if cb.isChecked()]
+        self.changed.emit()
+
+
+class FaceForm(QWidget):
+    """Property editor for a single face of a SolidBox."""
+
+    changed = Signal()
+
+    def __init__(self):
+        super().__init__()
+        fl = QFormLayout(self)
+        fl.addRow(QLabel("<b>Solid Box Face</b>"))
+
+        self._face_lbl = QLabel("—")
+        self._face_lbl.setStyleSheet("font-weight: bold;")
+        fl.addRow("Face:", self._face_lbl)
+
+        self._opt_prop = QComboBox()
+        self._opt_prop.setToolTip(
+            "Assign optical properties override to this face.\n"
+            "Leave blank to use the box's bulk material.")
+        fl.addRow("Optical Props:", self._opt_prop)
+
+        self._box: SolidBox | None = None
+        self._face_id: str = ""
+        self._loading = False
+        self._opt_prop.currentIndexChanged.connect(self._apply)
+
+    def load(self, box: SolidBox, face_id: str, opt_prop_names: list[str]):
+        self._loading = True
+        self._box = box
+        self._face_id = face_id
+        blockers = [QSignalBlocker(self._opt_prop)]
+        self._face_lbl.setText(face_id)
+        self._opt_prop.clear()
+        self._opt_prop.addItem("(use bulk material)")
+        self._opt_prop.addItems(opt_prop_names)
+        current_op = box.face_optics.get(face_id, "")
+        if current_op:
+            idx = self._opt_prop.findText(current_op)
+            if idx >= 0:
+                self._opt_prop.setCurrentIndex(idx)
+        self._loading = False
+        del blockers
+
+    def _apply(self):
+        if self._box is None or self._loading:
+            return
+        selected = self._opt_prop.currentText()
+        if selected == "(use bulk material)" or not selected:
+            self._box.face_optics.pop(self._face_id, None)
+        else:
+            self._box.face_optics[self._face_id] = selected
         self.changed.emit()
