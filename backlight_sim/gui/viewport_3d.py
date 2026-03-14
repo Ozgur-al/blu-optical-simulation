@@ -228,12 +228,12 @@ class Viewport3D(QWidget):
             np.cos(angles)[:, None] * u[None, :] + np.sin(angles)[:, None] * v[None, :]
         )
 
-        _hl = (1.0, 1.0, 0.0)  # highlight yellow
+        _hl_wire = (0.0, 1.0, 1.0)  # cyan for wireframe face highlight
 
         if self._view_mode == "wireframe":
-            top_color = (*_hl, 1.0) if selected_face == "top_cap" else edge_color
-            bot_color = (*_hl, 1.0) if selected_face == "bottom_cap" else edge_color
-            side_color = (*_hl, 1.0) if selected_face == "side" else edge_color
+            top_color = (*_hl_wire, 1.0) if selected_face == "top_cap" else edge_color
+            bot_color = (*_hl_wire, 1.0) if selected_face == "bottom_cap" else edge_color
+            side_color = (*_hl_wire, 1.0) if selected_face == "side" else edge_color
             top_w = 4 if selected_face == "top_cap" else 2
             bot_w = 4 if selected_face == "bottom_cap" else 2
             side_w = 4 if selected_face == "side" else 2
@@ -250,35 +250,36 @@ class Viewport3D(QWidget):
         else:
             alpha = 0.25 if self._view_mode == "transparent" else 0.5
             normal_color = (*color, alpha)
-            highlight_color = (*_hl, min(alpha + 0.3, 0.8))
+            highlight_color = (1.0, 1.0, 0.0, min(alpha + 0.3, 0.8))
+            # Build separate meshes per face group so caps get flat shading
             verts_list = list(ring_top) + list(ring_bot) + [top_center, bot_center]
             verts = np.array(verts_list, dtype=float)
-            faces_list = []
-            face_groups = []
-            for i in range(n_seg):
-                ni = (i + 1) % n_seg
-                faces_list.append([i, ni, ni + n_seg])
-                face_groups.append("side")
-                faces_list.append([i, ni + n_seg, i + n_seg])
-                face_groups.append("side")
             tc_idx = n_seg * 2
             bc_idx = n_seg * 2 + 1
+            # Group triangles by face
+            groups = {"side": [], "top_cap": [], "bottom_cap": []}
             for i in range(n_seg):
                 ni = (i + 1) % n_seg
-                faces_list.append([tc_idx, ni, i])
-                face_groups.append("top_cap")
-                faces_list.append([bc_idx, i + n_seg, ni + n_seg])
-                face_groups.append("bottom_cap")
-            faces = np.array(faces_list, dtype=int)
-            colors = np.array([
-                highlight_color if selected_face is not None and g == selected_face else normal_color
-                for g in face_groups
-            ], dtype=float)
-            mesh = gl.GLMeshItem(vertexes=verts, faces=faces, faceColors=colors,
-                                 smooth=True, drawEdges=True, edgeColor=edge_color)
-            mesh.setGLOptions("translucent")
-            self._view.addItem(mesh)
-            self._scene_items.append(mesh)
+                groups["side"].append([i, ni, ni + n_seg])
+                groups["side"].append([i, ni + n_seg, i + n_seg])
+            for i in range(n_seg):
+                ni = (i + 1) % n_seg
+                groups["top_cap"].append([tc_idx, ni, i])
+                groups["bottom_cap"].append([bc_idx, i + n_seg, ni + n_seg])
+            for gname, tri_list in groups.items():
+                if not tri_list:
+                    continue
+                faces = np.array(tri_list, dtype=int)
+                is_hl = selected_face is not None and gname == selected_face
+                fc = highlight_color if is_hl else normal_color
+                colors = np.array([fc] * len(faces), dtype=float)
+                # Caps: smooth=False for flat shading; side: smooth=True
+                smooth = gname == "side"
+                mesh = gl.GLMeshItem(vertexes=verts, faces=faces, faceColors=colors,
+                                     smooth=smooth, drawEdges=True, edgeColor=edge_color)
+                mesh.setGLOptions("translucent")
+                self._view.addItem(mesh)
+                self._scene_items.append(mesh)
 
     def _draw_solid_prism(self, prism, color, edge_color, selected_face=None):
         """Render a SolidPrism as a faceted mesh or wireframe."""
@@ -306,11 +307,11 @@ class Viewport3D(QWidget):
             np.cos(angles)[:, None] * u[None, :] + np.sin(angles)[:, None] * v[None, :]
         )
 
-        _hl = (1.0, 1.0, 0.0)
+        _hl_wire = (0.0, 1.0, 1.0)  # cyan for wireframe face highlight
 
         if self._view_mode == "wireframe":
-            top_color = (*_hl, 1.0) if selected_face == "cap_top" else edge_color
-            bot_color = (*_hl, 1.0) if selected_face == "cap_bottom" else edge_color
+            top_color = (*_hl_wire, 1.0) if selected_face == "cap_top" else edge_color
+            bot_color = (*_hl_wire, 1.0) if selected_face == "cap_bottom" else edge_color
             top_w = 4 if selected_face == "cap_top" else 2
             bot_w = 4 if selected_face == "cap_bottom" else 2
             loop_t = np.vstack([ring_top, ring_top[:1]])
@@ -321,7 +322,7 @@ class Viewport3D(QWidget):
             self._view.addItem(item); self._scene_items.append(item)
             for i in range(n):
                 is_side_sel = selected_face == f"side_{i}"
-                s_color = (*_hl, 1.0) if is_side_sel else edge_color
+                s_color = (*_hl_wire, 1.0) if is_side_sel else edge_color
                 s_w = 4 if is_side_sel else 2
                 ni = (i + 1) % n
                 for pts in [
@@ -334,35 +335,33 @@ class Viewport3D(QWidget):
         else:
             alpha = 0.25 if self._view_mode == "transparent" else 0.5
             normal_color = (*color, alpha)
-            highlight_color = (*_hl, min(alpha + 0.3, 0.8))
+            highlight_color = (1.0, 1.0, 0.0, min(alpha + 0.3, 0.8))
             verts_list = list(ring_top) + list(ring_bot) + [top_center, bot_center]
             verts = np.array(verts_list, dtype=float)
-            faces_list = []
-            face_groups = []
-            for i in range(n):
-                ni = (i + 1) % n
-                faces_list.append([i, ni, ni + n])
-                face_groups.append(f"side_{i}")
-                faces_list.append([i, ni + n, i + n])
-                face_groups.append(f"side_{i}")
             tc_idx = n * 2
             bc_idx = n * 2 + 1
+            # Group triangles by face
+            groups: dict[str, list] = {}
             for i in range(n):
                 ni = (i + 1) % n
-                faces_list.append([tc_idx, ni, i])
-                face_groups.append("cap_top")
-                faces_list.append([bc_idx, i + n, ni + n])
-                face_groups.append("cap_bottom")
-            faces = np.array(faces_list, dtype=int)
-            colors = np.array([
-                highlight_color if selected_face is not None and g == selected_face else normal_color
-                for g in face_groups
-            ], dtype=float)
-            mesh = gl.GLMeshItem(vertexes=verts, faces=faces, faceColors=colors,
-                                 smooth=False, drawEdges=True, edgeColor=edge_color)
-            mesh.setGLOptions("translucent")
-            self._view.addItem(mesh)
-            self._scene_items.append(mesh)
+                groups.setdefault(f"side_{i}", []).append([i, ni, ni + n])
+                groups[f"side_{i}"].append([i, ni + n, i + n])
+            for i in range(n):
+                ni = (i + 1) % n
+                groups.setdefault("cap_top", []).append([tc_idx, ni, i])
+                groups.setdefault("cap_bottom", []).append([bc_idx, i + n, ni + n])
+            for gname, tri_list in groups.items():
+                if not tri_list:
+                    continue
+                faces = np.array(tri_list, dtype=int)
+                is_hl = selected_face is not None and gname == selected_face
+                fc = highlight_color if is_hl else normal_color
+                colors = np.array([fc] * len(faces), dtype=float)
+                mesh = gl.GLMeshItem(vertexes=verts, faces=faces, faceColors=colors,
+                                     smooth=False, drawEdges=True, edgeColor=edge_color)
+                mesh.setGLOptions("translucent")
+                self._view.addItem(mesh)
+                self._scene_items.append(mesh)
 
     def _draw_farfield_lobe(self, sd, result):
         """Render a 3D intensity lobe for far-field sphere detector results.
