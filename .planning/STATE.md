@@ -2,26 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-14T19:41:28.253Z"
+status: in-progress
+last_updated: "2026-03-14T21:17:00Z"
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 15
-  completed_plans: 8
----
-
----
-gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: in-progress
-last_updated: "2026-03-14T18:18:19Z"
-progress:
-  total_phases: 5
-  completed_phases: 2
-  total_plans: 11
-  completed_plans: 7
+  completed_plans: 9
 ---
 
 # Project State
@@ -36,9 +23,9 @@ See: .planning/PROJECT.md (updated 2026-03-14)
 ## Current Position
 
 Phase: 4 of 5 (Advanced Materials and Geometry) — IN PROGRESS
-Plan: 2 of 4 in current phase — COMPLETE
-Status: Phase 4 Plan 02 complete. Far-field sphere detector (direction-based accumulation, candela normalization, IES export) implemented.
-Last activity: 2026-03-14 — Plan 04-02 complete (far-field SphereDetector, _accumulate_sphere_farfield, compute_farfield_candela, export_ies, export_farfield_csv, compute_farfield_kpis)
+Plan: 1 of 4 in current phase — COMPLETE (SUMMARY backfilled 2026-03-14; plan 02 also complete)
+Status: Phase 4 Plan 01 SUMMARY created. BSDF engine complete: load_bsdf_csv, validate_bsdf, sample_bsdf, precompute_bsdf_cdfs, tracer dispatch, project I/O round-trip.
+Last activity: 2026-03-14 — Plan 04-01 SUMMARY created (bsdf_io.py, sample_bsdf, bsdf_profile_name on OpticalProperties/Material, bsdf_profiles on Project, tracer BSDF dispatch)
 
 Progress: [████████░░] 73%
 
@@ -68,6 +55,7 @@ Progress: [████████░░] 73%
 | Phase 02 P01 | 12 min | 1 task TDD | 5 files |
 | Phase 02 P02 | 24 min | 3 tasks | 5 files |
 | Phase 03 P01 | 3.6 min | 2 tasks TDD | 6 files |
+| Phase 04 P01 | 5 min | 2 tasks TDD | 5 files |
 | Phase 04 P02 | 5 | 2 tasks | 5 files |
 | Phase 03-performance-acceleration P02 | 20 | 2 tasks | 7 files |
 
@@ -109,6 +97,11 @@ Recent decisions affecting current work:
 - [Phase 03-02]: BVH activation threshold = 50 total plane surfaces; traverse_bvh_batch is JIT but build_bvh_flat is pure NumPy
 - [Phase 03-02]: Adaptive sampling disabled in MP mode with warning; convergence metric = 1.96*std/sqrt(n)/mean * 100
 - [Phase 03-02]: Cylinder/prism intersection loops belong inside bounce loop body (20-space indent); bug fixed from prior session
+- [Phase 04-01]: BSDF CSV requires both refl_intensity and trans_intensity columns — partial BSDF rejected with ValueError
+- [Phase 04-01]: Energy conservation check uses raw row sums with 1e-3 tolerance (not solid-angle integrals) — practical import-time check
+- [Phase 04-01]: precompute_bsdf_cdfs called once at tracer init, keyed by profile name — avoids per-bounce CDF construction
+- [Phase 04-01]: BSDF dispatch bypasses ALL scalar optical behavior (reflectance, transmittance, is_diffuse, haze) when bsdf_profile_name is set
+- [Phase 04-01]: Stochastic reflect/transmit split: p_refl = refl_total / (refl_total + trans_total) per theta_in bin
 
 ### Roadmap Evolution
 
@@ -128,5 +121,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-14
-Stopped at: Completed 04-02-PLAN.md (Far-field detector: direction-based accumulation, candela normalization, IES export)
+Stopped at: Completed 04-01-PLAN.md SUMMARY (BSDF engine: load_bsdf_csv, sample_bsdf, tracer dispatch, project I/O round-trip)
 Resume file: None

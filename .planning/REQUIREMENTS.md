@@ -35,7 +35,7 @@ Requirements for Phase 2 release. Each maps to roadmap phases.
 
 ### BRDF
 
-- [ ] **BRDF-01**: User can import tabulated BRDF data (measured goniophotometer CSV) and assign it to surfaces
+- [x] **BRDF-01**: User can import tabulated BRDF data (measured goniophotometer CSV) and assign it to surfaces
 
 ### Detectors
 
@@ -116,7 +116,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PERF-01 | Phase 3 | Complete |
 | PERF-02 | Phase 3 | Complete |
 | PERF-03 | Phase 3 | Complete |
-| BRDF-01 | Phase 4 | Pending |
+| BRDF-01 | Phase 4 | Complete |
 | DET-01 | Phase 4 | Complete |
 | UI-01 | Phase 5 | Pending |
 | UI-02 | Phase 5 | Pending |

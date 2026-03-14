@@ -75,8 +75,8 @@ Plans:
 **Plans**: TBD
 
 Plans:
-- [ ] 04-01: Tabulated BRDF import, 2D CDF importance sampling, surface assignment
-- [ ] 04-02: Far-field angular detector with IES export, cylinder and prism solid body primitives
+- [x] 04-01: Tabulated BRDF import, 2D CDF importance sampling, surface assignment
+- [x] 04-02: Far-field angular detector with IES export, cylinder and prism solid body primitives
 
 ### Phase 5: UI Revamp
 **Goal**: Application has a professional dark-themed interface with dockable panels, toolbar, undo/redo, collapsible properties, enhanced heatmap with live simulation preview — matching the look and workflow of engineering tools like Blender and Fusion 360
@@ -107,5 +107,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Refractive Physics and LGP | 3/3 | Complete   | 2026-03-14 |
 | 2. Spectral Engine | 2/2 | Complete   | 2026-03-14 |
 | 3. Performance Acceleration | 2/2 | Complete   | 2026-03-14 |
-| 4. Advanced Materials and Geometry | 1/4 | In Progress|  |
+| 4. Advanced Materials and Geometry | 2/4 | In Progress|  |
 | 5. UI Revamp | 0/4 | Not Started | - |
