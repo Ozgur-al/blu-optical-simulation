@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-14T09:14:38.880Z"
+status: in-progress
+last_updated: "2026-03-14T09:21:21.844Z"
 progress:
-  total_phases: 2
+  total_phases: 4
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # Project State
@@ -23,28 +23,28 @@ See: .planning/PROJECT.md (updated 2026-03-14)
 ## Current Position
 
 Phase: 1 of 4 (Refractive Physics and LGP)
-Plan: 1 of 3 in current phase
+Plan: 2 of 3 in current phase
 Status: In progress
-Last activity: 2026-03-14 — Plan 01-01 complete (SolidBox + Fresnel/TIR physics)
+Last activity: 2026-03-14 — Plan 01-02 complete (SolidBox I/O + LGP builder + preset + KPI dashboard)
 
-Progress: [█░░░░░░░░░] 10%
+Progress: [██░░░░░░░░] 20%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 1
-- Average duration: 8 min
-- Total execution time: 0.13 hours
+- Total plans completed: 2
+- Average duration: 5.5 min
+- Total execution time: 0.18 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| Phase 01 | 1 | 8 min | 8 min |
+| Phase 01 | 2 | 11 min | 5.5 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (8 min, 39 tests)
-- Trend: —
+- Last 5 plans: 01-01 (8 min, 39 tests), 01-02 (3 min, 2 tasks, 4 files)
+- Trend: accelerating
 
 *Updated after each plan completion*
 
@@ -62,6 +62,8 @@ Recent decisions affecting current work:
 - [Phase 01]: Use on_into convention for Fresnel/Snell physics: oriented normal pointing INTO new medium for _refract_snell, flipped to on_back for reflection formula
 - [Phase 01]: SolidBox faces identified by '::' separator in Rectangle name — no new type needed, preserves surface API
 - [Phase 01]: Geometry-relative epsilon max(1e-6, min(dimensions)*1e-4) prevents TIR self-intersection in thin slabs
+- [Phase 01]: bottom_reflector uses optical_properties_name override instead of separate Material — keeps pmma for refractive index and lgp_bottom_reflector OpticalProperties for surface behavior
+- [Phase 01]: LGP KPI rows hidden (not removed) when no solid bodies present — avoids layout reflow in heatmap panel
 
 ### Pending Todos
 
@@ -77,5 +79,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-14
-Stopped at: Completed 01-01-PLAN.md (SolidBox + Fresnel/TIR physics engine)
+Stopped at: Completed 01-02-PLAN.md (SolidBox I/O + LGP builder + preset + KPI dashboard)
 Resume file: None
