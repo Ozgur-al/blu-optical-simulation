@@ -845,6 +845,47 @@ def _trace_single_source(project, source_name, base_seed):
     current_n = np.ones(n, dtype=float)
     escaped_flux = 0.0
 
+    # BVH setup for MP path
+    n_all_planes_mp = len(surfaces) + len(solid_faces)
+    use_bvh_mp = n_all_planes_mp >= _BVH_THRESHOLD
+    bvh_bounds_mp = bvh_meta_mp = bvh_n_nodes_mp = None
+    bvh_normals_mp = bvh_centers_mp = bvh_u_mp = bvh_v_mp = bvh_hw_mp = bvh_hh_mp = None
+    n_surf_planes_mp = len(surfaces)
+
+    if use_bvh_mp and n_all_planes_mp > 0:
+        all_plane_normals_mp = np.empty((n_all_planes_mp, 3), dtype=np.float64)
+        all_plane_centers_mp = np.empty((n_all_planes_mp, 3), dtype=np.float64)
+        all_plane_u_mp       = np.empty((n_all_planes_mp, 3), dtype=np.float64)
+        all_plane_v_mp       = np.empty((n_all_planes_mp, 3), dtype=np.float64)
+        all_plane_hw_mp      = np.empty(n_all_planes_mp, dtype=np.float64)
+        all_plane_hh_mp      = np.empty(n_all_planes_mp, dtype=np.float64)
+        for i, surf in enumerate(surfaces):
+            all_plane_normals_mp[i] = surf.normal
+            all_plane_centers_mp[i] = surf.center
+            all_plane_u_mp[i]       = surf.u_axis
+            all_plane_v_mp[i]       = surf.v_axis
+            all_plane_hw_mp[i]      = surf.size[0] / 2.0
+            all_plane_hh_mp[i]      = surf.size[1] / 2.0
+        for i, sface in enumerate(solid_faces):
+            j = n_surf_planes_mp + i
+            all_plane_normals_mp[j] = sface.normal
+            all_plane_centers_mp[j] = sface.center
+            all_plane_u_mp[j]       = sface.u_axis
+            all_plane_v_mp[j]       = sface.v_axis
+            all_plane_hw_mp[j]      = sface.size[0] / 2.0
+            all_plane_hh_mp[j]      = sface.size[1] / 2.0
+        aabbs_mp = compute_surface_aabbs(
+            all_plane_normals_mp, all_plane_centers_mp,
+            all_plane_u_mp, all_plane_v_mp, all_plane_hw_mp, all_plane_hh_mp,
+        )
+        bvh_bounds_mp, bvh_meta_mp, bvh_n_nodes_mp = build_bvh_flat(aabbs_mp)
+        bvh_normals_mp = all_plane_normals_mp
+        bvh_centers_mp = all_plane_centers_mp
+        bvh_u_mp       = all_plane_u_mp
+        bvh_v_mp       = all_plane_v_mp
+        bvh_hw_mp      = all_plane_hw_mp
+        bvh_hh_mp      = all_plane_hh_mp
+
     for _bounce in range(settings.max_bounces):
         if not alive.any():
             break
@@ -858,14 +899,46 @@ def _trace_single_source(project, source_name, base_seed):
         best_type = np.full(n_active, -1, dtype=int)
         best_obj = np.full(n_active, -1, dtype=int)
 
-        for si, surf in enumerate(surfaces):
-            t = _intersect_plane_accel(active_origins, active_dirs, surf.normal, surf.center,
-                                       surf.u_axis, surf.v_axis, surf.size)
-            closer = t < best_t
-            best_t[closer] = t[closer]
-            best_type[closer] = 0
-            best_obj[closer] = si
+        if use_bvh_mp:
+            bvh_t_mp, bvh_idx_mp = traverse_bvh_batch(
+                np.ascontiguousarray(active_origins, dtype=np.float64),
+                np.ascontiguousarray(active_dirs,   dtype=np.float64),
+                bvh_bounds_mp, bvh_meta_mp, bvh_n_nodes_mp,
+                bvh_normals_mp, bvh_centers_mp, bvh_u_mp, bvh_v_mp, bvh_hw_mp, bvh_hh_mp,
+                _EPSILON,
+            )
+            hit_mask_mp = bvh_idx_mp >= 0
+            for ri in np.where(hit_mask_mp)[0]:
+                idx = int(bvh_idx_mp[ri])
+                t_val = float(bvh_t_mp[ri])
+                if t_val < best_t[ri]:
+                    best_t[ri] = t_val
+                    if idx < n_surf_planes_mp:
+                        best_type[ri] = 0
+                        best_obj[ri] = idx
+                    else:
+                        best_type[ri] = 3
+                        best_obj[ri] = idx - n_surf_planes_mp
+        else:
+            for si, surf in enumerate(surfaces):
+                t = _intersect_plane_accel(active_origins, active_dirs, surf.normal, surf.center,
+                                           surf.u_axis, surf.v_axis, surf.size)
+                closer = t < best_t
+                best_t[closer] = t[closer]
+                best_type[closer] = 0
+                best_obj[closer] = si
 
+            # SolidBox face intersections (type 3)
+            for sfi, sface in enumerate(solid_faces):
+                t = _intersect_plane_accel(active_origins, active_dirs,
+                                           sface.normal, sface.center,
+                                           sface.u_axis, sface.v_axis, sface.size)
+                closer = t < best_t
+                best_t[closer] = t[closer]
+                best_type[closer] = 3
+                best_obj[closer] = sfi
+
+        # Detectors always tested separately
         for di, det in enumerate(detectors):
             t = _intersect_plane_accel(active_origins, active_dirs, det.normal, det.center,
                                        det.u_axis, det.v_axis, det.size)
@@ -873,16 +946,6 @@ def _trace_single_source(project, source_name, base_seed):
             best_t[closer] = t[closer]
             best_type[closer] = 1
             best_obj[closer] = di
-
-        # SolidBox face intersections (type 3)
-        for sfi, sface in enumerate(solid_faces):
-            t = _intersect_plane_accel(active_origins, active_dirs,
-                                       sface.normal, sface.center,
-                                       sface.u_axis, sface.v_axis, sface.size)
-            closer = t < best_t
-            best_t[closer] = t[closer]
-            best_type[closer] = 3
-            best_obj[closer] = sfi
 
         missed = best_t == np.inf
         if missed.any():
