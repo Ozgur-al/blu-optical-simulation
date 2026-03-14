@@ -24,8 +24,8 @@ Requirements for Phase 2 release. Each maps to roadmap phases.
 ### 3D Solid Geometry
 
 - [x] **GEOM-01**: User can create a box solid body with 6 faces, each with independent optical properties
-- [ ] **GEOM-02**: User can create cylinder solid body primitives
-- [ ] **GEOM-03**: User can create prism solid body primitives
+- [x] **GEOM-02**: User can create cylinder solid body primitives
+- [x] **GEOM-03**: User can create prism solid body primitives
 
 ### Performance
 
@@ -111,8 +111,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SPEC-04 | Phase 2 | Complete |
 | SPEC-05 | Phase 2 | Complete |
 | GEOM-01 | Phase 1 | Complete |
-| GEOM-02 | Phase 4 | Pending |
-| GEOM-03 | Phase 4 | Pending |
+| GEOM-02 | Phase 4 | Complete |
+| GEOM-03 | Phase 4 | Complete |
 | PERF-01 | Phase 3 | Complete |
 | PERF-02 | Phase 3 | Complete |
 | PERF-03 | Phase 3 | Complete |

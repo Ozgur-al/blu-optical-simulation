@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-03-14T21:17:00Z"
+last_updated: "2026-03-14T19:58:00Z"
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 15
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State
@@ -23,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-03-14)
 ## Current Position
 
 Phase: 4 of 5 (Advanced Materials and Geometry) — IN PROGRESS
-Plan: 1 of 4 in current phase — COMPLETE (SUMMARY backfilled 2026-03-14; plan 02 also complete)
-Status: Phase 4 Plan 01 SUMMARY created. BSDF engine complete: load_bsdf_csv, validate_bsdf, sample_bsdf, precompute_bsdf_cdfs, tracer dispatch, project I/O round-trip.
-Last activity: 2026-03-14 — Plan 04-01 SUMMARY created (bsdf_io.py, sample_bsdf, bsdf_profile_name on OpticalProperties/Material, bsdf_profiles on Project, tracer BSDF dispatch)
+Plan: 3 of 4 in current phase — COMPLETE
+Status: Phase 4 Plan 03 SUMMARY created. Cylinder/prism solid bodies complete: SolidCylinder, SolidPrism, analytic intersection, Fresnel/TIR dispatch, I/O round-trip, 3D viewport rendering.
+Last activity: 2026-03-14 — Plan 04-03 SUMMARY created (solid_body.py, tracer.py intersection, project_io.py, viewport_3d.py mesh rendering)
 
-Progress: [████████░░] 73%
+Progress: [████████░░] 77%
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Progress: [████████░░] 73%
 | Phase 03 P01 | 3.6 min | 2 tasks TDD | 6 files |
 | Phase 04 P01 | 5 min | 2 tasks TDD | 5 files |
 | Phase 04 P02 | 5 | 2 tasks | 5 files |
+| Phase 04 P03 | 5 min | 3 tasks | 6 files |
 | Phase 03-performance-acceleration P02 | 20 | 2 tasks | 7 files |
 
 ## Accumulated Context
@@ -102,6 +103,10 @@ Recent decisions affecting current work:
 - [Phase 04-01]: precompute_bsdf_cdfs called once at tracer init, keyed by profile name — avoids per-bounce CDF construction
 - [Phase 04-01]: BSDF dispatch bypasses ALL scalar optical behavior (reflectance, transmittance, is_diffuse, haze) when bsdf_profile_name is set
 - [Phase 04-01]: Stochastic reflect/transmit split: p_refl = refl_total / (refl_total + trans_total) per theta_in bin
+- [Phase 04-03]: CylinderSide per-hit radial normal computed at intersection point as (hit - center - proj*axis)/radius — required for correct Fresnel on curved surface
+- [Phase 04-03]: PrismCap polygon containment uses precomputed 2D edge normals in local u/v coords — avoids 3D cross-product per edge per ray in hot path
+- [Phase 04-03]: Prism side faces are standard Rectangle objects — reuses _intersect_plane_accel without a new intersection function
+- [Phase 04-03]: Geometry-relative epsilon max(1e-6, min(radius, length/2)*1e-4) for cylinder/prism prevents TIR self-intersection on thin shapes
 
 ### Roadmap Evolution
 
@@ -121,5 +126,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-14
-Stopped at: Completed 04-01-PLAN.md SUMMARY (BSDF engine: load_bsdf_csv, sample_bsdf, tracer dispatch, project I/O round-trip)
+Stopped at: Completed 04-03-PLAN.md SUMMARY (cylinder/prism solid bodies: analytic intersection, Fresnel/TIR dispatch, I/O round-trip, viewport mesh rendering)
 Resume file: None
