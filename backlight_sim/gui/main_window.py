@@ -27,6 +27,7 @@ from backlight_sim.gui.angular_distribution_panel import AngularDistributionPane
 from backlight_sim.gui.measurement_dialog import MeasurementDialog
 from backlight_sim.gui.plot_tab import PlotTab
 from backlight_sim.gui.receiver_3d import Receiver3DWidget
+from backlight_sim.gui.spectral_data_panel import SpectralDataPanel
 from backlight_sim.io.angular_distributions import merge_default_profiles
 
 
@@ -100,11 +101,14 @@ class MainWindow(QMainWindow):
         self._ang_dist.set_project(self._project)
         self._plot_tab = PlotTab()
         self._receiver_3d = Receiver3DWidget()
+        self._spectral_panel = SpectralDataPanel()
+        self._spectral_panel.set_project(self._project)
         self._center_tabs.addTab(self._viewport, "3D View")
         self._center_tabs.addTab(self._heatmap, "Heatmap")
         self._center_tabs.addTab(self._receiver_3d, "3D Receiver")
         self._center_tabs.addTab(self._plot_tab, "Plots")
         self._center_tabs.addTab(self._ang_dist, "Angular Dist.")
+        self._center_tabs.addTab(self._spectral_panel, "Spectral Data")
         main_split.addWidget(self._center_tabs)
 
         self._properties = PropertiesPanel()
@@ -226,6 +230,7 @@ class MainWindow(QMainWindow):
         self._tree.delete_requested.connect(self._delete_object)
         self._properties.properties_changed.connect(self._on_properties_changed)
         self._ang_dist.distributions_changed.connect(self._on_distributions_changed)
+        self._spectral_panel.spectral_data_changed.connect(self._mark_dirty)
 
     # ------------------------------------------------------------------
     # Dirty-flag & unsaved-changes guard
@@ -325,6 +330,7 @@ class MainWindow(QMainWindow):
         self._clear_selected_object()
         self._ang_dist.set_project(self._project)
         self._heatmap.set_project(self._project)
+        self._spectral_panel.set_project(self._project)
         self._properties.clear_selection()
         self._heatmap.clear()
         self._plot_tab.clear()
@@ -347,6 +353,8 @@ class MainWindow(QMainWindow):
             self._counter = {k: 0 for k in self._counter}
             self._clear_selected_object()
             self._ang_dist.set_project(self._project)
+            self._heatmap.set_project(self._project)
+            self._spectral_panel.set_project(self._project)
             self._properties.clear_selection()
             self._heatmap.clear()
             self._viewport.clear_ray_paths()
@@ -392,6 +400,7 @@ class MainWindow(QMainWindow):
         self._clear_selected_object()
         self._ang_dist.set_project(self._project)
         self._heatmap.set_project(self._project)
+        self._spectral_panel.set_project(self._project)
         self._properties.clear_selection()
         self._heatmap.clear()
         self._viewport.clear_ray_paths()
@@ -599,6 +608,7 @@ class MainWindow(QMainWindow):
         self._clear_selected_object()
         self._ang_dist.set_project(self._project)
         self._heatmap.set_project(self._project)
+        self._spectral_panel.set_project(self._project)
         self._properties.clear_selection()
         self._heatmap.clear()
         self._viewport.clear_ray_paths()
@@ -665,6 +675,7 @@ class MainWindow(QMainWindow):
         self._clear_selected_object()
         self._ang_dist.set_project(self._project)
         self._heatmap.set_project(self._project)
+        self._spectral_panel.set_project(self._project)
         self._properties.clear_selection()
         self._heatmap.clear()
         self._viewport.clear_ray_paths()
@@ -735,6 +746,7 @@ class MainWindow(QMainWindow):
         self._heatmap.update_results(result)
         self._plot_tab.update_results(result)
         self._receiver_3d.update_results(result)
+        self._spectral_panel.update_chromaticity(result)
         self._center_tabs.setCurrentWidget(self._heatmap)
         if result.ray_paths:
             self._viewport.show_ray_paths(result.ray_paths)

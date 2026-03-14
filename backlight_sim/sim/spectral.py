@@ -259,3 +259,300 @@ def spectral_grid_to_rgb(spectral_grid: np.ndarray, wavelengths: np.ndarray) -> 
 def spectral_bin_centers(n_bins: int = N_SPECTRAL_BINS) -> np.ndarray:
     """Return center wavelengths for spectral bins."""
     return np.linspace(LAMBDA_MIN, LAMBDA_MAX, n_bins)
+
+
+# -----------------------------------------------------------------------
+# CIE colorimetry helpers (XYZ, xy, u'v', CCT, color KPIs)
+# -----------------------------------------------------------------------
+
+def xyz_per_pixel(spectral_grid: np.ndarray, wavelengths: np.ndarray) -> np.ndarray:
+    """Convert spectral grid to CIE XYZ image.
+
+    Parameters
+    ----------
+    spectral_grid : np.ndarray, shape (ny, nx, n_bins)
+        Accumulated spectral flux per bin per pixel.
+    wavelengths : np.ndarray, shape (n_bins,)
+        Center wavelength for each bin in nm.
+
+    Returns
+    -------
+    np.ndarray, shape (ny, nx, 3)
+        CIE XYZ image.
+    """
+    n_bins = len(wavelengths)
+    # Build CIE XYZ weight matrix by interpolating the CMFs at each wavelength
+    xyz_weights = np.zeros((n_bins, 3), dtype=float)
+    for i, wl in enumerate(wavelengths):
+        xyz_weights[i, 0] = np.interp(wl, _CIE_LAMBDA, _CIE_X)
+        xyz_weights[i, 1] = np.interp(wl, _CIE_LAMBDA, _CIE_Y)
+        xyz_weights[i, 2] = np.interp(wl, _CIE_LAMBDA, _CIE_Z)
+    # Matrix multiply: (ny, nx, n_bins) @ (n_bins, 3) -> (ny, nx, 3)
+    return spectral_grid @ xyz_weights
+
+
+def xy_per_pixel(xyz: np.ndarray) -> np.ndarray:
+    """Compute CIE 1931 (x, y) chromaticity from XYZ image.
+
+    Parameters
+    ----------
+    xyz : np.ndarray, shape (ny, nx, 3)
+
+    Returns
+    -------
+    np.ndarray, shape (ny, nx, 2)  — (x, y) chromaticity per pixel
+    """
+    s = xyz[..., 0] + xyz[..., 1] + xyz[..., 2]  # X + Y + Z
+    s_safe = np.where(s > 0, s, 1.0)
+    x = xyz[..., 0] / s_safe
+    y = xyz[..., 1] / s_safe
+    # Mask zero-luminance pixels
+    x = np.where(s > 0, x, 0.0)
+    y = np.where(s > 0, y, 0.0)
+    return np.stack([x, y], axis=-1)
+
+
+def uv_per_pixel(xyz: np.ndarray) -> np.ndarray:
+    """Compute CIE 1976 u'v' chromaticity from XYZ image.
+
+    u' = 4X / (X + 15Y + 3Z)
+    v' = 9Y / (X + 15Y + 3Z)
+
+    Parameters
+    ----------
+    xyz : np.ndarray, shape (ny, nx, 3)
+
+    Returns
+    -------
+    np.ndarray, shape (ny, nx, 2)  — (u', v') per pixel
+    """
+    X = xyz[..., 0]
+    Y = xyz[..., 1]
+    Z = xyz[..., 2]
+    denom = X + 15.0 * Y + 3.0 * Z
+    denom_safe = np.where(denom > 0, denom, 1.0)
+    u = 4.0 * X / denom_safe
+    v = 9.0 * Y / denom_safe
+    u = np.where(denom > 0, u, 0.0)
+    v = np.where(denom > 0, v, 0.0)
+    return np.stack([u, v], axis=-1)
+
+
+# Robertson (1968) CCT isotherm table: (u, v, reciprocal_mired, slope)
+# CCTs from 1000 K to ~50000 K (reciprocal megaKelvins = mired).
+# Source: Robertson (1968) as reproduced in Wyszecki & Stiles "Color Science".
+_ROBERTSON_TABLE = np.array([
+    # u_i,      v_i,      t_i (10^6/K),  d_i (slope)
+    [0.18006,  0.26352,  -0.24341,   0],   # placeholder sentinel
+    [0.18066,  0.26589,  -0.24341,   0],
+    [0.18133,  0.26846,  -0.23764,   0],
+    [0.18208,  0.27119,  -0.20219,   0],
+    [0.18293,  0.27407,  -0.13338,   0],
+    [0.18388,  0.27709,  -0.04905,   0],
+    [0.18494,  0.28021,   0.04343,   0],
+    [0.18611,  0.28342,   0.13650,   0],
+    [0.18740,  0.28668,   0.22855,   0],
+    [0.18880,  0.28997,   0.31803,   0],
+    [0.19032,  0.29326,   0.40580,   0],
+    [0.19462,  0.30141,   0.59071,   0],
+    [0.19962,  0.30921,   0.73437,   0],
+    [0.20525,  0.31647,   0.85445,   0],
+    [0.21142,  0.32312,   0.95588,   0],
+    [0.21807,  0.32909,   1.04370,   0],
+    [0.22511,  0.33439,   1.12140,   0],
+    [0.23247,  0.33904,   1.19030,   0],
+    [0.24010,  0.34308,   1.25560,   0],
+    [0.24792,  0.34655,   1.31220,   0],
+    [0.25591,  0.34951,   1.36380,   0],
+    [0.26400,  0.35200,   1.41310,   0],
+    [0.27218,  0.35407,   1.46040,   0],
+    [0.28039,  0.35577,   1.50570,   0],
+    [0.28863,  0.35714,   1.54990,   0],
+    [0.29685,  0.35823,   1.59360,   0],
+    [0.30505,  0.35907,   1.63770,   0],
+    [0.31320,  0.35968,   1.68440,   0],
+    [0.32129,  0.36011,   1.73710,   0],
+    [0.32931,  0.36038,   1.80200,   0],
+    [0.33724,  0.36051,   1.88710,   0],
+], dtype=float)
+
+# Robertson CCT values in Kelvin corresponding to each row
+_ROBERTSON_CCT_K = np.array([
+    1000, 1050, 1100, 1150, 1200, 1250, 1300, 1350, 1400, 1450, 1500,
+    1600, 1700, 1800, 1900, 2000, 2100, 2200, 2300, 2400, 2500,
+    2600, 2700, 2800, 2900, 3000, 3100, 3200, 3300, 3400, 3500,
+], dtype=float)
+
+
+def cct_robertson(xy: np.ndarray) -> np.ndarray:
+    """Estimate CCT via Robertson's (1968) isotherm method.
+
+    Parameters
+    ----------
+    xy : np.ndarray, shape (..., 2)
+        CIE 1931 (x, y) chromaticity coordinates.
+
+    Returns
+    -------
+    np.ndarray, shape (...)
+        CCT in Kelvin. NaN for dark pixels (Y < 1e-10).
+        Values are clamped to [1000, 25000] K.
+    """
+    x = xy[..., 0]
+    y = xy[..., 1]
+
+    # Convert to CIE 1960 UCS (u, v) for Robertson isotherms
+    # u = 4x / (-2x + 12y + 3),  v = 6y / (-2x + 12y + 3)
+    denom = -2.0 * x + 12.0 * y + 3.0
+    denom_safe = np.where(denom != 0, denom, 1.0)
+    u = 4.0 * x / denom_safe
+    v = 6.0 * y / denom_safe
+
+    orig_shape = u.shape
+    u_flat = u.ravel()
+    v_flat = v.ravel()
+    n_pts = u_flat.shape[0]
+
+    # Robertson table: u_i, v_i, slope_i (t_i is in col 2, slope in col 3)
+    # We use 30 entries (skip first sentinel row for computation)
+    tbl = _ROBERTSON_TABLE  # shape (31, 4)
+    u_r = tbl[:, 0]
+    v_r = tbl[:, 1]
+    # Compute slopes from adjacent points
+    # slope = (v[i+1] - v[i]) / (u[i+1] - u[i])  for each isotherm
+    slopes = np.zeros(len(tbl), dtype=float)
+    for i in range(len(tbl) - 1):
+        du = u_r[i + 1] - u_r[i]
+        if abs(du) > 1e-10:
+            slopes[i] = (v_r[i + 1] - v_r[i]) / du
+        else:
+            slopes[i] = 1e6
+    slopes[-1] = slopes[-2]
+
+    cct_flat = np.full(n_pts, np.nan)
+
+    for pt in range(n_pts):
+        up = u_flat[pt]
+        vp = v_flat[pt]
+        # Skip dark pixels
+        if not (np.isfinite(up) and np.isfinite(vp)):
+            continue
+
+        # Compute Robertson distance d_i = (vp - v_i) - slope_i * (up - u_i)
+        d = (vp - v_r) - slopes * (up - u_r)
+
+        # Find first sign change
+        found = False
+        for i in range(len(d) - 1):
+            if np.isnan(d[i]) or np.isnan(d[i + 1]):
+                continue
+            if d[i] * d[i + 1] <= 0:
+                # Interpolate between isotherm i and i+1
+                di = abs(d[i])
+                di1 = abs(d[i + 1])
+                total = di + di1
+                if total < 1e-12:
+                    cct_val = _ROBERTSON_CCT_K[i]
+                else:
+                    # Interpolate in reciprocal Mired space
+                    t_i = 1e6 / _ROBERTSON_CCT_K[i]
+                    t_i1 = 1e6 / _ROBERTSON_CCT_K[min(i + 1, len(_ROBERTSON_CCT_K) - 1)]
+                    t_interp = t_i + (t_i1 - t_i) * di / total
+                    cct_val = 1e6 / t_interp if t_interp > 0 else _ROBERTSON_CCT_K[i]
+                cct_flat[pt] = float(np.clip(cct_val, 1000.0, 25000.0))
+                found = True
+                break
+
+        if not found:
+            # Use closest endpoint
+            closest = int(np.argmin(np.abs(d)))
+            cct_flat[pt] = float(np.clip(_ROBERTSON_CCT_K[min(closest, len(_ROBERTSON_CCT_K) - 1)], 1000.0, 25000.0))
+
+    return cct_flat.reshape(orig_shape)
+
+
+def compute_color_kpis(
+    spectral_grid: np.ndarray,
+    wavelengths: np.ndarray,
+) -> dict:
+    """Compute CIE color uniformity KPIs from a spectral detector grid.
+
+    Parameters
+    ----------
+    spectral_grid : np.ndarray, shape (ny, nx, n_bins)
+    wavelengths : np.ndarray, shape (n_bins,)
+
+    Returns
+    -------
+    dict with keys:
+        delta_ccx, delta_ccy : float   — max-min range of CIE 1931 x, y (full detector)
+        delta_uprime, delta_vprime : float  — max-min range of u', v' (full detector)
+        cct_avg : float  — luminance-weighted mean CCT (K)
+        cct_range : float  — max-min CCT range (K)
+        center_1_4, center_1_6, center_1_10 : dict  — same KPIs for center fractions
+    """
+    xyz = xyz_per_pixel(spectral_grid, wavelengths)   # (ny, nx, 3)
+    xy = xy_per_pixel(xyz)                              # (ny, nx, 2)
+    uv = uv_per_pixel(xyz)                              # (ny, nx, 2)
+    Y = xyz[..., 1]                                     # luminance (ny, nx)
+
+    def _kpis_for_region(xy_r, uv_r, Y_r):
+        mask = Y_r > 1e-10
+        if not np.any(mask):
+            return {
+                "delta_ccx": 0.0, "delta_ccy": 0.0,
+                "delta_uprime": 0.0, "delta_vprime": 0.0,
+                "cct_avg": float("nan"), "cct_range": 0.0,
+            }
+        x_vals = xy_r[..., 0][mask]
+        y_vals = xy_r[..., 1][mask]
+        u_vals = uv_r[..., 0][mask]
+        v_vals = uv_r[..., 1][mask]
+        cct_vals = cct_robertson(np.stack([x_vals, y_vals], axis=-1))
+        cct_valid = cct_vals[np.isfinite(cct_vals)]
+        Y_masked = Y_r[mask]
+        if len(cct_valid) > 0 and Y_masked.sum() > 0:
+            w = Y_masked[np.isfinite(cct_vals)]
+            w_sum = w.sum()
+            cct_avg = float(np.dot(cct_valid, w) / w_sum) if w_sum > 0 else float(np.mean(cct_valid))
+            cct_range = float(cct_valid.max() - cct_valid.min())
+        else:
+            cct_avg = float("nan")
+            cct_range = 0.0
+        return {
+            "delta_ccx": float(x_vals.max() - x_vals.min()),
+            "delta_ccy": float(y_vals.max() - y_vals.min()),
+            "delta_uprime": float(u_vals.max() - u_vals.min()),
+            "delta_vprime": float(v_vals.max() - v_vals.min()),
+            "cct_avg": cct_avg,
+            "cct_range": cct_range,
+        }
+
+    full_kpis = _kpis_for_region(xy, uv, Y)
+    result = {
+        "delta_ccx": full_kpis["delta_ccx"],
+        "delta_ccy": full_kpis["delta_ccy"],
+        "delta_uprime": full_kpis["delta_uprime"],
+        "delta_vprime": full_kpis["delta_vprime"],
+        "cct_avg": full_kpis["cct_avg"],
+        "cct_range": full_kpis["cct_range"],
+    }
+
+    ny, nx = xy.shape[:2]
+    for label, fraction in [("center_1_4", 0.25), ("center_1_6", 1 / 6), ("center_1_10", 0.10)]:
+        f_side = float(np.sqrt(fraction))
+        cy, cx = ny // 2, nx // 2
+        half_y = max(1, int(ny * f_side / 2))
+        half_x = max(1, int(nx * f_side / 2))
+        xy_crop = xy[cy - half_y: cy + half_y, cx - half_x: cx + half_x]
+        uv_crop = uv[cy - half_y: cy + half_y, cx - half_x: cx + half_x]
+        Y_crop  = Y[cy - half_y: cy + half_y, cx - half_x: cx + half_x]
+        region_kpis = _kpis_for_region(xy_crop, uv_crop, Y_crop)
+        result[label] = {
+            "delta_ccx":    region_kpis["delta_ccx"],
+            "delta_ccy":    region_kpis["delta_ccy"],
+            "delta_uprime": region_kpis["delta_uprime"],
+            "delta_vprime": region_kpis["delta_vprime"],
+        }
+
+    return result
