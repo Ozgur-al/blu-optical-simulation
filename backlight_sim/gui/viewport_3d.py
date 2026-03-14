@@ -401,7 +401,7 @@ class Viewport3D(QWidget):
             vertexes=verts_flat.astype(np.float32),
             faces=faces,
             faceColors=colors.astype(np.float32),
-            smooth=True,
+            smooth=False,
             drawEdges=False,
         )
         mesh.setGLOptions("translucent")

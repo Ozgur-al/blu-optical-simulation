@@ -1228,12 +1228,13 @@ class SphereDetectorForm(QWidget):
             "near_field: bins by hit position on sphere\n"
             "far_field: bins by ray direction; produces candela distribution"
         )
+        self._radius_label = QLabel("Radius:")
         fl.addRow(QLabel("<b>Sphere Detector</b>"))
         fl.addRow("Name:", self._name)
         fl.addRow("Center X:", self._cx)
         fl.addRow("Center Y:", self._cy)
         fl.addRow("Center Z:", self._cz)
-        fl.addRow("Radius:", self._radius)
+        fl.addRow(self._radius_label, self._radius)
         fl.addRow("Phi bins:", self._n_phi)
         fl.addRow("Theta bins:", self._n_theta)
         fl.addRow("Mode:", self._mode)
@@ -1244,7 +1245,13 @@ class SphereDetectorForm(QWidget):
         self._n_phi.valueChanged.connect(self._apply)
         self._n_theta.valueChanged.connect(self._apply)
         self._mode.currentIndexChanged.connect(self._apply)
+        self._mode.currentIndexChanged.connect(self._update_mode_visibility)
         self._name.editingFinished.connect(self._apply)
+
+    def _update_mode_visibility(self):
+        is_farfield = self._mode.currentText() == "far_field"
+        self._radius_label.setVisible(not is_farfield)
+        self._radius.setVisible(not is_farfield)
 
     def load(self, det: SphereDetector):
         self._loading = True
@@ -1265,6 +1272,7 @@ class SphereDetectorForm(QWidget):
             self._mode.setCurrentIndex(idx)
         self._loading = False
         del blockers
+        self._update_mode_visibility()
 
     def _apply(self):
         if self._det is None or self._loading:

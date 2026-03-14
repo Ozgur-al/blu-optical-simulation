@@ -63,6 +63,8 @@ class FarFieldPanel(QWidget):
         self._plot.setLabel("bottom", "cd (X)")
         self._plot.setLabel("left", "cd (Z)")
         self._plot.showGrid(x=True, y=True, alpha=0.3)
+        self._plot.setMouseEnabled(False, False)
+        self._plot.setMenuEnabled(False)
         self._curves: dict[str, pg.PlotDataItem] = {}
         self._curve_items: dict[str, pg.PlotDataItem] = {}
         left_vbox.addWidget(self._plot, 1)
