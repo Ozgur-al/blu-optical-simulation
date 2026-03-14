@@ -10,7 +10,7 @@ Requirements for Phase 2 release. Each maps to roadmap phases.
 ### Edge-Lit / LGP
 
 - [ ] **LGP-01**: User can define an LGP slab as a solid box with independent optical properties per face
-- [ ] **LGP-02**: Tracer computes Snell's law refraction, Fresnel reflection/transmission, and TIR at dielectric interfaces
+- [x] **LGP-02**: Tracer computes Snell's law refraction, Fresnel reflection/transmission, and TIR at dielectric interfaces
 - [ ] **LGP-03**: User can see edge coupling efficiency (flux-through-edge / total-emitted) as a KPI after simulation
 
 ### Spectral Simulation
@@ -23,7 +23,7 @@ Requirements for Phase 2 release. Each maps to roadmap phases.
 
 ### 3D Solid Geometry
 
-- [ ] **GEOM-01**: User can create a box solid body with 6 faces, each with independent optical properties
+- [x] **GEOM-01**: User can create a box solid body with 6 faces, each with independent optical properties
 - [ ] **GEOM-02**: User can create cylinder solid body primitives
 - [ ] **GEOM-03**: User can create prism solid body primitives
 
@@ -92,14 +92,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | LGP-01 | Phase 1 | Pending |
-| LGP-02 | Phase 1 | Pending |
+| LGP-02 | Phase 1 | Complete |
 | LGP-03 | Phase 1 | Pending |
 | SPEC-01 | Phase 2 | Pending |
 | SPEC-02 | Phase 2 | Pending |
 | SPEC-03 | Phase 2 | Pending |
 | SPEC-04 | Phase 2 | Pending |
 | SPEC-05 | Phase 2 | Pending |
-| GEOM-01 | Phase 1 | Pending |
+| GEOM-01 | Phase 1 | Complete |
 | GEOM-02 | Phase 4 | Pending |
 | GEOM-03 | Phase 4 | Pending |
 | PERF-01 | Phase 3 | Pending |
