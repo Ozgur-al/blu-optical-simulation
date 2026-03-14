@@ -6,12 +6,12 @@ import datetime
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtWidgets import (
-    QMainWindow, QSplitter, QTabWidget,
+    QMainWindow,
     QProgressBar, QStatusBar, QMessageBox, QFileDialog, QPushButton,
-    QDockWidget, QTextEdit, QLabel,
+    QDockWidget, QTextEdit, QLabel, QToolBar,
 )
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QActionGroup, QKeySequence
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSettings, QSize
+from PySide6.QtGui import QActionGroup, QKeySequence, QAction, QShortcut
 
 from backlight_sim.core.project_model import Project
 from backlight_sim.core.geometry import Rectangle
@@ -88,7 +88,10 @@ class MainWindow(QMainWindow):
 
         self._setup_ui()
         self._setup_menu()
+        self._setup_toolbar()
+        self._setup_shortcuts()
         self._connect_signals()
+        self._restore_layout()
         self._refresh_all()
 
         # Eager JIT warmup: triggers LLVM compilation so first simulation runs at full speed
@@ -108,54 +111,91 @@ class MainWindow(QMainWindow):
             "absorber", "absorber", reflectance=0.0, absorption=1.0)
 
     def _setup_ui(self):
-        main_split = QSplitter(Qt.Orientation.Horizontal)
-        self.setCentralWidget(main_split)
+        # ---- Central widget: 3D viewport (always visible, never dockable) ----
+        self._viewport = Viewport3D()
+        self.setCentralWidget(self._viewport)
 
+        # ---- Create all panels ----
         self._tree = ObjectTree()
         self._tree.setMinimumWidth(180)
-        main_split.addWidget(self._tree)
 
-        self._center_tabs = QTabWidget()
-        self._viewport = Viewport3D()
         self._heatmap = HeatmapPanel()
         self._heatmap.set_project(self._project)
+
         self._ang_dist = AngularDistributionPanel()
         self._ang_dist.set_project(self._project)
+
         self._plot_tab = PlotTab()
         self._receiver_3d = Receiver3DWidget()
+
         self._spectral_panel = SpectralDataPanel()
         self._spectral_panel.set_project(self._project)
+
         self._bsdf_panel = BSDFPanel()
         self._bsdf_panel.set_project(self._project)
+
         self._far_field_panel = FarFieldPanel()
-        self._center_tabs.addTab(self._viewport, "3D View")
-        self._center_tabs.addTab(self._heatmap, "Heatmap")
-        self._center_tabs.addTab(self._far_field_panel, "Far-field")
-        self._center_tabs.addTab(self._receiver_3d, "3D Receiver")
-        self._center_tabs.addTab(self._plot_tab, "Plots")
-        self._center_tabs.addTab(self._ang_dist, "Angular Dist.")
-        self._center_tabs.addTab(self._spectral_panel, "Spectral Data")
-        self._center_tabs.addTab(self._bsdf_panel, "BSDF")
-        main_split.addWidget(self._center_tabs)
 
         self._properties = PropertiesPanel()
-        main_split.addWidget(self._properties)
-        main_split.setSizes([200, 820, 300])
 
-        # ---- log dock ----
+        _dock_features = (
+            QDockWidget.DockWidgetFeature.DockWidgetMovable |
+            QDockWidget.DockWidgetFeature.DockWidgetFloatable |
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+
+        def _make_dock(title, obj_name, widget):
+            dock = QDockWidget(title)
+            dock.setObjectName(obj_name)
+            dock.setWidget(widget)
+            dock.setFeatures(_dock_features)
+            return dock
+
+        # ---- Left area: Scene tree ----
+        self._tree_dock = _make_dock("Scene", "scene_dock", self._tree)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._tree_dock)
+
+        # ---- Right area: Properties (separate, not tabbed with result panels) ----
+        self._props_dock = _make_dock("Properties", "properties_dock", self._properties)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._props_dock)
+
+        # ---- Right area: Result + analysis panels (tabbed together) ----
+        self._heatmap_dock   = _make_dock("Heatmap",      "heatmap_dock",   self._heatmap)
+        self._farfield_dock  = _make_dock("Far-field",    "farfield_dock",  self._far_field_panel)
+        self._receiver3d_dock = _make_dock("3D Receiver", "receiver3d_dock", self._receiver_3d)
+        self._plots_dock     = _make_dock("Plots",        "plots_dock",     self._plot_tab)
+        self._angdist_dock   = _make_dock("Angular Dist.", "angdist_dock",  self._ang_dist)
+        self._spectral_dock  = _make_dock("Spectral Data", "spectral_dock", self._spectral_panel)
+        self._bsdf_dock      = _make_dock("BSDF",         "bsdf_dock",      self._bsdf_panel)
+
+        # Add all result docks to right area, then tabify so they share space
+        for dock in (self._heatmap_dock, self._farfield_dock, self._receiver3d_dock,
+                     self._plots_dock, self._angdist_dock, self._spectral_dock, self._bsdf_dock):
+            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+
+        # Tabify result panels together (first added becomes base)
+        self.tabifyDockWidget(self._heatmap_dock, self._farfield_dock)
+        self.tabifyDockWidget(self._farfield_dock, self._receiver3d_dock)
+        self.tabifyDockWidget(self._receiver3d_dock, self._plots_dock)
+        self.tabifyDockWidget(self._plots_dock, self._angdist_dock)
+        self.tabifyDockWidget(self._angdist_dock, self._spectral_dock)
+        self.tabifyDockWidget(self._spectral_dock, self._bsdf_dock)
+
+        # Show heatmap tab by default
+        self._heatmap_dock.raise_()
+
+        # ---- Bottom area: Log dock ----
         self._log_edit = QTextEdit()
         self._log_edit.setReadOnly(True)
         self._log_edit.setMaximumHeight(140)
-        self._log_edit.setStyleSheet("font-family: monospace; font-size: 11px;")
-        log_dock = QDockWidget("Log")
-        log_dock.setWidget(self._log_edit)
-        log_dock.setFeatures(
+        self._log_dock = _make_dock("Log", "log_dock", self._log_edit)
+        self._log_dock.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetMovable |
             QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, log_dock)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._log_dock)
 
-        # ---- convergence dock ----
+        # ---- Bottom area: Convergence dock (hidden by default) ----
         self._conv_plot = pg.PlotWidget()
         self._conv_plot.setLabel("left", "CV", units="%")
         self._conv_plot.setLabel("bottom", "Rays traced")
@@ -164,6 +204,7 @@ class MainWindow(QMainWindow):
         self._conv_plot.showGrid(x=True, y=True, alpha=0.3)
         self._conv_plot.addLegend()
         self._conv_dock = QDockWidget("Convergence")
+        self._conv_dock.setObjectName("convergence_dock")
         self._conv_dock.setWidget(self._conv_plot)
         self._conv_dock.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetMovable |
@@ -172,6 +213,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._conv_dock)
         self._conv_dock.hide()
 
+        # ---- Status bar ----
         status = QStatusBar()
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
@@ -186,9 +228,9 @@ class MainWindow(QMainWindow):
         # JIT status indicator
         self._jit_label = QLabel("JIT: Active" if _NUMBA_AVAILABLE else "JIT: Off")
         if _NUMBA_AVAILABLE:
-            self._jit_label.setStyleSheet("color: green; font-weight: bold; padding: 0 6px;")
+            self._jit_label.setStyleSheet("color: #00bcd4; font-weight: bold; padding: 0 6px;")
         else:
-            self._jit_label.setStyleSheet("color: grey; padding: 0 6px;")
+            self._jit_label.setStyleSheet("color: #888888; padding: 0 6px;")
 
         status.addWidget(self._jit_label)
         status.addPermanentWidget(self._run_btn)
@@ -200,18 +242,18 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
 
         fm = mb.addMenu("&File")
-        act = fm.addAction("New Project",    self._new_project)
-        act.setShortcut(QKeySequence.StandardKey.New)
-        act = fm.addAction("Open...",        self._open_project)
-        act.setShortcut(QKeySequence.StandardKey.Open)
-        act = fm.addAction("Save",           self._save_project)
-        act.setShortcut(QKeySequence.StandardKey.Save)
-        act = fm.addAction("Save As...",     self._save_project_as)
+        self._new_action = fm.addAction("New Project", self._new_project)
+        self._new_action.setShortcut(QKeySequence.StandardKey.New)
+        self._open_action = fm.addAction("Open...", self._open_project)
+        self._open_action.setShortcut(QKeySequence.StandardKey.Open)
+        self._save_action = fm.addAction("Save", self._save_project)
+        self._save_action.setShortcut(QKeySequence.StandardKey.Save)
+        act = fm.addAction("Save As...", self._save_project_as)
         act.setShortcut(QKeySequence.StandardKey.SaveAs)
         fm.addSeparator()
         fm.addAction("Clone as Variant...", self._clone_as_variant)
         fm.addSeparator()
-        act = fm.addAction("Exit",           self.close)
+        act = fm.addAction("Exit", self.close)
         act.setShortcut(QKeySequence.StandardKey.Quit)
 
         pm = mb.addMenu("&Presets")
@@ -237,11 +279,11 @@ class MainWindow(QMainWindow):
         self._refresh_history_menu()
 
         sm = mb.addMenu("&Simulation")
-        sm.addAction("Settings",       self._show_settings)
-        act = sm.addAction("Run",            self._run_simulation)
-        act.setShortcut(QKeySequence("F5"))
-        act = sm.addAction("Cancel",         self._cancel_simulation)
-        act.setShortcut(QKeySequence("Escape"))
+        sm.addAction("Settings", self._show_settings)
+        self._run_action = sm.addAction("Run", self._run_simulation)
+        self._run_action.setShortcut(QKeySequence("F5"))
+        self._cancel_action = sm.addAction("Cancel", self._cancel_simulation)
+        self._cancel_action.setShortcut(QKeySequence("Escape"))
         sm.addSeparator()
         sm.addAction("Parameter Sweep...", self._open_parameter_sweep)
 
@@ -272,9 +314,51 @@ class MainWindow(QMainWindow):
         ):
             preset_menu.addAction(label, lambda p=preset: self._set_view_preset(p))
 
+        # Panel visibility toggles — dock.toggleViewAction() returns QAction that
+        # is automatically checked/unchecked when the dock is shown/hidden.
+        vm.addSeparator()
+        panels_menu = vm.addMenu("Panels")
+        for dock in (
+            self._tree_dock, self._props_dock, self._heatmap_dock,
+            self._farfield_dock, self._receiver3d_dock, self._plots_dock,
+            self._angdist_dock, self._spectral_dock, self._bsdf_dock,
+            self._log_dock, self._conv_dock,
+        ):
+            panels_menu.addAction(dock.toggleViewAction())
+
         tm = mb.addMenu("&Tools")
         tm.addAction("Measure...", self._open_measure_dialog)
         tm.addAction("LED Layout Editor...", self._open_led_layout)
+
+    def _setup_toolbar(self):
+        """Create the main toolbar with icon+text action buttons."""
+        toolbar = QToolBar("Main")
+        toolbar.setObjectName("main_toolbar")
+        toolbar.setIconSize(QSize(20, 20))
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
+
+        # File actions (reuse actions created in _setup_menu)
+        toolbar.addAction(self._new_action)
+        toolbar.addAction(self._open_action)
+        toolbar.addAction(self._save_action)
+        toolbar.addSeparator()
+
+        # Simulation actions
+        toolbar.addAction(self._run_action)
+        toolbar.addAction(self._cancel_action)
+        toolbar.addSeparator()
+
+        # Quick-add buttons
+        for label, group in (
+            ("Add LED",      "Sources"),
+            ("Add Surface",  "Surfaces"),
+            ("Add Detector", "Detectors"),
+            ("Add SolidBox", "Solid Bodies:box"),
+        ):
+            act = QAction(label, self)
+            act.triggered.connect(lambda _=False, g=group: self._add_object(g))
+            toolbar.addAction(act)
 
     def _connect_signals(self):
         self._tree.object_selected.connect(self._on_object_selected)
@@ -285,6 +369,38 @@ class MainWindow(QMainWindow):
         self._ang_dist.distributions_changed.connect(self._on_distributions_changed)
         self._spectral_panel.spectral_data_changed.connect(self._mark_dirty)
         self._bsdf_panel.bsdf_changed.connect(self._on_bsdf_changed)
+
+    def _setup_shortcuts(self):
+        """Register application-wide keyboard shortcuts."""
+        # Ctrl+R: run simulation
+        QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(self._run_simulation)
+        # Delete: delete selected object
+        QShortcut(QKeySequence("Delete"), self).activated.connect(self._delete_selected)
+
+    def _delete_selected(self):
+        """Delete the currently selected object (Delete key shortcut)."""
+        if self._selected_group and self._selected_name:
+            self._delete_object(self._selected_group, self._selected_name)
+
+    # ------------------------------------------------------------------
+    # Layout persistence via QSettings
+    # ------------------------------------------------------------------
+
+    def _save_layout(self):
+        """Persist window geometry and dock/toolbar state to QSettings."""
+        settings = QSettings("BluOptical", "BluSim")
+        settings.setValue("geometry", self.saveGeometry())
+        settings.setValue("windowState", self.saveState())
+
+    def _restore_layout(self):
+        """Restore window geometry and dock/toolbar state from QSettings."""
+        settings = QSettings("BluOptical", "BluSim")
+        geom = settings.value("geometry")
+        state = settings.value("windowState")
+        if geom is not None:
+            self.restoreGeometry(geom)
+        if state is not None:
+            self.restoreState(state)
 
     # ------------------------------------------------------------------
     # Dirty-flag & unsaved-changes guard
@@ -325,6 +441,7 @@ class MainWindow(QMainWindow):
         if not self._maybe_save():
             event.ignore()
             return
+        self._save_layout()
         event.accept()
 
     def _log(self, msg: str):
@@ -888,7 +1005,9 @@ class MainWindow(QMainWindow):
                         pass
                     break
 
-        self._center_tabs.setCurrentWidget(self._heatmap)
+        # Show and raise the heatmap dock after simulation completes
+        self._heatmap_dock.show()
+        self._heatmap_dock.raise_()
         if result.ray_paths:
             self._viewport.show_ray_paths(result.ray_paths)
 

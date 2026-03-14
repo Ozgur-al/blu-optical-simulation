@@ -15,6 +15,8 @@ class Viewport3D(QWidget):
 
         self._view = gl.GLViewWidget()
         self._view.setCameraPosition(distance=180, elevation=30, azimuth=45)
+        # GLViewWidget uses OpenGL rendering and ignores QSS — set background explicitly
+        self._view.setBackgroundColor(30, 30, 30, 255)
         layout.addWidget(self._view)
 
         grid = gl.GLGridItem()
