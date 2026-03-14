@@ -842,6 +842,141 @@ def test_simulation_deterministic_with_jit():
 
 
 # ------------------------------------------------------------------
+# Phase 4 — Far-field detector (04-02) tests
+# ------------------------------------------------------------------
+
+
+def test_sphere_detector_defaults_to_near_field():
+    """SphereDetector.mode should default to 'near_field' for backward compat."""
+    from backlight_sim.core.detectors import SphereDetector
+    sd = SphereDetector("test", np.array([0.0, 0.0, 0.0]))
+    assert sd.mode == "near_field"
+
+
+def test_sphere_detector_result_candela_grid_default_none():
+    """SphereDetectorResult.candela_grid should default to None."""
+    from backlight_sim.core.detectors import SphereDetectorResult
+    grid = np.zeros((18, 36))
+    sdr = SphereDetectorResult("test", grid)
+    assert sdr.candela_grid is None
+
+
+def test_farfield_accumulation_uses_ray_direction():
+    """Far-field: two rays with the same direction but different origins should land in the same bin."""
+    from backlight_sim.core.detectors import SphereDetector, SphereDetectorResult
+    from backlight_sim.sim.tracer import _accumulate_sphere_farfield
+
+    sd = SphereDetector("sph", np.array([0.0, 0.0, 0.0]), radius=100.0,
+                        resolution=(36, 18))
+    sd.mode = "far_field"
+    n_phi, n_theta = sd.resolution
+    result = SphereDetectorResult("sph", np.zeros((n_theta, n_phi)))
+
+    # Two rays with the same direction (pointing -Z) but originating from different positions
+    direction = np.array([[0.0, 0.0, -1.0], [0.0, 0.0, -1.0]])
+    weights = np.array([1.0, 1.0])
+    _accumulate_sphere_farfield(sd, result, direction, weights)
+
+    # Both should be in the same bin (south pole region: outgoing direction = +Z after negation)
+    nonzero = np.argwhere(result.grid > 0)
+    assert len(nonzero) == 1, (
+        f"Far-field should accumulate in 1 bin, got {len(nonzero)} nonzero bins"
+    )
+    assert result.grid.sum() == pytest.approx(2.0)
+
+
+def test_farfield_candela_computation_solid_angle_normalization():
+    """compute_farfield_candela: candela = flux / solid_angle_per_bin."""
+    from backlight_sim.core.detectors import SphereDetector, SphereDetectorResult
+    from backlight_sim.sim.tracer import compute_farfield_candela
+
+    n_phi, n_theta = 36, 18
+    sd = SphereDetector("sph", np.array([0.0, 0.0, 0.0]), resolution=(n_phi, n_theta))
+    sd.mode = "far_field"
+
+    # Uniform flux in all bins
+    flux_per_bin = 1.0
+    grid = np.full((n_theta, n_phi), flux_per_bin)
+    result = SphereDetectorResult("sph", grid)
+
+    compute_farfield_candela(sd, result)
+
+    assert result.candela_grid is not None
+    assert result.candela_grid.shape == (n_theta, n_phi)
+    # Mid-latitude bin (theta ~pi/2): sin(theta) ~ 1, solid_angle ~ (pi/18) * (2pi/36) * 1 ~ 0.0968
+    mid_row = n_theta // 2
+    theta_c = (mid_row + 0.5) * np.pi / n_theta
+    expected_solid_angle = (np.pi / n_theta) * (2.0 * np.pi / n_phi) * np.sin(theta_c)
+    expected_cd = flux_per_bin / expected_solid_angle
+    assert result.candela_grid[mid_row, 0] == pytest.approx(expected_cd, rel=1e-4)
+
+
+def test_farfield_candela_no_division_by_zero_at_poles():
+    """compute_farfield_candela: pole bins must not produce inf/nan."""
+    from backlight_sim.core.detectors import SphereDetector, SphereDetectorResult
+    from backlight_sim.sim.tracer import compute_farfield_candela
+
+    n_phi, n_theta = 36, 18
+    sd = SphereDetector("sph", np.array([0.0, 0.0, 0.0]), resolution=(n_phi, n_theta))
+    sd.mode = "far_field"
+
+    grid = np.ones((n_theta, n_phi))
+    result = SphereDetectorResult("sph", grid)
+
+    compute_farfield_candela(sd, result)
+
+    assert np.isfinite(result.candela_grid).all(), "candela_grid has inf/nan at poles"
+
+
+def test_sphere_detector_mode_backward_compat_serialization():
+    """Old project JSON without 'mode' key loads with mode='near_field'."""
+    from backlight_sim.io.project_io import save_project, load_project
+    from backlight_sim.core.detectors import SphereDetector
+    import tempfile, os, json
+
+    p = Project(name="compat_test")
+    p.sphere_detectors.append(
+        SphereDetector("sph1", np.array([0.0, 0.0, 0.0]), radius=5.0)
+    )
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
+        path = f.name
+    try:
+        save_project(p, path)
+        # Patch the JSON to remove "mode" key (simulate old project file)
+        data = json.loads(open(path).read())
+        for sd in data["sphere_detectors"]:
+            sd.pop("mode", None)
+        open(path, "w").write(json.dumps(data))
+        # Now load
+        loaded = load_project(path)
+        assert loaded.sphere_detectors[0].mode == "near_field"
+    finally:
+        os.unlink(path)
+
+
+def test_farfield_simulation_end_to_end():
+    """Full simulation with far-field sphere detector produces candela_grid."""
+    from backlight_sim.core.detectors import SphereDetector
+
+    p = Project(name="farfield_e2e")
+    p.sources.append(PointSource("src1", np.array([0.0, 0.0, 0.0]),
+                                  flux=1000.0, distribution="isotropic"))
+    sd = SphereDetector("sph1", np.array([0.0, 0.0, 0.0]),
+                        radius=50.0, resolution=(36, 18))
+    sd.mode = "far_field"
+    p.sphere_detectors.append(sd)
+    p.settings = SimulationSettings(rays_per_source=2000, max_bounces=1,
+                                     energy_threshold=0.001, random_seed=42)
+    result = RayTracer(p).run()
+    sdr = result.sphere_detectors["sph1"]
+    assert sdr.total_hits > 0
+    assert sdr.total_flux > 0
+    assert sdr.candela_grid is not None
+    assert np.isfinite(sdr.candela_grid).all()
+    assert sdr.candela_grid.sum() > 0
+
+
+# ------------------------------------------------------------------
 # Phase 3 Plan 02 — BVH acceleration tests
 # ------------------------------------------------------------------
 
@@ -1015,3 +1150,115 @@ def test_bvh_simulation_same_result_as_bruteforce():
     det = result.detectors["top_detector"]
     assert det.total_hits > 0, "BVH path produced zero hits"
     assert det.total_flux > 0, "BVH path produced zero flux"
+
+
+# ------------------------------------------------------------------
+# Phase 4 Plan 03 — SolidCylinder and SolidPrism dataclass tests
+# ------------------------------------------------------------------
+
+
+def test_solid_cylinder_face_count_and_names():
+    """SolidCylinder.get_faces() returns 3 face objects with correct :: naming."""
+    from backlight_sim.core.solid_body import SolidCylinder, CYLINDER_FACE_NAMES
+    cyl = SolidCylinder("cyl1", center=[0, 0, 0], axis=[0, 0, 1], radius=5.0, length=10.0)
+    faces = cyl.get_faces()
+    assert len(faces) == 3
+    face_ids = {f.name.split("::", 1)[1] for f in faces}
+    assert face_ids == {"top_cap", "bottom_cap", "side"}
+    for f in faces:
+        assert f.name.startswith("cyl1::")
+    assert set(CYLINDER_FACE_NAMES) == {"top_cap", "bottom_cap", "side"}
+
+
+def test_solid_cylinder_cap_normals_outward():
+    """SolidCylinder cap normals point outward along axis direction."""
+    from backlight_sim.core.solid_body import SolidCylinder
+    cyl = SolidCylinder("cyl2", center=[1, 2, 3], axis=[0, 0, 1], radius=5.0, length=10.0)
+    faces = {f.name.split("::", 1)[1]: f for f in cyl.get_faces()}
+    # top cap normal should be in +axis direction
+    top_dot = float(np.dot(faces["top_cap"].normal, cyl.axis))
+    assert top_dot > 0.9, f"top_cap normal should align with axis, got dot={top_dot}"
+    # bottom cap normal should be in -axis direction
+    bot_dot = float(np.dot(faces["bottom_cap"].normal, cyl.axis))
+    assert bot_dot < -0.9, f"bottom_cap normal should oppose axis, got dot={bot_dot}"
+
+
+def test_solid_cylinder_face_optics_propagates():
+    """SolidCylinder with face_optics={'side': 'coat'} propagates to side face."""
+    from backlight_sim.core.solid_body import SolidCylinder
+    cyl = SolidCylinder("c", [0, 0, 0], [0, 0, 1], 5, 10,
+                        face_optics={"side": "my_coating"})
+    faces = {f.name.split("::", 1)[1]: f for f in cyl.get_faces()}
+    assert faces["side"].optical_properties_name == "my_coating"
+    assert faces["top_cap"].optical_properties_name == ""
+    assert faces["bottom_cap"].optical_properties_name == ""
+
+
+def test_solid_prism_triangle_face_count():
+    """SolidPrism(n_sides=3) get_faces() returns 5 objects (2 caps + 3 sides)."""
+    from backlight_sim.core.solid_body import SolidPrism
+    prism = SolidPrism("prism3", center=[0, 0, 0], axis=[0, 0, 1],
+                       n_sides=3, circumscribed_radius=5.0, length=10.0)
+    faces = prism.get_faces()
+    assert len(faces) == 5
+
+
+def test_solid_prism_hexagon_face_count():
+    """SolidPrism(n_sides=6) get_faces() returns 8 objects (2 caps + 6 sides)."""
+    from backlight_sim.core.solid_body import SolidPrism
+    prism = SolidPrism("prism6", center=[0, 0, 0], axis=[0, 0, 1],
+                       n_sides=6, circumscribed_radius=5.0, length=10.0)
+    faces = prism.get_faces()
+    assert len(faces) == 8
+
+
+def test_solid_prism_side_normals_outward():
+    """SolidPrism side face normals point outward from prism center."""
+    from backlight_sim.core.solid_body import SolidPrism
+    prism = SolidPrism("prism4", center=[0, 0, 5], axis=[0, 0, 1],
+                       n_sides=4, circumscribed_radius=5.0, length=10.0)
+    faces = prism.get_faces()
+    # Side faces are Rectangles; filter by name pattern side_N
+    side_faces = [f for f in faces if "side_" in f.name]
+    assert len(side_faces) == 4
+    for face in side_faces:
+        # Offset from prism center (ignoring Z component) should align with face normal
+        offset = face.center - np.array(prism.center)
+        # Project offset and normal onto XY plane
+        offset_xy = offset[:2]
+        normal_xy = face.normal[:2]
+        # Both should point in same direction
+        dot = float(np.dot(offset_xy, normal_xy))
+        assert dot > 0, f"Side face {face.name} normal not outward: dot={dot}"
+
+
+def test_solid_prism_square_edge_length():
+    """SolidPrism(n_sides=4) side face width equals expected edge_length."""
+    import math
+    from backlight_sim.core.solid_body import SolidPrism
+    R = 5.0
+    n = 4
+    expected_edge = 2 * R * math.sin(math.pi / n)  # = R * sqrt(2) approx 7.07
+    prism = SolidPrism("sq", [0, 0, 0], [0, 0, 1], n, R, 10.0)
+    faces = prism.get_faces()
+    side_faces = [f for f in faces if "side_" in f.name]
+    for face in side_faces:
+        # size is (edge_length, prism_length)
+        edge_width = face.size[0]
+        assert abs(edge_width - expected_edge) < 1e-6, (
+            f"Expected edge_length {expected_edge:.4f}, got {edge_width:.4f}"
+        )
+
+
+def test_project_solid_cylinders_default_empty():
+    """Project.solid_cylinders defaults to an empty list."""
+    p = Project()
+    assert hasattr(p, "solid_cylinders")
+    assert p.solid_cylinders == []
+
+
+def test_project_solid_prisms_default_empty():
+    """Project.solid_prisms defaults to an empty list."""
+    p = Project()
+    assert hasattr(p, "solid_prisms")
+    assert p.solid_prisms == []
