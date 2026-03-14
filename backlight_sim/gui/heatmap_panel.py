@@ -12,6 +12,10 @@ from PySide6.QtWidgets import (
 )
 
 from backlight_sim.core.detectors import DetectorResult, SimulationResult
+from backlight_sim.gui.widgets.collapsible_section import CollapsibleSection
+
+# Available colormaps
+COLORMAPS = ['viridis', 'plasma', 'inferno', 'magma', 'CET-L1']
 
 # Uniformity area fractions to evaluate
 _FRACTIONS = [("1/4", 0.25), ("1/6", 1 / 6), ("1/10", 0.10)]
@@ -90,6 +94,25 @@ def _edge_center_ratio(grid: np.ndarray) -> float:
     return edge_avg / center_avg
 
 
+def _threshold_color(value: float, green_thresh: float, yellow_thresh: float,
+                     higher_is_better: bool = True) -> str:
+    """Return CSS color string for green/yellow/red threshold styling."""
+    if higher_is_better:
+        if value >= green_thresh:
+            return "color: #4caf50;"    # green
+        elif value >= yellow_thresh:
+            return "color: #ff9800;"   # orange
+        else:
+            return "color: #f44336;"   # red
+    else:
+        if value <= green_thresh:
+            return "color: #4caf50;"
+        elif value <= yellow_thresh:
+            return "color: #ff9800;"
+        else:
+            return "color: #f44336;"
+
+
 class HeatmapPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -107,6 +130,13 @@ class HeatmapPanel(QWidget):
         self._color_mode.currentIndexChanged.connect(self._on_color_mode_changed)
         top.addWidget(QLabel("Display:"))
         top.addWidget(self._color_mode)
+        # ---- colormap selector ----
+        top.addWidget(QLabel("Colormap:"))
+        self._colormap_combo = QComboBox()
+        self._colormap_combo.addItems(COLORMAPS)
+        self._colormap_combo.setCurrentText('inferno')
+        self._colormap_combo.currentTextChanged.connect(self._apply_colormap)
+        top.addWidget(self._colormap_combo)
         top.addStretch()
         layout.addLayout(top)
 
@@ -119,8 +149,8 @@ class HeatmapPanel(QWidget):
         self._plot.addItem(self._img)
         # Click to inspect per-pixel spectrum
         self._img.mouseClickEvent = self._on_image_clicked
-        # Interactive ROI for custom region stats
-        self._roi = pg.RectROI([10, 10], [30, 30], pen=pg.mkPen('c', width=2))
+        # Interactive ROI for custom region stats (teal accent)
+        self._roi = pg.RectROI([10, 10], [30, 30], pen=pg.mkPen('#00bcd4', width=2))
         self._roi.addScaleHandle([1, 1], [0, 0])
         self._roi.addScaleHandle([0, 0], [1, 1])
         self._plot.addItem(self._roi)
@@ -130,6 +160,20 @@ class HeatmapPanel(QWidget):
             values=(0, 1), colorMap=pg.colormap.get("inferno"),
         )
         self._cbar.setImageItem(self._img)
+
+        # Crosshair cursor
+        self._crosshair_v = pg.InfiniteLine(angle=90, movable=False,
+                                             pen=pg.mkPen('#888888', width=1))
+        self._crosshair_h = pg.InfiniteLine(angle=0, movable=False,
+                                             pen=pg.mkPen('#888888', width=1))
+        self._plot.addItem(self._crosshair_v, ignoreBounds=True)
+        self._plot.addItem(self._crosshair_h, ignoreBounds=True)
+        self._crosshair_v.hide()
+        self._crosshair_h.hide()
+
+        # Connect mouse move on plot scene
+        self._plot.scene().sigMouseMoved.connect(self._on_mouse_moved)
+
         layout.addWidget(self._plot, stretch=3)
 
         # ---- spectral mode status ----
@@ -139,6 +183,11 @@ class HeatmapPanel(QWidget):
         )
         self._spectral_status.hide()
         layout.addWidget(self._spectral_status)
+
+        # ---- cursor label ----
+        self._cursor_lbl = QLabel("Cursor: --")
+        self._cursor_lbl.setStyleSheet("font-family: monospace; color: #888888;")
+        layout.addWidget(self._cursor_lbl)
 
         # ---- ROI stats ----
         roi_row = QHBoxLayout()
@@ -151,10 +200,12 @@ class HeatmapPanel(QWidget):
         roi_row.addWidget(self._roi_lbl, 1)
         layout.addLayout(roi_row)
 
-        # ---- grid statistics ----
-        stats_box = QGroupBox("Grid Statistics")
-        sg = QGridLayout(stats_box)
+        # ---- grid statistics (collapsible) ----
+        stats_section = CollapsibleSection("Grid Statistics")
+        _stats_widget = QWidget()
+        sg = QGridLayout(_stats_widget)
         sg.setVerticalSpacing(2)
+        sg.setContentsMargins(0, 0, 0, 0)
 
         def _lbl(text="--"):
             l = QLabel(text)
@@ -181,13 +232,15 @@ class HeatmapPanel(QWidget):
         corner_lbl = QLabel("Corner/avg:")
         corner_lbl.setToolTip("Average of the 4 corner patches (10 % of grid size each) / full avg")
         sg.addWidget(corner_lbl,             2, 4); sg.addWidget(self._lbl_corner, 2, 5)
+        stats_section.addWidget(_stats_widget)
+        layout.addWidget(stats_section, stretch=0)
 
-        layout.addWidget(stats_box, stretch=0)
-
-        # ---- uniformity ----
-        uni_box = QGroupBox("Uniformity")
-        ug = QGridLayout(uni_box)
+        # ---- uniformity (collapsible) ----
+        uni_section = CollapsibleSection("Uniformity")
+        _uni_widget = QWidget()
+        ug = QGridLayout(_uni_widget)
         ug.setVerticalSpacing(2)
+        ug.setContentsMargins(0, 0, 0, 0)
         self._uni_labels: dict[str, tuple[QLabel, QLabel]] = {}
         for row_i, (label, _frac) in enumerate(_FRACTIONS):
             ug.addWidget(QLabel(f"U ({label} area)  min/avg:"), row_i, 0)
@@ -195,12 +248,15 @@ class HeatmapPanel(QWidget):
             ug.addWidget(QLabel("min/max:"), row_i, 2)
             lm = _lbl(); ug.addWidget(lm, row_i, 3)
             self._uni_labels[label] = (la, lm)
-        layout.addWidget(uni_box, stretch=0)
+        uni_section.addWidget(_uni_widget)
+        layout.addWidget(uni_section, stretch=0)
 
-        # ---- color uniformity (spectral only) ----
-        self._color_uni_box = QGroupBox("Color Uniformity")
-        cug = QGridLayout(self._color_uni_box)
+        # ---- color uniformity (spectral only, collapsible) ----
+        self._color_uni_section = CollapsibleSection("Color Uniformity")
+        _color_uni_widget = QWidget()
+        cug = QGridLayout(_color_uni_widget)
         cug.setVerticalSpacing(2)
+        cug.setContentsMargins(0, 0, 0, 0)
         # Column headers: delta-CCx, delta-CCy, delta-u', delta-v', CCT avg, CCT range
         _col_hdrs = ["delta-CCx", "delta-CCy", "delta-u'", "delta-v'", "CCT avg", "CCT range"]
         for ci, hdr in enumerate(_col_hdrs):
@@ -218,13 +274,16 @@ class HeatmapPanel(QWidget):
                 row_lbls.append(lbl)
             self._color_uni_labels[row_label] = row_lbls
 
-        self._color_uni_box.hide()
-        layout.addWidget(self._color_uni_box, stretch=0)
+        self._color_uni_section.addWidget(_color_uni_widget)
+        self._color_uni_section.hide()
+        layout.addWidget(self._color_uni_section, stretch=0)
 
-        # ---- energy balance ----
-        energy_box = QGroupBox("Energy Balance")
-        eg = QGridLayout(energy_box)
+        # ---- energy balance (collapsible) ----
+        energy_section = CollapsibleSection("Energy Balance")
+        _energy_widget = QWidget()
+        eg = QGridLayout(_energy_widget)
         eg.setVerticalSpacing(2)
+        eg.setContentsMargins(0, 0, 0, 0)
         self._lbl_eff     = _lbl(); self._lbl_leds  = _lbl()
         self._lbl_absorb  = _lbl(); self._lbl_esc   = _lbl()
         eg.addWidget(QLabel("Efficiency:"),  0, 0); eg.addWidget(self._lbl_eff,    0, 1)
@@ -259,16 +318,19 @@ class HeatmapPanel(QWidget):
                   self._lbl_lgp_coupling, self._lbl_lgp_extraction, self._lbl_lgp_overall):
             w.hide()
 
-        layout.addWidget(energy_box, stretch=0)
+        energy_section.addWidget(_energy_widget)
+        layout.addWidget(energy_section, stretch=0)
 
-        # ---- weighted design score ----
-        score_box = QGroupBox("Design Score")
-        score_box.setToolTip(
-            "Weighted composite score ∈ [0, 1]\n"
-            "score = (w_eff × η + w_uni × U(1/4 min/avg) + w_hot × 1/hotspot) "
+        # ---- weighted design score (collapsible) ----
+        score_section = CollapsibleSection("Design Score")
+        score_section.setToolTip(
+            "Weighted composite score in [0, 1]\n"
+            "score = (w_eff x efficiency + w_uni x U(1/4 min/avg) + w_hot x 1/hotspot) "
             "/ (w_eff + w_uni + w_hot)")
-        sg2 = QGridLayout(score_box)
+        _score_widget = QWidget()
+        sg2 = QGridLayout(_score_widget)
         sg2.setVerticalSpacing(2)
+        sg2.setContentsMargins(0, 0, 0, 0)
 
         def _wspin(default=0.33):
             s = QDoubleSpinBox()
@@ -286,7 +348,8 @@ class HeatmapPanel(QWidget):
         sg2.addWidget(QLabel("w_uni:"),   0, 2); sg2.addWidget(self._w_uni,    0, 3)
         sg2.addWidget(QLabel("w_hot:"),   0, 4); sg2.addWidget(self._w_hot,    0, 5)
         sg2.addWidget(QLabel("Score:"),   0, 6); sg2.addWidget(self._lbl_score, 0, 7)
-        layout.addWidget(score_box, stretch=0)
+        score_section.addWidget(_score_widget)
+        layout.addWidget(score_section, stretch=0)
 
         # ---- export buttons ----
         btn_row = QHBoxLayout()
@@ -319,6 +382,40 @@ class HeatmapPanel(QWidget):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def _apply_colormap(self, name: str):
+        """Switch the heatmap colormap by name."""
+        try:
+            cm = pg.colormap.get(name)
+            self._img.setColorMap(cm)
+            self._cbar.setColorMap(cm)
+        except Exception:
+            pass  # unsupported colormap — ignore silently
+
+    def _on_mouse_moved(self, pos):
+        """Update crosshair position and cursor label on mouse move."""
+        if self._current_result is None:
+            return
+        if not self._plot.sceneBoundingRect().contains(pos):
+            return
+        view_pos = self._plot.plotItem.vb.mapSceneToView(pos)
+        x = int(view_pos.x())
+        y = int(view_pos.y())
+        grid = self._current_result.grid
+        ny, nx = grid.shape
+        # grid is displayed transposed (ImageItem expects width x height)
+        # view coords: x -> column (nx), y -> row (ny)
+        if 0 <= x < nx and 0 <= y < ny:
+            flux = float(grid[y, x])
+            self._cursor_lbl.setText(f"Cursor: ({x}, {y}) = {flux:.4g}")
+            self._crosshair_v.setPos(x)
+            self._crosshair_h.setPos(y)
+            self._crosshair_v.show()
+            self._crosshair_h.show()
+        else:
+            self._cursor_lbl.setText("Cursor: --")
+            self._crosshair_v.hide()
+            self._crosshair_h.hide()
 
     def update_results(self, sim_result: SimulationResult):
         self._sim_result = sim_result
@@ -385,6 +482,8 @@ class HeatmapPanel(QWidget):
                 self._img.setImage(rgba.transpose(1, 0, 2))  # ImageItem expects (width, height, 4)
                 self._cbar.setLevels(values=(0, 1))
             else:
+                # Apply current colormap selection
+                self._apply_colormap(self._colormap_combo.currentText())
                 self._img.setImage(grid.T)
                 vmin, vmax = float(grid.min()), float(grid.max())
                 if vmax > vmin:
@@ -408,9 +507,18 @@ class HeatmapPanel(QWidget):
         self._lbl_min.setText(f"{mn:.4g}")
         self._lbl_hits.setText(str(result.total_hits))
         self._lbl_std.setText(f"{std:.4g}")
+        # CV: green <= 0.10, yellow <= 0.20 (lower is better)
         self._lbl_cv.setText(f"{cv:.3f}")
+        self._lbl_cv.setStyleSheet(
+            "font-family: monospace; " + _threshold_color(cv, 0.10, 0.20, higher_is_better=False))
+        # Hotspot: green <= 1.3, yellow <= 1.6 (lower is better)
         self._lbl_hot.setText(f"{hot:.3f}")
+        self._lbl_hot.setStyleSheet(
+            "font-family: monospace; " + _threshold_color(hot, 1.3, 1.6, higher_is_better=False))
+        # Edge/center ratio: green >= 0.80, yellow >= 0.60 (higher is better, closer to 1.0)
         self._lbl_ecr.setText(f"{ecr:.3f}")
+        self._lbl_ecr.setStyleSheet(
+            "font-family: monospace; " + _threshold_color(ecr, 0.80, 0.60, higher_is_better=True))
         self._lbl_rmse.setText(f"{rmse_norm:.4f}")
         self._lbl_mad.setText(f"{mad_norm:.4f}")
         self._lbl_corner.setText(f"{corner_r:.3f}")
@@ -420,7 +528,12 @@ class HeatmapPanel(QWidget):
             u_avg, u_max = _uniformity_in_center(grid, frac)
             la, lm = self._uni_labels[label]
             la.setText(f"{u_avg:.3f}")
+            # Uniformity min/avg: green >= 0.80, yellow >= 0.60 (higher is better)
+            la.setStyleSheet(
+                "font-family: monospace; " + _threshold_color(u_avg, 0.80, 0.60, higher_is_better=True))
             lm.setText(f"{u_max:.3f}")
+            lm.setStyleSheet(
+                "font-family: monospace; " + _threshold_color(u_max, 0.80, 0.60, higher_is_better=True))
 
         # Cache KPIs for weighted score
         self._last_u14 = u14
@@ -436,6 +549,9 @@ class HeatmapPanel(QWidget):
             abs_pct  = absorbed / emitted * 100.0
             esc_pct  = escaped  / emitted * 100.0
             self._lbl_eff.setText(f"{eff_pct:.1f} %")
+            # Efficiency: green >= 70%, yellow >= 40% (higher is better)
+            self._lbl_eff.setStyleSheet(
+                "font-family: monospace; " + _threshold_color(eff_pct, 70.0, 40.0, higher_is_better=True))
             self._lbl_absorb.setText(f"{abs_pct:.1f} %")
             self._lbl_esc.setText(f"{esc_pct:.1f} %")
             self._last_eff_pct = eff_pct
@@ -509,7 +625,7 @@ class HeatmapPanel(QWidget):
     def _update_color_uniformity(self, result: DetectorResult):
         """Update the Color Uniformity KPI section; hide it if no spectral data."""
         if result.grid_spectral is None:
-            self._color_uni_box.hide()
+            self._color_uni_section.hide()
             return
         try:
             from backlight_sim.sim.spectral import compute_color_kpis, spectral_bin_centers
@@ -519,7 +635,7 @@ class HeatmapPanel(QWidget):
         except Exception as exc:
             import warnings
             warnings.warn(f"Color KPI computation failed: {exc}", stacklevel=2)
-            self._color_uni_box.hide()
+            self._color_uni_section.hide()
             return
 
         def _fmt_delta(v):
@@ -554,7 +670,7 @@ class HeatmapPanel(QWidget):
             lbls[4].setText("--")   # CCT avg/range not computed for center fractions
             lbls[5].setText("--")
 
-        self._color_uni_box.show()
+        self._color_uni_section.show()
 
     def _update_score(self, _=None):
         """Recompute the weighted design score from cached KPIs and weight spinboxes."""
@@ -653,6 +769,9 @@ class HeatmapPanel(QWidget):
         self._last_u14 = 0.0
         self._last_hot = 1.0
         self._lbl_score.setText("--")
+        self._cursor_lbl.setText("Cursor: --")
+        self._crosshair_v.hide()
+        self._crosshair_h.hide()
         _all = [
             self._lbl_avg, self._lbl_peak, self._lbl_min, self._lbl_hits,
             self._lbl_std, self._lbl_cv, self._lbl_hot, self._lbl_ecr,
@@ -661,15 +780,17 @@ class HeatmapPanel(QWidget):
         ]
         for lbl in _all:
             lbl.setText("--")
+            lbl.setStyleSheet("font-family: monospace;")
         for la, lm in self._uni_labels.values():
-            la.setText("--"); lm.setText("--")
+            la.setText("--"); la.setStyleSheet("font-family: monospace;")
+            lm.setText("--"); lm.setStyleSheet("font-family: monospace;")
         # Hide LGP rows
         for w in (self._lbl_lgp_coupling_key, self._lbl_lgp_extraction_key,
                   self._lbl_lgp_overall_key,
                   self._lbl_lgp_coupling, self._lbl_lgp_extraction, self._lbl_lgp_overall):
             w.hide()
         # Hide color uniformity
-        self._color_uni_box.hide()
+        self._color_uni_section.hide()
 
     # ------------------------------------------------------------------
     # Export helpers
