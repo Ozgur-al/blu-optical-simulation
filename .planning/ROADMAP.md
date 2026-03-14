@@ -95,9 +95,9 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 05-01-PLAN.md — Dark theme (QSS + pyqtgraph config), QDockWidget layout, toolbar, QSettings persistence
-- [ ] 05-02-PLAN.md — Undo/redo system (QUndoStack commands, Edit menu, toolbar integration)
-- [ ] 05-03-PLAN.md — Collapsible properties panel (CollapsibleSection widget) + object tree icons and context menus
+- [x] 05-01-PLAN.md — Dark theme (QSS + pyqtgraph config), QDockWidget layout, toolbar, QSettings persistence
+- [x] 05-02-PLAN.md — Undo/redo system (QUndoStack commands, Edit menu, toolbar integration)
+- [x] 05-03-PLAN.md — Collapsible properties panel (CollapsibleSection widget) + object tree icons and context menus
 - [ ] 05-04-PLAN.md — Enhanced heatmap (colormap selector, crosshair, KPI cards) + live simulation preview
 
 ## Progress
@@ -111,4 +111,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Spectral Engine | 2/2 | Complete   | 2026-03-14 |
 | 3. Performance Acceleration | 2/2 | Complete   | 2026-03-14 |
 | 4. Advanced Materials and Geometry | 4/5 | Gap closure in progress | - |
-| 5. UI Revamp | 0/4 | Not Started | - |
+| 5. UI Revamp | 3/4 | In Progress | - |

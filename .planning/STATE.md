@@ -2,26 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-14T21:44:52.525Z"
-progress:
-  total_phases: 5
-  completed_phases: 3
-  total_plans: 16
-  completed_plans: 13
----
-
----
-gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
 status: in-progress
-last_updated: "2026-03-14T20:06:00Z"
+last_updated: "2026-03-15T21:44:00Z"
 progress:
   total_phases: 5
   completed_phases: 4
-  total_plans: 15
-  completed_plans: 11
+  total_plans: 16
+  completed_plans: 14
 ---
 
 # Project State
@@ -31,16 +18,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-14)
 
 **Core value:** Engineers can iterate on both direct-lit and edge-lit BLU designs with physically accurate, wavelength-aware simulation — fast enough for real workloads.
-**Current focus:** Phase 4 — Advanced Materials and Geometry
+**Current focus:** Phase 5 — UI Revamp
 
 ## Current Position
 
-Phase: 4 of 5 (Advanced Materials and Geometry) — COMPLETE (awaiting human verification of Plan 04)
-Plan: 4 of 4 in current phase — AWAITING CHECKPOINT
-Status: Phase 4 Plan 04 SUMMARY created. GUI panels complete: BSDFPanel, FarFieldPanel, SolidCylinderForm, SolidPrismForm, 3D intensity lobe, MainWindow wiring. Awaiting human verification (checkpoint:human-verify).
-Last activity: 2026-03-14 — Plan 04-04 SUMMARY created (bsdf_panel.py, far_field_panel.py, properties_panel.py, viewport_3d.py, object_tree.py, main_window.py)
+Phase: 5 of 5 (UI Revamp) — In Progress
+Plan: 2 of N in current phase — COMPLETE (05-02 SUMMARY created)
+Status: 05-02 complete. QUndoStack undo/redo system implemented with command pattern for all scene mutations.
+Last activity: 2026-03-15 — Plan 05-02 complete (commands/__init__.py, base.py, source_commands.py, surface_commands.py, scene_commands.py, main_window.py)
 
-Progress: [█████████░] 80%
+Progress: [█████████░] 88%
 
 ## Performance Metrics
 
@@ -72,6 +59,7 @@ Progress: [█████████░] 80%
 | Phase 04 P02 | 5 | 2 tasks | 5 files |
 | Phase 04 P03 | 5 min | 3 tasks | 6 files |
 | Phase 03-performance-acceleration P02 | 20 | 2 tasks | 7 files |
+| Phase 05-ui-rewamp P02 | 6 | 2 tasks | 6 files |
 | Phase 05-ui-rewamp P03 | 5 | 2 tasks | 4 files |
 
 ## Accumulated Context
@@ -125,6 +113,11 @@ Recent decisions affecting current work:
 - [Phase 04-04]: BSDF delete guard checks all optical_properties for bsdf_profile_name references before allowing delete — prevents dangling references
 - [Phase 04-04]: Far-field lobe cleared before each refresh via clear_farfield_lobe() — avoids mesh accumulation across simulation runs
 - [Phase 04-04]: Cylinder and prism placed under Solid Bodies (not Surfaces) in object tree — volumetric refractive objects need face-children pattern
+- [Phase 05-02]: QUndoStack/QUndoCommand imported from PySide6.QtGui (NOT QtWidgets — Qt6 moved them)
+- [Phase 05-02]: Command constructor must NOT perform mutation — QUndoStack.push() calls redo() automatically
+- [Phase 05-02]: mergeWith() uses hash((id(obj), attr)) for rapid property edit coalescing (slider drag → single undo step)
+- [Phase 05-02]: undo_stack.clear() called in all 5 project-replacement paths (new/open/preset/variant/history)
+- [Phase 05-02]: indexChanged signal connected to _mark_dirty() so undo/redo marks project modified
 - [Phase 05-03]: CollapsibleSection uses QToolButton with setArrowType for expand/collapse indicator
 - [Phase 05-03]: ObjectTree icon cache at class level (_ICONS dict); programmatic QPainter circles avoid image files
 - [Phase 05-03]: duplicate_requested signal defined in ObjectTree but wired by MainWindow (avoids Plan 02 conflict)
@@ -146,6 +139,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-14
-Stopped at: 04-04-PLAN.md — checkpoint:human-verify (Task 3 awaiting user verification of BSDF panel, far-field panel, 3D intensity lobe, cylinder/prism UI)
+Last session: 2026-03-15
+Stopped at: Completed 05-02-PLAN.md — QUndoStack undo/redo system with command pattern
 Resume file: None

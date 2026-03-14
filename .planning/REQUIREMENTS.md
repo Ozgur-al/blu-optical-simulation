@@ -43,10 +43,10 @@ Requirements for Phase 2 release. Each maps to roadmap phases.
 
 ### UI / UX
 
-- [ ] **UI-01**: Application uses a dark theme with teal/cyan accent across all widgets including pyqtgraph plots and 3D viewport
-- [ ] **UI-02**: All panels are dockable QDockWidgets that can be dragged, floated, tabbed, and rearranged, with layout persisting between sessions via QSettings
-- [ ] **UI-03**: Top toolbar with icon+text buttons for common actions (New, Open, Save, Run, Cancel) and quick-add buttons (LED, Surface, Detector, SolidBox)
-- [ ] **UI-04**: Full undo/redo system (Ctrl+Z / Ctrl+Y) using QUndoStack for all scene mutations (add, delete, property edit)
+- [x] **UI-01**: Application uses a dark theme with teal/cyan accent across all widgets including pyqtgraph plots and 3D viewport
+- [x] **UI-02**: All panels are dockable QDockWidgets that can be dragged, floated, tabbed, and rearranged, with layout persisting between sessions via QSettings
+- [x] **UI-03**: Top toolbar with icon+text buttons for common actions (New, Open, Save, Run, Cancel) and quick-add buttons (LED, Surface, Detector, SolidBox)
+- [x] **UI-04**: Full undo/redo system (Ctrl+Z / Ctrl+Y) using QUndoStack for all scene mutations (add, delete, property edit)
 - [x] **UI-05**: Properties panel uses collapsible sections for property groups with expand/collapse arrows
 - [x] **UI-06**: Object tree shows per-type colored icons and enhanced context menus with Duplicate action
 - [ ] **UI-07**: Heatmap panel has selectable colormaps, crosshair cursor with live pixel values, and KPI cards with color-coded thresholds (green/yellow/red)
@@ -118,10 +118,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PERF-03 | Phase 3 | Complete |
 | BRDF-01 | Phase 4 | Complete |
 | DET-01 | Phase 4 | Complete |
-| UI-01 | Phase 5 | Pending |
-| UI-02 | Phase 5 | Pending |
-| UI-03 | Phase 5 | Pending |
-| UI-04 | Phase 5 | Pending |
+| UI-01 | Phase 5 | Complete |
+| UI-02 | Phase 5 | Complete |
+| UI-03 | Phase 5 | Complete |
+| UI-04 | Phase 5 | Complete |
 | UI-05 | Phase 5 | Complete |
 | UI-06 | Phase 5 | Complete |
 | UI-07 | Phase 5 | Pending |
