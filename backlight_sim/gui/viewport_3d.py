@@ -25,6 +25,7 @@ class Viewport3D(QWidget):
 
         self._scene_items: list = []
         self._path_items: list = []
+        self._farfield_lobe_item = None
         self._last_project = None
         self._selected_group: str | None = None
         self._selected_name: str | None = None
@@ -139,6 +140,30 @@ class Viewport3D(QWidget):
             )
             self._draw_solid_box(box, is_selected)
 
+        # Solid Cylinders
+        for cyl in getattr(project, "solid_cylinders", []):
+            is_selected = (
+                self._selected_group == "Solid Bodies" and
+                (self._selected_name == cyl.name or
+                 (self._selected_name and self._selected_name.startswith(f"{cyl.name}::")))
+            )
+            mat = project.materials.get(cyl.material_name)
+            color = _material_color(mat)
+            edge_color = (1.0, 1.0, 0.0, 1.0) if is_selected else (*color, 1.0)
+            self._draw_solid_cylinder(cyl, color, edge_color)
+
+        # Solid Prisms
+        for prism in getattr(project, "solid_prisms", []):
+            is_selected = (
+                self._selected_group == "Solid Bodies" and
+                (self._selected_name == prism.name or
+                 (self._selected_name and self._selected_name.startswith(f"{prism.name}::")))
+            )
+            mat = project.materials.get(prism.material_name)
+            color = _material_color(mat)
+            edge_color = (1.0, 1.0, 0.0, 1.0) if is_selected else (*color, 1.0)
+            self._draw_solid_prism(prism, color, edge_color)
+
     def _draw_solid_box(self, box, is_selected: bool = False):
         """Render a SolidBox as a semi-transparent solid with visible edges."""
         lgp_color = (0.4, 0.7, 1.0)
@@ -170,6 +195,225 @@ class Viewport3D(QWidget):
                     mesh.setGLOptions("translucent")  # solid box always uses translucent for see-through
                 self._view.addItem(mesh)
                 self._scene_items.append(mesh)
+
+    def _draw_solid_cylinder(self, cyl, color, edge_color, n_seg=32):
+        """Render a SolidCylinder as a smooth mesh or wireframe."""
+        axis = np.asarray(cyl.axis, float)
+        # Build orthonormal basis perpendicular to axis
+        ref = np.array([1.0, 0.0, 0.0])
+        if abs(np.dot(axis, ref)) > 0.9:
+            ref = np.array([0.0, 1.0, 0.0])
+        u = np.cross(axis, ref)
+        u = u / np.linalg.norm(u)
+        v = np.cross(axis, u)
+        v = v / np.linalg.norm(v)
+
+        angles = np.linspace(0, 2 * np.pi, n_seg, endpoint=False)
+        half = cyl.length / 2.0
+        top_center = cyl.center + axis * half
+        bot_center = cyl.center - axis * half
+
+        ring_top = top_center[None, :] + cyl.radius * (
+            np.cos(angles)[:, None] * u[None, :] + np.sin(angles)[:, None] * v[None, :]
+        )
+        ring_bot = bot_center[None, :] + cyl.radius * (
+            np.cos(angles)[:, None] * u[None, :] + np.sin(angles)[:, None] * v[None, :]
+        )
+
+        if self._view_mode == "wireframe":
+            # Draw top ring, bottom ring, and a few longitudinal lines
+            for ring in (ring_top, ring_bot):
+                loop = np.vstack([ring, ring[:1]])
+                item = gl.GLLinePlotItem(pos=loop.astype(float), color=edge_color, width=2, mode="line_strip")
+                self._view.addItem(item)
+                self._scene_items.append(item)
+            for i in range(0, n_seg, n_seg // 4):
+                pts = np.array([ring_bot[i], ring_top[i]], dtype=float)
+                item = gl.GLLinePlotItem(pos=pts, color=edge_color, width=2, mode="lines")
+                self._view.addItem(item)
+                self._scene_items.append(item)
+        else:
+            alpha = 0.25 if self._view_mode == "transparent" else 0.5
+            face_color = (*color, alpha)
+            # Build mesh: indices 0..n_seg-1 = top ring, n_seg..2n_seg-1 = bot ring
+            # n_seg*2 = top center, n_seg*2+1 = bot center
+            verts_list = list(ring_top) + list(ring_bot) + [top_center, bot_center]
+            verts = np.array(verts_list, dtype=float)
+            faces_list = []
+            for i in range(n_seg):
+                ni = (i + 1) % n_seg
+                # side quad (2 triangles)
+                faces_list.append([i, ni, ni + n_seg])
+                faces_list.append([i, ni + n_seg, i + n_seg])
+            tc_idx = n_seg * 2
+            bc_idx = n_seg * 2 + 1
+            for i in range(n_seg):
+                ni = (i + 1) % n_seg
+                faces_list.append([tc_idx, ni, i])         # top cap (outward)
+                faces_list.append([bc_idx, i + n_seg, ni + n_seg])  # bot cap (outward)
+            faces = np.array(faces_list, dtype=int)
+            colors = np.array([face_color] * len(faces), dtype=float)
+            mesh = gl.GLMeshItem(vertexes=verts, faces=faces, faceColors=colors,
+                                 smooth=True, drawEdges=True, edgeColor=edge_color)
+            mesh.setGLOptions("translucent")
+            self._view.addItem(mesh)
+            self._scene_items.append(mesh)
+
+    def _draw_solid_prism(self, prism, color, edge_color):
+        """Render a SolidPrism as a faceted mesh or wireframe."""
+        import math
+        axis = np.asarray(prism.axis, float)
+        ref = np.array([1.0, 0.0, 0.0])
+        if abs(np.dot(axis, ref)) > 0.9:
+            ref = np.array([0.0, 1.0, 0.0])
+        u = np.cross(axis, ref)
+        u = u / np.linalg.norm(u)
+        v = np.cross(axis, u)
+        v = v / np.linalg.norm(v)
+
+        n = prism.n_sides
+        R = prism.circumscribed_radius
+        half = prism.length / 2.0
+        angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        top_center = prism.center + axis * half
+        bot_center = prism.center - axis * half
+
+        ring_top = top_center[None, :] + R * (
+            np.cos(angles)[:, None] * u[None, :] + np.sin(angles)[:, None] * v[None, :]
+        )
+        ring_bot = bot_center[None, :] + R * (
+            np.cos(angles)[:, None] * u[None, :] + np.sin(angles)[:, None] * v[None, :]
+        )
+
+        if self._view_mode == "wireframe":
+            for ring in (ring_top, ring_bot):
+                loop = np.vstack([ring, ring[:1]])
+                item = gl.GLLinePlotItem(pos=loop.astype(float), color=edge_color, width=2, mode="line_strip")
+                self._view.addItem(item)
+                self._scene_items.append(item)
+            for i in range(n):
+                pts = np.array([ring_bot[i], ring_top[i]], dtype=float)
+                item = gl.GLLinePlotItem(pos=pts, color=edge_color, width=2, mode="lines")
+                self._view.addItem(item)
+                self._scene_items.append(item)
+        else:
+            alpha = 0.25 if self._view_mode == "transparent" else 0.5
+            face_color = (*color, alpha)
+            verts_list = list(ring_top) + list(ring_bot) + [top_center, bot_center]
+            verts = np.array(verts_list, dtype=float)
+            faces_list = []
+            for i in range(n):
+                ni = (i + 1) % n
+                faces_list.append([i, ni, ni + n])
+                faces_list.append([i, ni + n, i + n])
+            tc_idx = n * 2
+            bc_idx = n * 2 + 1
+            for i in range(n):
+                ni = (i + 1) % n
+                faces_list.append([tc_idx, ni, i])
+                faces_list.append([bc_idx, i + n, ni + n])
+            faces = np.array(faces_list, dtype=int)
+            colors = np.array([face_color] * len(faces), dtype=float)
+            mesh = gl.GLMeshItem(vertexes=verts, faces=faces, faceColors=colors,
+                                 smooth=False, drawEdges=True, edgeColor=edge_color)
+            mesh.setGLOptions("translucent")
+            self._view.addItem(mesh)
+            self._scene_items.append(mesh)
+
+    def _draw_farfield_lobe(self, sd, result):
+        """Render a 3D intensity lobe for far-field sphere detector results.
+
+        The lobe is a color-mapped mesh surface centered at sd.center
+        where the radius at each (theta, phi) direction is proportional to
+        the candela value, using a cool-to-warm colormap.
+        """
+        if result.candela_grid is None:
+            return
+        grid = np.asarray(result.candela_grid, dtype=float)
+        n_theta, n_phi = grid.shape
+        peak = grid.max()
+        if peak <= 0:
+            return
+
+        # Scale so peak radius = sd.radius * 0.8
+        scale = sd.radius * 0.8 / peak
+        norm_grid = grid / peak  # normalized [0,1] for coloring
+
+        # Build (theta, phi) angles
+        theta = (np.arange(n_theta) + 0.5) * np.pi / n_theta
+        phi = np.arange(n_phi) * 2.0 * np.pi / n_phi
+
+        # Build vertex grid
+        # Shape: (n_theta, n_phi, 3)
+        sin_t = np.sin(theta)[:, None]
+        cos_t = np.cos(theta)[:, None]
+        cos_p = np.cos(phi)[None, :]
+        sin_p = np.sin(phi)[None, :]
+
+        r = grid * scale  # (n_theta, n_phi) radii
+        cx, cy, cz = sd.center
+        vx = r * sin_t * cos_p + cx
+        vy = r * sin_t * sin_p + cy
+        vz = r * cos_t + cz
+
+        verts = np.stack([vx, vy, vz], axis=-1)  # (n_theta, n_phi, 3)
+        verts_flat = verts.reshape(-1, 3)         # (n_theta*n_phi, 3)
+
+        # Build face indices (quads split into 2 triangles)
+        faces_list = []
+        for ti in range(n_theta - 1):
+            for pi in range(n_phi):
+                pn = (pi + 1) % n_phi
+                v00 = ti * n_phi + pi
+                v01 = ti * n_phi + pn
+                v10 = (ti + 1) * n_phi + pi
+                v11 = (ti + 1) * n_phi + pn
+                faces_list.append([v00, v01, v11])
+                faces_list.append([v00, v11, v10])
+        faces = np.array(faces_list, dtype=int)
+
+        # Color each face by normalized candela of the first vertex
+        def _cool_warm(t):
+            """Map t in [0,1] to RGBA using a cool-to-warm colormap."""
+            # Keypoints: blue(0) -> cyan(0.25) -> green(0.5) -> yellow(0.75) -> red(1)
+            r_keys = np.array([0.2, 0.2, 0.2, 1.0, 1.0])
+            g_keys = np.array([0.2, 0.7, 1.0, 1.0, 0.2])
+            b_keys = np.array([1.0, 1.0, 0.2, 0.2, 0.2])
+            xp = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+            r_c = np.interp(t, xp, r_keys)
+            g_c = np.interp(t, xp, g_keys)
+            b_c = np.interp(t, xp, b_keys)
+            a_c = np.full_like(t, 0.8)
+            return np.stack([r_c, g_c, b_c, a_c], axis=-1)
+
+        # Per-face color from average of two vertex t-values
+        n_faces = len(faces)
+        face_t = np.zeros(n_faces, dtype=float)
+        norm_flat = norm_grid.reshape(-1)
+        for fi in range(n_faces):
+            v0, v1, v2 = faces[fi]
+            face_t[fi] = (norm_flat[v0] + norm_flat[v1] + norm_flat[v2]) / 3.0
+        colors = _cool_warm(face_t)
+
+        mesh = gl.GLMeshItem(
+            vertexes=verts_flat.astype(np.float32),
+            faces=faces,
+            faceColors=colors.astype(np.float32),
+            smooth=True,
+            drawEdges=False,
+        )
+        mesh.setGLOptions("translucent")
+        self._view.addItem(mesh)
+        self._farfield_lobe_item = mesh
+
+    def clear_farfield_lobe(self):
+        """Remove the far-field intensity lobe mesh if present."""
+        if self._farfield_lobe_item is not None:
+            try:
+                self._view.removeItem(self._farfield_lobe_item)
+            except Exception:
+                pass
+            self._farfield_lobe_item = None
 
     def _draw_rect(self, center, u_axis, v_axis, size, base_rgb, is_detector=False):
         if self._view_mode == "wireframe":
