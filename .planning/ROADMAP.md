@@ -28,12 +28,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. A ray entering a dielectric face refracts per Snell's law, undergoes TIR when angle exceeds critical angle, and exits with Fresnel-correct transmission coefficient
   3. User can run an edge-lit scene (LED at slab edge, receiver above slab) and see non-zero illuminance on the detector
   4. KPI dashboard shows edge coupling efficiency (flux into LGP edge / total emitted) after each simulation
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 01-01: Fresnel/TIR physics module and epsilon fix
-- [ ] 01-02: Solid body box primitive with per-face optical properties
-- [ ] 01-03: LGP scene configuration, tracer integration, edge coupling KPI
+- [ ] 01-01-PLAN.md — SolidBox dataclass + Fresnel/TIR physics engine (TDD)
+- [ ] 01-02-PLAN.md — Project I/O, LGP scene builder, preset, KPI dashboard
+- [ ] 01-03-PLAN.md — GUI: object tree, properties panel, viewport, geometry builder
 
 ### Phase 2: Spectral Engine
 **Goal**: Engineers can run wavelength-aware simulations and see the detector result as a color image with color uniformity KPIs
