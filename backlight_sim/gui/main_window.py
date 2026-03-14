@@ -46,9 +46,10 @@ from backlight_sim.sim.accel import _NUMBA_AVAILABLE, warmup_jit_kernels
 
 
 class SimulationThread(QThread):
-    progress     = Signal(float)
-    convergence  = Signal(int, int, float)   # (src_idx, n_rays, cv_pct)
-    finished_sim = Signal(object)
+    progress       = Signal(float)
+    convergence    = Signal(int, int, float)   # (src_idx, n_rays, cv_pct)
+    partial_result = Signal(object)            # SimulationResult snapshot
+    finished_sim   = Signal(object)
 
     def __init__(self, project: Project):
         super().__init__()
@@ -58,6 +59,7 @@ class SimulationThread(QThread):
         result = self.tracer.run(
             progress_callback=self.progress.emit,
             convergence_callback=self.convergence.emit,
+            partial_result_callback=self.partial_result.emit,
         )
         self.finished_sim.emit(result)
 
@@ -1051,8 +1053,13 @@ class MainWindow(QMainWindow):
         self._sim_thread = SimulationThread(self._project)
         self._sim_thread.progress.connect(lambda f: self._progress.setValue(int(f * 100)))
         self._sim_thread.convergence.connect(self._on_convergence_update)
+        self._sim_thread.partial_result.connect(self._on_partial_result)
         self._sim_thread.finished_sim.connect(self._on_sim_finished)
         self._sim_thread.start()
+
+        # Inform user if live preview is disabled due to multiprocessing
+        if self._project.settings.use_multiprocessing:
+            self._log("Live preview disabled in multiprocessing mode")
 
     def _cancel_simulation(self):
         if self._sim_thread and self._sim_thread.isRunning():
@@ -1060,6 +1067,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Cancelling...")
             self._cancel_btn.setEnabled(False)
             self._log("Simulation cancelled.")
+
+    def _on_partial_result(self, result):
+        """Update heatmap with partial simulation results for live preview."""
+        self._heatmap.update_results(result)
 
     def _on_sim_finished(self, result):
         self._progress.setVisible(False)

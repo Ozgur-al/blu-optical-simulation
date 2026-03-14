@@ -160,6 +160,7 @@ class RayTracer:
         self,
         progress_callback: Callable[[float], None] | None = None,
         convergence_callback: Callable[[int, int, float], None] | None = None,
+        partial_result_callback: Callable | None = None,
     ) -> SimulationResult:
         self._cancelled = False
         settings = self.project.settings
@@ -178,7 +179,8 @@ class RayTracer:
                 "(spectral + multiprocessing is not yet optimized)",
                 stacklevel=2,
             )
-            return self._run_single(sources, progress_callback, convergence_callback)
+            return self._run_single(sources, progress_callback, convergence_callback,
+                                    partial_result_callback=partial_result_callback)
 
         # Adaptive + MP guard: adaptive per-source convergence checking cannot be
         # coordinated across processes.  Disable adaptive sampling in MP mode.
@@ -193,10 +195,12 @@ class RayTracer:
 
         if (settings.use_multiprocessing and len(sources) > 1
                 and not settings.record_ray_paths):
+            # Live preview not supported in MP mode — do NOT pass partial_result_callback
             return self._run_multiprocess(sources, progress_callback)
 
         return self._run_single(sources, progress_callback, convergence_callback,
-                                _adaptive=_adaptive)
+                                _adaptive=_adaptive,
+                                partial_result_callback=partial_result_callback)
 
     def _run_multiprocess(self, sources, progress_callback):
         """Run each source in a separate process and merge results."""
@@ -293,7 +297,7 @@ class RayTracer:
         )
 
     def _run_single(self, sources, progress_callback, convergence_callback=None,
-                    _adaptive=None):
+                    _adaptive=None, partial_result_callback=None):
         settings = self.project.settings
         # _adaptive defaults to settings.adaptive_sampling unless overridden by caller
         if _adaptive is None:
@@ -936,7 +940,26 @@ class RayTracer:
 
             rays_processed += n_total
             if progress_callback:
-                progress_callback(rays_processed / total_rays)
+                progress = rays_processed / total_rays
+                progress_callback(progress)
+                # Emit partial result snapshot at source completion points (~5% intervals)
+                if partial_result_callback and progress >= 0.05:
+                    partial_detectors = {}
+                    for det_name, dr in det_results.items():
+                        partial_detectors[det_name] = DetectorResult(
+                            detector_name=det_name,
+                            grid=dr.grid.copy(),
+                            total_hits=dr.total_hits,
+                            total_flux=dr.total_flux,
+                        )
+                    partial = SimulationResult(
+                        detectors=partial_detectors,
+                        ray_paths=[],
+                        escaped_flux=escaped_flux,
+                        total_emitted_flux=total_emitted_flux,
+                        source_count=src_idx + 1,
+                    )
+                    partial_result_callback(partial)
 
         # Compute far-field candela distributions for far_field sphere detectors
         for sd in sphere_dets:
