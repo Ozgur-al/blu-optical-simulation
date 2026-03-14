@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-14T20:32:53.551Z"
+last_updated: "2026-03-14T21:44:52.525Z"
 progress:
   total_phases: 5
-  completed_phases: 4
-  total_plans: 15
-  completed_plans: 11
+  completed_phases: 3
+  total_plans: 16
+  completed_plans: 13
 ---
 
 ---
@@ -72,6 +72,7 @@ Progress: [█████████░] 80%
 | Phase 04 P02 | 5 | 2 tasks | 5 files |
 | Phase 04 P03 | 5 min | 3 tasks | 6 files |
 | Phase 03-performance-acceleration P02 | 20 | 2 tasks | 7 files |
+| Phase 05-ui-rewamp P03 | 5 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -124,6 +125,9 @@ Recent decisions affecting current work:
 - [Phase 04-04]: BSDF delete guard checks all optical_properties for bsdf_profile_name references before allowing delete — prevents dangling references
 - [Phase 04-04]: Far-field lobe cleared before each refresh via clear_farfield_lobe() — avoids mesh accumulation across simulation runs
 - [Phase 04-04]: Cylinder and prism placed under Solid Bodies (not Surfaces) in object tree — volumetric refractive objects need face-children pattern
+- [Phase 05-03]: CollapsibleSection uses QToolButton with setArrowType for expand/collapse indicator
+- [Phase 05-03]: ObjectTree icon cache at class level (_ICONS dict); programmatic QPainter circles avoid image files
+- [Phase 05-03]: duplicate_requested signal defined in ObjectTree but wired by MainWindow (avoids Plan 02 conflict)
 
 ### Roadmap Evolution
 
