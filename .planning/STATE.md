@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-03-14T19:58:00Z"
+last_updated: "2026-03-14T20:06:00Z"
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 15
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # Project State
@@ -22,12 +22,12 @@ See: .planning/PROJECT.md (updated 2026-03-14)
 
 ## Current Position
 
-Phase: 4 of 5 (Advanced Materials and Geometry) — IN PROGRESS
-Plan: 3 of 4 in current phase — COMPLETE
-Status: Phase 4 Plan 03 SUMMARY created. Cylinder/prism solid bodies complete: SolidCylinder, SolidPrism, analytic intersection, Fresnel/TIR dispatch, I/O round-trip, 3D viewport rendering.
-Last activity: 2026-03-14 — Plan 04-03 SUMMARY created (solid_body.py, tracer.py intersection, project_io.py, viewport_3d.py mesh rendering)
+Phase: 4 of 5 (Advanced Materials and Geometry) — COMPLETE (awaiting human verification of Plan 04)
+Plan: 4 of 4 in current phase — AWAITING CHECKPOINT
+Status: Phase 4 Plan 04 SUMMARY created. GUI panels complete: BSDFPanel, FarFieldPanel, SolidCylinderForm, SolidPrismForm, 3D intensity lobe, MainWindow wiring. Awaiting human verification (checkpoint:human-verify).
+Last activity: 2026-03-14 — Plan 04-04 SUMMARY created (bsdf_panel.py, far_field_panel.py, properties_panel.py, viewport_3d.py, object_tree.py, main_window.py)
 
-Progress: [████████░░] 77%
+Progress: [█████████░] 80%
 
 ## Performance Metrics
 
@@ -107,6 +107,10 @@ Recent decisions affecting current work:
 - [Phase 04-03]: PrismCap polygon containment uses precomputed 2D edge normals in local u/v coords — avoids 3D cross-product per edge per ray in hot path
 - [Phase 04-03]: Prism side faces are standard Rectangle objects — reuses _intersect_plane_accel without a new intersection function
 - [Phase 04-03]: Geometry-relative epsilon max(1e-6, min(radius, length/2)*1e-4) for cylinder/prism prevents TIR self-intersection on thin shapes
+- [Phase 04-04]: FarFieldPanel polar display uses (I*sin(theta), I*cos(theta)) mirrored to negative half — matches goniophotometer convention
+- [Phase 04-04]: BSDF delete guard checks all optical_properties for bsdf_profile_name references before allowing delete — prevents dangling references
+- [Phase 04-04]: Far-field lobe cleared before each refresh via clear_farfield_lobe() — avoids mesh accumulation across simulation runs
+- [Phase 04-04]: Cylinder and prism placed under Solid Bodies (not Surfaces) in object tree — volumetric refractive objects need face-children pattern
 
 ### Roadmap Evolution
 
@@ -126,5 +130,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-14
-Stopped at: Completed 04-03-PLAN.md SUMMARY (cylinder/prism solid bodies: analytic intersection, Fresnel/TIR dispatch, I/O round-trip, viewport mesh rendering)
+Stopped at: 04-04-PLAN.md — checkpoint:human-verify (Task 3 awaiting user verification of BSDF panel, far-field panel, 3D intensity lobe, cylinder/prism UI)
 Resume file: None
