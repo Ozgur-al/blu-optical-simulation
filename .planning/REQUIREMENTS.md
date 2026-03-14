@@ -91,28 +91,28 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| LGP-01 | — | Pending |
-| LGP-02 | — | Pending |
-| LGP-03 | — | Pending |
-| SPEC-01 | — | Pending |
-| SPEC-02 | — | Pending |
-| SPEC-03 | — | Pending |
-| SPEC-04 | — | Pending |
-| SPEC-05 | — | Pending |
-| GEOM-01 | — | Pending |
-| GEOM-02 | — | Pending |
-| GEOM-03 | — | Pending |
-| PERF-01 | — | Pending |
-| PERF-02 | — | Pending |
-| PERF-03 | — | Pending |
-| BRDF-01 | — | Pending |
-| DET-01 | — | Pending |
+| LGP-01 | Phase 1 | Pending |
+| LGP-02 | Phase 1 | Pending |
+| LGP-03 | Phase 1 | Pending |
+| SPEC-01 | Phase 2 | Pending |
+| SPEC-02 | Phase 2 | Pending |
+| SPEC-03 | Phase 2 | Pending |
+| SPEC-04 | Phase 2 | Pending |
+| SPEC-05 | Phase 2 | Pending |
+| GEOM-01 | Phase 1 | Pending |
+| GEOM-02 | Phase 4 | Pending |
+| GEOM-03 | Phase 4 | Pending |
+| PERF-01 | Phase 3 | Pending |
+| PERF-02 | Phase 3 | Pending |
+| PERF-03 | Phase 3 | Pending |
+| BRDF-01 | Phase 4 | Pending |
+| DET-01 | Phase 4 | Pending |
 
 **Coverage:**
 - v1 requirements: 16 total
-- Mapped to phases: 0
-- Unmapped: 16 ⚠️
+- Mapped to phases: 16
+- Unmapped: 0
 
 ---
 *Requirements defined: 2025-07-11*
-*Last updated: 2025-07-11 after initial definition*
+*Last updated: 2026-03-14 — traceability filled after roadmap creation*
