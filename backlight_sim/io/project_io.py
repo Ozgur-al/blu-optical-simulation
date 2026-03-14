@@ -147,6 +147,8 @@ def project_to_dict(project: Project) -> dict:
             "use_multiprocessing": s.use_multiprocessing,
         },
         "angular_distributions": project.angular_distributions,
+        "spd_profiles": project.spd_profiles,
+        "spectral_material_data": project.spectral_material_data,
         "materials": [_mat_to_dict(m) for m in project.materials.values()],
         "optical_properties": [_op_to_dict(op) for op in project.optical_properties.values()],
         "sources": [_src_to_dict(src) for src in project.sources],
@@ -267,6 +269,8 @@ def load_project(path: str | Path) -> Project:
     materials = {d["name"]: _dict_to_mat(d) for d in data.get("materials", [])}
     opt_props = {d["name"]: _dict_to_op(d) for d in data.get("optical_properties", [])}
     distributions = data.get("angular_distributions", {})
+    spd_profiles = data.get("spd_profiles", {})
+    spectral_material_data = data.get("spectral_material_data", {})
     solid_bodies = [_dict_to_solid_box(d) for d in data.get("solid_bodies", [])]
     return Project(
         name=data.get("name", "Untitled"),
@@ -278,5 +282,7 @@ def load_project(path: str | Path) -> Project:
         detectors=[_dict_to_det(d) for d in data.get("detectors", [])],
         sphere_detectors=[_dict_to_sph_det(d) for d in data.get("sphere_detectors", [])],
         angular_distributions=distributions,
+        spd_profiles=spd_profiles,
+        spectral_material_data=spectral_material_data,
         solid_bodies=solid_bodies,
     )

@@ -25,6 +25,7 @@ from backlight_sim.sim.sampling import (
 )
 from backlight_sim.sim.spectral import (
     sample_wavelengths, spectral_bin_centers, N_SPECTRAL_BINS, LAMBDA_MIN, LAMBDA_MAX,
+    get_spd_from_project,
 )
 
 _EPSILON = 1e-6
@@ -146,6 +147,20 @@ class RayTracer:
 
         # Use multiprocessing if enabled and there are multiple sources
         sources = [s for s in self.project.sources if s.enabled]
+
+        # Spectral + MP guard: wavelength-dependent material lookup is not yet
+        # implemented in the MP path (_trace_single_source).  Fall back to
+        # single-thread mode and warn.
+        has_spectral = any(s.spd != "white" for s in sources)
+        if has_spectral and settings.use_multiprocessing:
+            import warnings
+            warnings.warn(
+                "Spectral simulation forcing single-thread mode "
+                "(spectral + multiprocessing is not yet optimized)",
+                stacklevel=2,
+            )
+            return self._run_single(sources, progress_callback)
+
         if (settings.use_multiprocessing and len(sources) > 1
                 and not settings.record_ray_paths):
             return self._run_multiprocess(sources, progress_callback)
@@ -335,9 +350,12 @@ class RayTracer:
             # Per-ray refractive index tracking (starts in air, n=1.0)
             current_n = np.ones(n, dtype=float)
 
-            # Sample wavelengths per ray
+            # Sample wavelengths per ray (use custom project SPD profiles if available)
             if has_spectral:
-                wavelengths = sample_wavelengths(n, source.spd, self.rng)
+                wavelengths = sample_wavelengths(
+                    n, source.spd, self.rng,
+                    spd_profiles=self.project.spd_profiles or None,
+                )
             else:
                 wavelengths = None
 
@@ -535,6 +553,8 @@ class RayTracer:
                         surf_hit_mask, active_idx, best_t, best_obj,
                         origins, directions, weights, alive, surfaces, materials,
                         paths, n_rec,
+                        wavelengths=wavelengths,
+                        spectral_material_data=self.project.spectral_material_data or None,
                     )
 
                 alive[weights < settings.energy_threshold] = False
@@ -577,6 +597,8 @@ class RayTracer:
         self, surf_hit, active_idx, best_t, best_obj,
         origins, directions, weights, alive,
         surfaces, materials, paths, n_rec,
+        wavelengths: np.ndarray | None = None,
+        spectral_material_data: dict | None = None,
     ):
         for si, surf in enumerate(surfaces):
             mask = surf_hit & (best_obj == si)
@@ -605,8 +627,29 @@ class RayTracer:
             # oriented normal pointing away from the incoming ray
             on = np.where(flip[:, None], -normal, normal)
 
+            # Resolve spectral material properties (per-wavelength R/T lookup)
+            optics_name = getattr(surf, "optical_properties_name", "") or surf.material_name
+            spec_data = (spectral_material_data or {}).get(optics_name)
+            if spec_data is not None and wavelengths is not None:
+                ray_wl = wavelengths[hit_idx]
+                spec_wl = np.asarray(spec_data["wavelength_nm"], dtype=float)
+                r_vals = np.interp(ray_wl, spec_wl,
+                                   np.asarray(spec_data["reflectance"], dtype=float))
+                t_data = spec_data.get("transmittance")
+                if t_data is not None:
+                    t_vals_spec = np.interp(ray_wl, spec_wl,
+                                            np.asarray(t_data, dtype=float))
+                else:
+                    t_vals_spec = np.full_like(r_vals, mat.transmittance)
+            else:
+                r_vals = None
+                t_vals_spec = None
+
             if mat.surface_type == "reflector":
-                weights[hit_idx] *= mat.reflectance
+                if r_vals is not None:
+                    weights[hit_idx] *= r_vals
+                else:
+                    weights[hit_idx] *= mat.reflectance
                 new_dirs = _reflect_batch(directions[hit_idx], on, mat.is_diffuse, self.rng)
                 if mat.haze > 0 and not mat.is_diffuse:
                     new_dirs = scatter_haze(new_dirs, mat.haze, self.rng)
@@ -616,7 +659,9 @@ class RayTracer:
             elif mat.surface_type == "diffuser":
                 n_rays = len(hit_idx)
                 roll = self.rng.uniform(size=n_rays)
-                transmits = roll < mat.transmittance
+                # Use per-ray transmittance if available, else scalar
+                t_thresh = t_vals_spec if t_vals_spec is not None else mat.transmittance
+                transmits = roll < t_thresh
 
                 if transmits.any():
                     ti = hit_idx[transmits]
@@ -628,7 +673,10 @@ class RayTracer:
                 reflects = ~transmits
                 if reflects.any():
                     ri = hit_idx[reflects]
-                    weights[ri] *= mat.reflectance
+                    if r_vals is not None:
+                        weights[ri] *= r_vals[reflects]
+                    else:
+                        weights[ri] *= mat.reflectance
                     refl_on = on[reflects]
                     new_dirs = _reflect_batch(directions[ri], refl_on, mat.is_diffuse, self.rng)
                     origins[ri] = hit_pts[reflects] + refl_on * _EPSILON

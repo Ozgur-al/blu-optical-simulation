@@ -34,4 +34,8 @@ class Project:
     solid_bodies: list[SolidBox] = field(default_factory=list)
     # Name -> {"theta_deg": [...], "intensity": [...]}
     angular_distributions: dict[str, dict[str, list[float]]] = field(default_factory=dict)
+    # SPD profiles: { name: {"wavelength_nm": [...], "intensity": [...]} }
+    spd_profiles: dict[str, dict[str, list[float]]] = field(default_factory=dict)
+    # Material spectral data: { optics_name: {"wavelength_nm": [...], "reflectance": [...], "transmittance": [...]} }
+    spectral_material_data: dict[str, dict[str, list[float]]] = field(default_factory=dict)
     settings: SimulationSettings = field(default_factory=SimulationSettings)
