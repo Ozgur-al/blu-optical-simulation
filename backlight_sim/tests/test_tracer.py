@@ -1353,6 +1353,189 @@ def test_project_solid_prisms_default_empty():
 
 
 # ------------------------------------------------------------------
+# Phase 4 Plan 03 — Cylinder/Prism intersection tests
+# ------------------------------------------------------------------
+
+
+def test_cylinder_intersection_basic():
+    """Ray along X-axis through a Z-aligned cylinder at origin hits at two points."""
+    from backlight_sim.sim.tracer import _intersect_rays_cylinder_side
+
+    # Z-aligned cylinder at origin, radius=5, half_length=10
+    center = np.array([0.0, 0.0, 0.0])
+    axis = np.array([0.0, 0.0, 1.0])
+    radius = 5.0
+    half_length = 10.0
+
+    # Ray along +X from x=-20, should hit at x=-5 (t=15) and exit at x=+5 (t=25)
+    origins = np.array([[-20.0, 0.0, 0.0]])
+    dirs = np.array([[1.0, 0.0, 0.0]])
+
+    t = _intersect_rays_cylinder_side(origins, dirs, center, axis, radius, half_length)
+    assert t.shape == (1,)
+    assert not np.isinf(t[0]), "Expected cylinder hit, got inf"
+    # Nearest positive intersection: t=15 (entering at x=-5)
+    assert abs(float(t[0]) - 15.0) < 1e-6, f"Expected t=15, got {t[0]}"
+
+
+def test_cylinder_no_hit():
+    """Ray parallel to and outside cylinder returns inf."""
+    from backlight_sim.sim.tracer import _intersect_rays_cylinder_side
+
+    center = np.array([0.0, 0.0, 0.0])
+    axis = np.array([0.0, 0.0, 1.0])
+    radius = 5.0
+    half_length = 10.0
+
+    # Ray parallel to cylinder axis, far outside (x=10 > radius)
+    origins = np.array([[10.0, 0.0, -15.0]])
+    dirs = np.array([[0.0, 0.0, 1.0]])
+
+    t = _intersect_rays_cylinder_side(origins, dirs, center, axis, radius, half_length)
+    assert np.isinf(float(t[0])), "Expected miss (inf), ray is outside cylinder"
+
+
+def test_cylinder_cap_hit():
+    """Ray along Z-axis through a Z-aligned cylinder hits both caps."""
+    from backlight_sim.sim.tracer import _intersect_rays_disc
+
+    # Bottom cap at z=-5 with outward normal -Z
+    cap_center = np.array([0.0, 0.0, -5.0])
+    cap_normal = np.array([0.0, 0.0, -1.0])
+    radius = 3.0
+
+    # Ray from z=-20 going +Z, should hit the disc at t=15
+    origins = np.array([[0.0, 0.0, -20.0]])
+    dirs = np.array([[0.0, 0.0, 1.0]])
+
+    t = _intersect_rays_disc(origins, dirs, cap_center, cap_normal, radius)
+    assert t.shape == (1,)
+    assert not np.isinf(float(t[0])), "Expected disc hit, got inf"
+    assert abs(float(t[0]) - 15.0) < 1e-6, f"Expected t=15, got {t[0]}"
+
+
+def test_cylinder_cap_miss_outside_radius():
+    """Ray hitting cap plane outside the circular boundary returns inf."""
+    from backlight_sim.sim.tracer import _intersect_rays_disc
+
+    cap_center = np.array([0.0, 0.0, 5.0])
+    cap_normal = np.array([0.0, 0.0, 1.0])
+    radius = 3.0
+
+    # Ray offset in x by 10 — far outside the disc radius
+    origins = np.array([[10.0, 0.0, 0.0]])
+    dirs = np.array([[0.0, 0.0, 1.0]])
+
+    t = _intersect_rays_disc(origins, dirs, cap_center, cap_normal, radius)
+    assert np.isinf(float(t[0])), "Expected miss (outside disc radius)"
+
+
+def test_prism_cap_polygon_reject():
+    """Ray hitting the cap plane outside the polygon boundary is rejected."""
+    from backlight_sim.sim.tracer import _intersect_prism_cap
+    from backlight_sim.core.solid_body import SolidPrism
+
+    prism = SolidPrism("p", [0, 0, 0], [0, 0, 1], n_sides=4,
+                       circumscribed_radius=2.0, length=10.0)
+    faces = prism.get_faces()
+    cap_top = next(f for f in faces if "cap_top" in f.name)
+
+    # Ray hitting cap plane well outside the polygon (x=10, far outside R=2)
+    origins = np.array([[10.0, 0.0, 0.0]])
+    dirs = np.array([[0.0, 0.0, 1.0]])
+
+    t = _intersect_prism_cap(origins, dirs, cap_top)
+    assert np.isinf(float(t[0])), "Expected polygon boundary rejection"
+
+
+def test_prism_intersection_triangle():
+    """Ray through a triangular prism: enters one side face, exits another."""
+    from backlight_sim.core.solid_body import SolidPrism
+    from backlight_sim.core.materials import Material
+    from backlight_sim.core.sources import PointSource
+    from backlight_sim.core.detectors import DetectorSurface
+    from backlight_sim.core.project_model import Project, SimulationSettings
+    from backlight_sim.sim.tracer import RayTracer
+
+    # Triangular glass prism at center, Z-aligned, with a detector above
+    mat = Material("glass", surface_type="reflector", reflectance=0.0,
+                   absorption=0.0, refractive_index=1.5)
+    prism = SolidPrism("tri_prism", center=[0, 0, 5], axis=[0, 0, 1],
+                       n_sides=3, circumscribed_radius=5.0, length=8.0)
+    src = PointSource("s", np.array([0.0, 0.0, 0.0]), flux=1000.0,
+                      distribution="lambertian", direction=np.array([0.0, 0.0, 1.0]))
+    det = DetectorSurface.axis_aligned("det", [0, 0, 15], (20, 20), 2, 1.0, (20, 20))
+    proj = Project(name="prism_test", sources=[src],
+                   materials={"glass": mat},
+                   detectors=[det], settings=SimulationSettings(
+                       rays_per_source=2000, max_bounces=20,
+                       energy_threshold=0.001, random_seed=42, record_ray_paths=0))
+    proj.solid_prisms = [prism]
+    result = RayTracer(proj).run()
+    det_r = result.detectors["det"]
+    assert det_r.total_flux > 0, "Expected detector flux through glass prism"
+
+
+def test_cylinder_fresnel():
+    """Ray entering a glass cylinder: verify non-zero detector flux (Fresnel integration test)."""
+    from backlight_sim.core.solid_body import SolidCylinder
+    from backlight_sim.core.materials import Material
+    from backlight_sim.core.sources import PointSource
+    from backlight_sim.core.detectors import DetectorSurface
+    from backlight_sim.core.project_model import Project, SimulationSettings
+    from backlight_sim.sim.tracer import RayTracer
+
+    mat = Material("glass", surface_type="reflector", reflectance=0.0,
+                   absorption=0.0, refractive_index=1.49)
+    cyl = SolidCylinder("rod", center=[0, 0, 5], axis=[0, 0, 1],
+                        radius=3.0, length=6.0)
+    cyl.material_name = "glass"
+    src = PointSource("s", np.array([0.0, 0.0, 0.0]), flux=1000.0,
+                      distribution="lambertian", direction=np.array([0.0, 0.0, 1.0]))
+    det = DetectorSurface.axis_aligned("det", [0, 0, 15], (20, 20), 2, 1.0, (20, 20))
+    proj = Project(name="cyl_test", sources=[src],
+                   materials={"glass": mat},
+                   detectors=[det], settings=SimulationSettings(
+                       rays_per_source=3000, max_bounces=20,
+                       energy_threshold=0.001, random_seed=42, record_ray_paths=0))
+    proj.solid_cylinders = [cyl]
+    result = RayTracer(proj).run()
+    det_r = result.detectors["det"]
+    assert det_r.total_flux > 0, "Expected detector flux through glass cylinder"
+
+
+def test_cylinder_prism_io_roundtrip():
+    """SolidCylinder and SolidPrism survive project JSON save/load round-trip."""
+    from backlight_sim.io.project_io import save_project, load_project
+    from backlight_sim.core.solid_body import SolidCylinder, SolidPrism
+    import tempfile, os
+
+    p = Project(name="io_test")
+    p.solid_cylinders = [
+        SolidCylinder("cyl", [1, 2, 3], [0, 0, 1], radius=4.0, length=12.0,
+                      face_optics={"side": "coating"})
+    ]
+    p.solid_prisms = [
+        SolidPrism("prism", [0, 0, 0], [0, 0, 1], n_sides=6,
+                   circumscribed_radius=5.0, length=10.0)
+    ]
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        path = f.name
+    try:
+        save_project(p, path)
+        p2 = load_project(path)
+        assert len(p2.solid_cylinders) == 1
+        assert p2.solid_cylinders[0].name == "cyl"
+        assert abs(p2.solid_cylinders[0].radius - 4.0) < 1e-9
+        assert p2.solid_cylinders[0].face_optics.get("side") == "coating"
+        assert len(p2.solid_prisms) == 1
+        assert p2.solid_prisms[0].name == "prism"
+        assert p2.solid_prisms[0].n_sides == 6
+    finally:
+        os.unlink(path)
+
+
+# ------------------------------------------------------------------
 # Phase 4 Plan 01 — BSDF engine tests
 # ------------------------------------------------------------------
 
