@@ -112,7 +112,11 @@ Plans:
   2. SolidBox.face_optics per-face material overrides are consumed by the tracer during bounce dispatch
   3. Wavelength-dependent R/T from spectral_material_data is applied in Fresnel branches for SolidBox/Cylinder/Prism (type=3/4/5)
   4. Surfaces with both BSDF and spectral data apply wavelength-dependent R/T before BSDF scattering (no silent exclusion)
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — Cylinder/Prism MP dispatch + sb_stats merge in _trace_single_source and _run_multiprocess
+- [ ] 06-02-PLAN.md — SolidBox face_optics consumption, spectral n(lambda) in Fresnel branches, BSDF+spectral composition
 
 ### Phase 7: UI + Spectral Display Fixes
 **Goal**: All UI features work end-to-end (duplicate action, tab persistence) and spectral display paths are complete (chromaticity scatter, live preview color mode)
@@ -138,5 +142,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. Performance Acceleration | 2/2 | Complete   | 2026-03-14 |
 | 4. Advanced Materials and Geometry | 5/5 | Complete   | 2026-03-14 |
 | 5. UI Revamp | 4/4 | Complete   | 2026-03-14 |
-| 6. Tracer Cross-Phase Wiring | 0/? | Planned   | — |
+| 6. Tracer Cross-Phase Wiring | 0/2 | Planned   | — |
 | 7. UI + Spectral Display Fixes | 0/? | Planned   | — |
