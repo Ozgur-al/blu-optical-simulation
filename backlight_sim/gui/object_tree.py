@@ -56,17 +56,32 @@ class ObjectTree(QTreeWidget):
                         child.setForeground(0, QColor(150, 150, 150))
                         child.setToolTip(0, "Disabled")
 
-        # Solid Bodies: parent/child tree (box -> faces)
+        # Solid Bodies: parent/child tree (box -> faces, cylinder -> caps+side, prism -> caps+sides)
         sb_group = self._group_items["Solid Bodies"]
         sb_group.takeChildren()
         for box in getattr(project, "solid_bodies", []):
-            parent_item = QTreeWidgetItem(sb_group, [box.name])
+            parent_item = QTreeWidgetItem(sb_group, [f"[Box] {box.name}"])
+            parent_item.setData(0, Qt.ItemDataRole.UserRole, ("box", box.name))
             parent_item.setExpanded(True)
             for face_id in ("top", "bottom", "left", "right", "front", "back"):
                 face_item = QTreeWidgetItem(parent_item, [face_id])
                 if face_id in box.coupling_edges:
                     face_item.setForeground(0, QColor(50, 180, 50))
                     face_item.setToolTip(0, "Coupling edge (light enters here)")
+        for cyl in getattr(project, "solid_cylinders", []):
+            parent_item = QTreeWidgetItem(sb_group, [f"[Cyl] {cyl.name}"])
+            parent_item.setData(0, Qt.ItemDataRole.UserRole, ("cylinder", cyl.name))
+            parent_item.setExpanded(True)
+            for face_id in ("top_cap", "bottom_cap", "side"):
+                QTreeWidgetItem(parent_item, [face_id])
+        for prism in getattr(project, "solid_prisms", []):
+            parent_item = QTreeWidgetItem(sb_group, [f"[Prism] {prism.name}"])
+            parent_item.setData(0, Qt.ItemDataRole.UserRole, ("prism", prism.name))
+            parent_item.setExpanded(True)
+            QTreeWidgetItem(parent_item, ["cap_top"])
+            QTreeWidgetItem(parent_item, ["cap_bottom"])
+            for i in range(prism.n_sides):
+                QTreeWidgetItem(parent_item, [f"side_{i}"])
 
     def _item_group_and_name(self, item: QTreeWidgetItem) -> tuple[str, str]:
         """Return (group, name) for an item, handling Solid Bodies' face nodes."""
@@ -74,12 +89,34 @@ class ObjectTree(QTreeWidget):
         if parent is None:
             return "", ""
         grandparent = parent.parent()
-        # Face node: parent is the SolidBox node, grandparent is "Solid Bodies" group header
+        # Face node: parent is a solid body node, grandparent is "Solid Bodies" group header
         if grandparent is not None and grandparent.parent() is None and grandparent.text(0) == "Solid Bodies":
-            # This is a face child: emit as "Solid Bodies" / "BoxName::face_id"
-            box_name = parent.text(0)
+            # Determine actual body name from UserRole data stored on parent
+            user_data = parent.data(0, Qt.ItemDataRole.UserRole)
+            if user_data:
+                body_type, body_name = user_data
+            else:
+                # Legacy: strip prefix tag if present
+                body_name = parent.text(0)
+                for prefix in ("[Box] ", "[Cyl] ", "[Prism] "):
+                    if body_name.startswith(prefix):
+                        body_name = body_name[len(prefix):]
+                        break
             face_id = item.text(0)
-            return "Solid Bodies", f"{box_name}::{face_id}"
+            return "Solid Bodies", f"{body_name}::{face_id}"
+        # Solid body parent node (level directly under group header)
+        if parent.parent() is None and parent.text(0) == "Solid Bodies":
+            # Item is a solid body node itself
+            user_data = item.data(0, Qt.ItemDataRole.UserRole)
+            if user_data:
+                body_type, body_name = user_data
+                return f"Solid Bodies:{body_type}", body_name
+            # Fallback: strip prefix
+            name = item.text(0)
+            for prefix in ("[Box] ", "[Cyl] ", "[Prism] "):
+                if name.startswith(prefix):
+                    return "Solid Bodies:box", name[len(prefix):]
+            return "Solid Bodies:box", name
         # Normal item: parent is a group header (no grandparent)
         group = parent.text(0)
         name = item.text(0)
@@ -122,14 +159,19 @@ class ObjectTree(QTreeWidget):
         if item.parent() is None:
             group = item.text(0)
             if group == "Solid Bodies":
-                action = menu.addAction("Add Solid Box")
+                a1 = menu.addAction("Add Solid Box")
+                a1.triggered.connect(lambda: self.add_requested.emit("Solid Bodies:box"))
+                a2 = menu.addAction("Add Cylinder")
+                a2.triggered.connect(lambda: self.add_requested.emit("Solid Bodies:cylinder"))
+                a3 = menu.addAction("Add Prism")
+                a3.triggered.connect(lambda: self.add_requested.emit("Solid Bodies:prism"))
             else:
                 action = menu.addAction(f"Add {group[:-1]}")  # "Sources" -> "Add Source"
-            action.triggered.connect(lambda: self.add_requested.emit(group))
+                action.triggered.connect(lambda: self.add_requested.emit(group))
         else:
             # Clicked on an object (or face node)
             group, name = self._item_group_and_name(item)
-            if group == "Solid Bodies" and "::" in name:
+            if group.startswith("Solid Bodies") and "::" in name:
                 # Face node — no delete action (faces can't be deleted individually)
                 pass
             elif group:

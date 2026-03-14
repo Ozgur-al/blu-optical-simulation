@@ -12,7 +12,7 @@ from backlight_sim.core.materials import Material, OpticalProperties, default_co
 from backlight_sim.core.sources import PointSource
 from backlight_sim.core.detectors import DetectorSurface, SphereDetector
 from backlight_sim.core.project_model import Project, SimulationSettings
-from backlight_sim.core.solid_body import SolidBox
+from backlight_sim.core.solid_body import SolidBox, SolidCylinder, SolidPrism
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +93,7 @@ def _mat_to_dict(m: Material) -> dict:
         "is_diffuse": m.is_diffuse,
         "haze": m.haze,
         "refractive_index": m.refractive_index,
+        "bsdf_profile_name": getattr(m, "bsdf_profile_name", ""),
         "color": list(m.color) if m.color is not None else None,
     }
 
@@ -106,8 +107,59 @@ def _op_to_dict(op: OpticalProperties) -> dict:
         "transmittance": op.transmittance,
         "is_diffuse": op.is_diffuse,
         "haze": op.haze,
+        "bsdf_profile_name": op.bsdf_profile_name,
         "color": list(op.color) if op.color is not None else None,
     }
+
+
+def _solid_cylinder_to_dict(c: SolidCylinder) -> dict:
+    return {
+        "name": c.name,
+        "center": _v(c.center),
+        "axis": _v(c.axis),
+        "radius": c.radius,
+        "length": c.length,
+        "material_name": c.material_name,
+        "face_optics": c.face_optics,
+    }
+
+
+def _solid_prism_to_dict(p: SolidPrism) -> dict:
+    return {
+        "name": p.name,
+        "center": _v(p.center),
+        "axis": _v(p.axis),
+        "n_sides": p.n_sides,
+        "circumscribed_radius": p.circumscribed_radius,
+        "length": p.length,
+        "material_name": p.material_name,
+        "face_optics": p.face_optics,
+    }
+
+
+def _dict_to_solid_cylinder(d: dict) -> SolidCylinder:
+    return SolidCylinder(
+        name=d["name"],
+        center=_a(d["center"]),
+        axis=_a(d["axis"]),
+        radius=d.get("radius", 5.0),
+        length=d.get("length", 10.0),
+        material_name=d.get("material_name", "pmma"),
+        face_optics=d.get("face_optics", {}),
+    )
+
+
+def _dict_to_solid_prism(d: dict) -> SolidPrism:
+    return SolidPrism(
+        name=d["name"],
+        center=_a(d["center"]),
+        axis=_a(d["axis"]),
+        n_sides=d.get("n_sides", 6),
+        circumscribed_radius=d.get("circumscribed_radius", 5.0),
+        length=d.get("length", 10.0),
+        material_name=d.get("material_name", "pmma"),
+        face_optics=d.get("face_optics", {}),
+    )
 
 
 def _solid_box_to_dict(b: SolidBox) -> dict:
@@ -146,6 +198,9 @@ def project_to_dict(project: Project) -> dict:
             "flux_unit": s.flux_unit,
             "angle_unit": s.angle_unit,
             "use_multiprocessing": s.use_multiprocessing,
+            "adaptive_sampling": s.adaptive_sampling,
+            "convergence_cv_target": s.convergence_cv_target,
+            "check_interval": s.check_interval,
         },
         "angular_distributions": project.angular_distributions,
         "spd_profiles": project.spd_profiles,
@@ -157,6 +212,9 @@ def project_to_dict(project: Project) -> dict:
         "detectors": [_det_to_dict(d) for d in project.detectors],
         "sphere_detectors": [_sph_det_to_dict(d) for d in project.sphere_detectors],
         "solid_bodies": [_solid_box_to_dict(b) for b in project.solid_bodies],
+        "solid_cylinders": [_solid_cylinder_to_dict(c) for c in getattr(project, "solid_cylinders", [])],
+        "solid_prisms": [_solid_prism_to_dict(p) for p in getattr(project, "solid_prisms", [])],
+        "bsdf_profiles": getattr(project, "bsdf_profiles", {}),
     }
 
 
@@ -233,6 +291,7 @@ def _dict_to_mat(d: dict) -> Material:
         is_diffuse=d.get("is_diffuse", True),
         haze=d.get("haze", 0.0),
         refractive_index=d.get("refractive_index", 1.0),
+        bsdf_profile_name=d.get("bsdf_profile_name", ""),
         color=tuple(color),
     )
 
@@ -250,6 +309,7 @@ def _dict_to_op(d: dict) -> OpticalProperties:
         transmittance=d.get("transmittance", 0.0),
         is_diffuse=d.get("is_diffuse", True),
         haze=d.get("haze", 0.0),
+        bsdf_profile_name=d.get("bsdf_profile_name", ""),
         color=tuple(color),
     )
 
@@ -267,6 +327,9 @@ def load_project(path: str | Path) -> Project:
         flux_unit=s.get("flux_unit", "lm"),
         angle_unit=s.get("angle_unit", "deg"),
         use_multiprocessing=s.get("use_multiprocessing", False),
+        adaptive_sampling=s.get("adaptive_sampling", True),
+        convergence_cv_target=s.get("convergence_cv_target", 2.0),
+        check_interval=s.get("check_interval", 1000),
     )
     materials = {d["name"]: _dict_to_mat(d) for d in data.get("materials", [])}
     opt_props = {d["name"]: _dict_to_op(d) for d in data.get("optical_properties", [])}
@@ -274,6 +337,9 @@ def load_project(path: str | Path) -> Project:
     spd_profiles = data.get("spd_profiles", {})
     spectral_material_data = data.get("spectral_material_data", {})
     solid_bodies = [_dict_to_solid_box(d) for d in data.get("solid_bodies", [])]
+    solid_cylinders = [_dict_to_solid_cylinder(d) for d in data.get("solid_cylinders", [])]
+    solid_prisms = [_dict_to_solid_prism(d) for d in data.get("solid_prisms", [])]
+    bsdf_profiles = data.get("bsdf_profiles", {})
     return Project(
         name=data.get("name", "Untitled"),
         settings=settings,
@@ -287,4 +353,7 @@ def load_project(path: str | Path) -> Project:
         spd_profiles=spd_profiles,
         spectral_material_data=spectral_material_data,
         solid_bodies=solid_bodies,
+        solid_cylinders=solid_cylinders,
+        solid_prisms=solid_prisms,
+        bsdf_profiles=bsdf_profiles,
     )

@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 
 from backlight_sim.core.detectors import DetectorSurface, SphereDetector
 from backlight_sim.core.geometry import Rectangle
-from backlight_sim.core.solid_body import SolidBox, FACE_NAMES
+from backlight_sim.core.solid_body import SolidBox, SolidCylinder, SolidPrism, FACE_NAMES
 
 
 _AXIS_MAP = {
@@ -121,7 +121,9 @@ class PropertiesPanel(QStackedWidget):
         empty.setStyleSheet("color: gray; padding: 8px;")
         self.addWidget(empty)
 
-        for form_cls in (SourceForm, SurfaceForm, MaterialForm, OpticalPropertiesForm, DetectorForm, SphereDetectorForm, SettingsForm, BatchForm, SolidBoxForm, FaceForm):
+        for form_cls in (SourceForm, SurfaceForm, MaterialForm, OpticalPropertiesForm,
+                         DetectorForm, SphereDetectorForm, SettingsForm, BatchForm,
+                         SolidBoxForm, FaceForm, SolidCylinderForm, SolidPrismForm):
             form = form_cls()
             form.changed.connect(self.properties_changed)
             self.addWidget(form)
@@ -162,9 +164,9 @@ class PropertiesPanel(QStackedWidget):
         self._settingsform.load(settings)
         self.setCurrentWidget(self._settingsform)
 
-    def show_optical_properties(self, op):
+    def show_optical_properties(self, op, bsdf_names: list[str] | None = None):
         self._finalize_active_editor()
-        self._opticalpropertiesform.load(op)
+        self._opticalpropertiesform.load(op, bsdf_names=bsdf_names)
         self.setCurrentWidget(self._opticalpropertiesform)
 
     def show_batch(self, group: str, objects: list, distribution_names=None, mat_names=None):
@@ -181,6 +183,16 @@ class PropertiesPanel(QStackedWidget):
         self._finalize_active_editor()
         self._faceform.load(box, face_id, opt_prop_names)
         self.setCurrentWidget(self._faceform)
+
+    def show_solid_cylinder(self, cyl: "SolidCylinder", mat_names: list[str]):
+        self._finalize_active_editor()
+        self._solidcylinderform.load(cyl, mat_names)
+        self.setCurrentWidget(self._solidcylinderform)
+
+    def show_solid_prism(self, prism: "SolidPrism", mat_names: list[str]):
+        self._finalize_active_editor()
+        self._solidprismform.load(prism, mat_names)
+        self.setCurrentWidget(self._solidprismform)
 
     def clear_selection(self):
         self._finalize_active_editor()
@@ -816,7 +828,11 @@ class MaterialForm(QWidget):
 
 
 class OpticalPropertiesForm(QWidget):
-    """Editor for OpticalProperties (per-surface optical behavior)."""
+    """Editor for OpticalProperties (per-surface optical behavior).
+
+    Includes a BSDF profile dropdown: when a BSDF profile is selected,
+    the manual reflectance/transmittance/mode/haze fields are greyed out.
+    """
 
     changed = Signal()
 
@@ -826,6 +842,12 @@ class OpticalPropertiesForm(QWidget):
         self._name = _name_edit()
         self._type = QComboBox()
         self._type.addItems(["reflector", "absorber", "diffuser"])
+        self._bsdf_combo = QComboBox()
+        self._bsdf_combo.addItem("(None)")
+        self._bsdf_combo.setToolTip(
+            "Assign a BSDF profile to this optical property.\n"
+            "When set, manual reflectance/transmittance fields are bypassed."
+        )
         self._ref = _dspin(0, 1, 3, 0.9, 0.01)
         self._abs = _dspin(0, 1, 3, 0.1, 0.01)
         self._trn = _dspin(0, 1, 3, 0.0, 0.01)
@@ -837,6 +859,7 @@ class OpticalPropertiesForm(QWidget):
         fl.addRow(QLabel("<b>Optical Properties</b>"))
         fl.addRow("Name:", self._name)
         fl.addRow("Surface type:", self._type)
+        fl.addRow("BSDF profile:", self._bsdf_combo)
         fl.addRow("Reflectance:", self._ref)
         fl.addRow("Absorption:", self._abs)
         fl.addRow("Transmittance:", self._trn)
@@ -846,18 +869,47 @@ class OpticalPropertiesForm(QWidget):
         self._op = None
         self._loading = False
         self._color = (0.55, 0.65, 1.0)
+        # Manual fields list for grey-out logic
+        self._manual_fields = [self._ref, self._abs, self._trn, self._mode, self._haze]
         for w in (self._ref, self._abs, self._trn, self._haze):
             w.valueChanged.connect(self._apply)
         self._type.currentIndexChanged.connect(self._apply)
         self._mode.currentIndexChanged.connect(self._apply)
+        self._bsdf_combo.currentIndexChanged.connect(self._on_bsdf_changed)
         self._name.editingFinished.connect(self._apply)
         self._update_color_button()
 
-    def load(self, op):
+    def refresh_bsdf_names(self, bsdf_names: list[str]):
+        """Update the BSDF dropdown with profile names from the project."""
+        self._loading = True
+        blocker = QSignalBlocker(self._bsdf_combo)
+        current = self._bsdf_combo.currentText()
+        self._bsdf_combo.clear()
+        self._bsdf_combo.addItem("(None)")
+        for name in bsdf_names:
+            self._bsdf_combo.addItem(name)
+        # Restore selection
+        idx = self._bsdf_combo.findText(current)
+        if idx >= 0:
+            self._bsdf_combo.setCurrentIndex(idx)
+        self._loading = False
+        del blocker
+
+    def _on_bsdf_changed(self, _idx: int):
+        if self._loading:
+            return
+        selected = self._bsdf_combo.currentText()
+        bsdf_active = (selected != "(None)")
+        for w in self._manual_fields:
+            w.setEnabled(not bsdf_active)
+        self._apply()
+
+    def load(self, op, bsdf_names: list[str] | None = None):
         self._loading = True
         self._op = op
         blockers = [QSignalBlocker(w) for w in (
-            self._name, self._type, self._ref, self._abs, self._trn, self._mode, self._haze)]
+            self._name, self._type, self._ref, self._abs, self._trn,
+            self._mode, self._haze, self._bsdf_combo)]
         self._name.setText(op.name)
         self._type.setCurrentIndex(["reflector", "absorber", "diffuser"].index(op.surface_type))
         self._ref.setValue(op.reflectance)
@@ -867,6 +919,24 @@ class OpticalPropertiesForm(QWidget):
         self._haze.setValue(op.haze)
         self._color = tuple(op.color)
         self._update_color_button()
+        # BSDF dropdown
+        if bsdf_names is not None:
+            self._bsdf_combo.clear()
+            self._bsdf_combo.addItem("(None)")
+            for name in bsdf_names:
+                self._bsdf_combo.addItem(name)
+        bsdf_name = getattr(op, "bsdf_profile_name", "")
+        if bsdf_name:
+            idx = self._bsdf_combo.findText(bsdf_name)
+            if idx >= 0:
+                self._bsdf_combo.setCurrentIndex(idx)
+            else:
+                self._bsdf_combo.setCurrentIndex(0)
+        else:
+            self._bsdf_combo.setCurrentIndex(0)
+        bsdf_active = bsdf_name != ""
+        for w in self._manual_fields:
+            w.setEnabled(not bsdf_active)
         self._loading = False
         del blockers
 
@@ -902,6 +972,8 @@ class OpticalPropertiesForm(QWidget):
         self._op.is_diffuse = self._mode.currentIndex() == 0
         self._op.haze = self._haze.value()
         self._op.color = self._color
+        bsdf_text = self._bsdf_combo.currentText()
+        self._op.bsdf_profile_name = "" if bsdf_text == "(None)" else bsdf_text
         self.changed.emit()
 
 
@@ -1021,6 +1093,12 @@ class SphereDetectorForm(QWidget):
         self._n_theta = QSpinBox()
         self._n_theta.setRange(4, 180)
         self._n_theta.setValue(36)
+        self._mode = QComboBox()
+        self._mode.addItems(["near_field", "far_field"])
+        self._mode.setToolTip(
+            "near_field: bins by hit position on sphere\n"
+            "far_field: bins by ray direction; produces candela distribution"
+        )
         fl.addRow(QLabel("<b>Sphere Detector</b>"))
         fl.addRow("Name:", self._name)
         fl.addRow("Center X:", self._cx)
@@ -1029,19 +1107,22 @@ class SphereDetectorForm(QWidget):
         fl.addRow("Radius:", self._radius)
         fl.addRow("Phi bins:", self._n_phi)
         fl.addRow("Theta bins:", self._n_theta)
+        fl.addRow("Mode:", self._mode)
         self._det = None
         self._loading = False
         for w in (self._cx, self._cy, self._cz, self._radius):
             w.valueChanged.connect(self._apply)
         self._n_phi.valueChanged.connect(self._apply)
         self._n_theta.valueChanged.connect(self._apply)
+        self._mode.currentIndexChanged.connect(self._apply)
         self._name.editingFinished.connect(self._apply)
 
     def load(self, det: SphereDetector):
         self._loading = True
         self._det = det
         blockers = [QSignalBlocker(w) for w in (
-            self._name, self._cx, self._cy, self._cz, self._radius, self._n_phi, self._n_theta)]
+            self._name, self._cx, self._cy, self._cz, self._radius,
+            self._n_phi, self._n_theta, self._mode)]
         self._name.setText(det.name)
         self._cx.setValue(det.center[0])
         self._cy.setValue(det.center[1])
@@ -1049,6 +1130,10 @@ class SphereDetectorForm(QWidget):
         self._radius.setValue(det.radius)
         self._n_phi.setValue(det.resolution[0])
         self._n_theta.setValue(det.resolution[1])
+        mode = getattr(det, "mode", "near_field")
+        idx = self._mode.findText(mode)
+        if idx >= 0:
+            self._mode.setCurrentIndex(idx)
         self._loading = False
         del blockers
 
@@ -1062,13 +1147,14 @@ class SphereDetectorForm(QWidget):
         self._det.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
         self._det.radius = self._radius.value()
         self._det.resolution = (self._n_phi.value(), self._n_theta.value())
+        self._det.mode = self._mode.currentText()
         self.changed.emit()
 
 
 _QUALITY_PRESETS = {
-    "Quick":    dict(rays=1_000,   bounces=20,  rec=50),
-    "Standard": dict(rays=10_000,  bounces=50,  rec=200),
-    "High":     dict(rays=100_000, bounces=100, rec=500),
+    "Quick":    dict(rays=1_000,   bounces=20,  rec=50,  cv=5.0),
+    "Standard": dict(rays=10_000,  bounces=50,  rec=200, cv=2.0),
+    "High":     dict(rays=100_000, bounces=100, rec=500, cv=1.0),
 }
 
 
@@ -1117,6 +1203,28 @@ class SettingsForm(QWidget):
         self._angle_unit.addItems(["deg", "rad"])
         self._mp = QCheckBox("Enable multiprocessing")
         self._mp.setToolTip("Parallelize across sources (no ray path recording)")
+
+        # Adaptive sampling controls
+        self._adaptive = QCheckBox("Adaptive sampling")
+        self._adaptive.setToolTip(
+            "Stop ray generation per source when detector CV% drops below threshold"
+        )
+        self._adaptive.setChecked(True)
+        self._cv_target = QDoubleSpinBox()
+        self._cv_target.setRange(0.1, 20.0)
+        self._cv_target.setSingleStep(0.5)
+        self._cv_target.setDecimals(1)
+        self._cv_target.setValue(2.0)
+        self._cv_target.setSuffix(" %")
+        self._cv_target.setToolTip(
+            "Stop when detector CV (coefficient of variation) drops below this value"
+        )
+        self._check_interval = QSpinBox()
+        self._check_interval.setRange(100, 100_000)
+        self._check_interval.setSingleStep(100)
+        self._check_interval.setValue(1000)
+        self._check_interval.setToolTip("Check convergence every N rays per source")
+
         fl.addRow("Rays per source:", self._rays)
         fl.addRow("Max bounces:", self._bounce)
         fl.addRow("Energy threshold:", self._thresh)
@@ -1126,6 +1234,9 @@ class SettingsForm(QWidget):
         fl.addRow("Flux unit:", self._flux_unit)
         fl.addRow("Angle unit:", self._angle_unit)
         fl.addRow("", self._mp)
+        fl.addRow("", self._adaptive)
+        fl.addRow("CV target:", self._cv_target)
+        fl.addRow("Check interval:", self._check_interval)
         self._s = None
         self._loading = False
         self._rays.valueChanged.connect(self._apply)
@@ -1137,6 +1248,10 @@ class SettingsForm(QWidget):
         self._flux_unit.currentIndexChanged.connect(self._apply)
         self._angle_unit.currentIndexChanged.connect(self._apply)
         self._mp.toggled.connect(self._apply)
+        self._adaptive.toggled.connect(self._apply)
+        self._adaptive.toggled.connect(self._on_adaptive_toggled)
+        self._cv_target.valueChanged.connect(self._apply)
+        self._check_interval.valueChanged.connect(self._apply)
 
     def load(self, s):
         self._loading = True
@@ -1151,6 +1266,9 @@ class SettingsForm(QWidget):
             QSignalBlocker(self._flux_unit),
             QSignalBlocker(self._angle_unit),
             QSignalBlocker(self._mp),
+            QSignalBlocker(self._adaptive),
+            QSignalBlocker(self._cv_target),
+            QSignalBlocker(self._check_interval),
         ]
         self._rays.setValue(s.rays_per_source)
         self._bounce.setValue(s.max_bounces)
@@ -1167,13 +1285,25 @@ class SettingsForm(QWidget):
         if idx >= 0:
             self._angle_unit.setCurrentIndex(idx)
         self._mp.setChecked(s.use_multiprocessing)
+        adaptive = getattr(s, "adaptive_sampling", True)
+        self._adaptive.setChecked(adaptive)
+        self._cv_target.setValue(getattr(s, "convergence_cv_target", 2.0))
+        self._check_interval.setValue(getattr(s, "check_interval", 1000))
+        self._cv_target.setEnabled(adaptive)
+        self._check_interval.setEnabled(adaptive)
         self._loading = False
         del blockers
+
+    def _on_adaptive_toggled(self, checked: bool):
+        self._cv_target.setEnabled(checked)
+        self._check_interval.setEnabled(checked)
 
     def _apply_preset(self, vals: dict):
         self._rays.setValue(vals["rays"])
         self._bounce.setValue(vals["bounces"])
         self._rec.setValue(vals["rec"])
+        if "cv" in vals:
+            self._cv_target.setValue(vals["cv"])
         # _apply fires automatically via valueChanged signals
 
     def _apply(self):
@@ -1188,6 +1318,10 @@ class SettingsForm(QWidget):
         self._s.flux_unit = self._flux_unit.currentText()
         self._s.angle_unit = self._angle_unit.currentText()
         self._s.use_multiprocessing = self._mp.isChecked()
+        if hasattr(self._s, "adaptive_sampling"):
+            self._s.adaptive_sampling = self._adaptive.isChecked()
+            self._s.convergence_cv_target = self._cv_target.value()
+            self._s.check_interval = self._check_interval.value()
         self.changed.emit()
 
 
@@ -1613,4 +1747,189 @@ class FaceForm(QWidget):
             self._box.face_optics.pop(self._face_id, None)
         else:
             self._box.face_optics[self._face_id] = selected
+        self.changed.emit()
+
+
+class SolidCylinderForm(QWidget):
+    """Property editor for a SolidCylinder."""
+
+    changed = Signal()
+
+    def __init__(self):
+        super().__init__()
+        fl = QFormLayout(self)
+        fl.addRow(QLabel("<b>Solid Cylinder</b>"))
+
+        self._name = _name_edit()
+        self._cx = _dspin()
+        self._cy = _dspin()
+        self._cz = _dspin()
+        self._ax = _dspin(-1.0, 1.0, 4, 0.0, 0.01)
+        self._ay = _dspin(-1.0, 1.0, 4, 0.0, 0.01)
+        self._az = _dspin(-1.0, 1.0, 4, 1.0, 0.01)
+        self._radius = _dspin(0.01, 9999, 3, 5.0, 0.5)
+        self._length = _dspin(0.01, 9999, 3, 10.0, 0.5)
+        self._mat = QComboBox()
+
+        fl.addRow("Name:", self._name)
+        fl.addRow("Center X:", self._cx)
+        fl.addRow("Center Y:", self._cy)
+        fl.addRow("Center Z:", self._cz)
+        fl.addRow("Axis X:", self._ax)
+        fl.addRow("Axis Y:", self._ay)
+        fl.addRow("Axis Z:", self._az)
+        fl.addRow("Radius:", self._radius)
+        fl.addRow("Length:", self._length)
+        fl.addRow("Material:", self._mat)
+
+        self._cyl: SolidCylinder | None = None
+        self._loading = False
+
+        for w in (self._cx, self._cy, self._cz, self._ax, self._ay, self._az,
+                  self._radius, self._length):
+            w.valueChanged.connect(self._apply)
+        self._mat.currentIndexChanged.connect(self._apply)
+        self._name.editingFinished.connect(self._apply)
+
+    def load(self, cyl: SolidCylinder, mat_names: list[str]):
+        self._loading = True
+        self._cyl = cyl
+        blockers = [
+            QSignalBlocker(self._name),
+            QSignalBlocker(self._cx), QSignalBlocker(self._cy), QSignalBlocker(self._cz),
+            QSignalBlocker(self._ax), QSignalBlocker(self._ay), QSignalBlocker(self._az),
+            QSignalBlocker(self._radius), QSignalBlocker(self._length),
+            QSignalBlocker(self._mat),
+        ]
+        self._name.setText(cyl.name)
+        self._cx.setValue(float(cyl.center[0]))
+        self._cy.setValue(float(cyl.center[1]))
+        self._cz.setValue(float(cyl.center[2]))
+        self._ax.setValue(float(cyl.axis[0]))
+        self._ay.setValue(float(cyl.axis[1]))
+        self._az.setValue(float(cyl.axis[2]))
+        self._radius.setValue(float(cyl.radius))
+        self._length.setValue(float(cyl.length))
+        self._mat.clear()
+        self._mat.addItems(mat_names)
+        midx = self._mat.findText(cyl.material_name)
+        if midx >= 0:
+            self._mat.setCurrentIndex(midx)
+        self._loading = False
+        del blockers
+
+    def _apply(self):
+        if self._cyl is None or self._loading:
+            return
+        name = self._name.text().strip()
+        if not name:
+            return
+        self._cyl.name = name
+        self._cyl.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
+        axis = np.array([self._ax.value(), self._ay.value(), self._az.value()])
+        norm = np.linalg.norm(axis)
+        if norm > 1e-9:
+            axis = axis / norm
+        self._cyl.axis = axis
+        self._cyl.radius = self._radius.value()
+        self._cyl.length = self._length.value()
+        if self._mat.currentText():
+            self._cyl.material_name = self._mat.currentText()
+        self.changed.emit()
+
+
+class SolidPrismForm(QWidget):
+    """Property editor for a SolidPrism."""
+
+    changed = Signal()
+
+    def __init__(self):
+        super().__init__()
+        fl = QFormLayout(self)
+        fl.addRow(QLabel("<b>Solid Prism</b>"))
+
+        self._name = _name_edit()
+        self._cx = _dspin()
+        self._cy = _dspin()
+        self._cz = _dspin()
+        self._ax = _dspin(-1.0, 1.0, 4, 0.0, 0.01)
+        self._ay = _dspin(-1.0, 1.0, 4, 0.0, 0.01)
+        self._az = _dspin(-1.0, 1.0, 4, 1.0, 0.01)
+        self._n_sides = QSpinBox()
+        self._n_sides.setRange(3, 12)
+        self._n_sides.setValue(6)
+        self._n_sides.setToolTip("Number of prism sides (3=triangle, 4=square, 6=hexagon, etc.)")
+        self._circ_r = _dspin(0.01, 9999, 3, 5.0, 0.5)
+        self._circ_r.setToolTip("Circumscribed radius: distance from center to corner vertex")
+        self._length = _dspin(0.01, 9999, 3, 10.0, 0.5)
+        self._mat = QComboBox()
+
+        fl.addRow("Name:", self._name)
+        fl.addRow("Center X:", self._cx)
+        fl.addRow("Center Y:", self._cy)
+        fl.addRow("Center Z:", self._cz)
+        fl.addRow("Axis X:", self._ax)
+        fl.addRow("Axis Y:", self._ay)
+        fl.addRow("Axis Z:", self._az)
+        fl.addRow("Sides:", self._n_sides)
+        fl.addRow("Circ. radius:", self._circ_r)
+        fl.addRow("Length:", self._length)
+        fl.addRow("Material:", self._mat)
+
+        self._prism: SolidPrism | None = None
+        self._loading = False
+
+        for w in (self._cx, self._cy, self._cz, self._ax, self._ay, self._az,
+                  self._circ_r, self._length):
+            w.valueChanged.connect(self._apply)
+        self._n_sides.valueChanged.connect(self._apply)
+        self._mat.currentIndexChanged.connect(self._apply)
+        self._name.editingFinished.connect(self._apply)
+
+    def load(self, prism: SolidPrism, mat_names: list[str]):
+        self._loading = True
+        self._prism = prism
+        blockers = [
+            QSignalBlocker(self._name),
+            QSignalBlocker(self._cx), QSignalBlocker(self._cy), QSignalBlocker(self._cz),
+            QSignalBlocker(self._ax), QSignalBlocker(self._ay), QSignalBlocker(self._az),
+            QSignalBlocker(self._n_sides), QSignalBlocker(self._circ_r),
+            QSignalBlocker(self._length), QSignalBlocker(self._mat),
+        ]
+        self._name.setText(prism.name)
+        self._cx.setValue(float(prism.center[0]))
+        self._cy.setValue(float(prism.center[1]))
+        self._cz.setValue(float(prism.center[2]))
+        self._ax.setValue(float(prism.axis[0]))
+        self._ay.setValue(float(prism.axis[1]))
+        self._az.setValue(float(prism.axis[2]))
+        self._n_sides.setValue(int(prism.n_sides))
+        self._circ_r.setValue(float(prism.circumscribed_radius))
+        self._length.setValue(float(prism.length))
+        self._mat.clear()
+        self._mat.addItems(mat_names)
+        midx = self._mat.findText(prism.material_name)
+        if midx >= 0:
+            self._mat.setCurrentIndex(midx)
+        self._loading = False
+        del blockers
+
+    def _apply(self):
+        if self._prism is None or self._loading:
+            return
+        name = self._name.text().strip()
+        if not name:
+            return
+        self._prism.name = name
+        self._prism.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
+        axis = np.array([self._ax.value(), self._ay.value(), self._az.value()])
+        norm = np.linalg.norm(axis)
+        if norm > 1e-9:
+            axis = axis / norm
+        self._prism.axis = axis
+        self._prism.n_sides = self._n_sides.value()
+        self._prism.circumscribed_radius = self._circ_r.value()
+        self._prism.length = self._length.value()
+        if self._mat.currentText():
+            self._prism.material_name = self._mat.currentText()
         self.changed.emit()

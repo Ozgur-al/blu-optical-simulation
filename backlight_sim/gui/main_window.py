@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import numpy as np
+import pyqtgraph as pg
 from PySide6.QtWidgets import (
     QMainWindow, QSplitter, QTabWidget,
     QProgressBar, QStatusBar, QMessageBox, QFileDialog, QPushButton,
@@ -17,13 +18,15 @@ from backlight_sim.core.geometry import Rectangle
 from backlight_sim.core.materials import Material
 from backlight_sim.core.sources import PointSource
 from backlight_sim.core.detectors import DetectorSurface, SphereDetector, SimulationResult
-from backlight_sim.core.solid_body import SolidBox
+from backlight_sim.core.solid_body import SolidBox, SolidCylinder, SolidPrism
 from backlight_sim.sim.tracer import RayTracer
 from backlight_sim.gui.object_tree import ObjectTree
 from backlight_sim.gui.properties_panel import PropertiesPanel
 from backlight_sim.gui.viewport_3d import Viewport3D
 from backlight_sim.gui.heatmap_panel import HeatmapPanel
 from backlight_sim.gui.angular_distribution_panel import AngularDistributionPanel
+from backlight_sim.gui.bsdf_panel import BSDFPanel
+from backlight_sim.gui.far_field_panel import FarFieldPanel
 from backlight_sim.gui.measurement_dialog import MeasurementDialog
 from backlight_sim.gui.plot_tab import PlotTab
 from backlight_sim.gui.receiver_3d import Receiver3DWidget
@@ -34,6 +37,7 @@ from backlight_sim.sim.accel import _NUMBA_AVAILABLE, warmup_jit_kernels
 
 class SimulationThread(QThread):
     progress     = Signal(float)
+    convergence  = Signal(int, int, float)   # (src_idx, n_rays, cv_pct)
     finished_sim = Signal(object)
 
     def __init__(self, project: Project):
@@ -41,7 +45,10 @@ class SimulationThread(QThread):
         self.tracer = RayTracer(project)
 
     def run(self):
-        result = self.tracer.run(progress_callback=self.progress.emit)
+        result = self.tracer.run(
+            progress_callback=self.progress.emit,
+            convergence_callback=self.convergence.emit,
+        )
         self.finished_sim.emit(result)
 
     def cancel(self):
@@ -59,6 +66,10 @@ class MainWindow(QMainWindow):
         merge_default_profiles(self._project)
         self._sim_thread = None
         self._counter = {"Sources": 0, "Surfaces": 0, "Materials": 0, "Optical Properties": 0, "Detectors": 0, "Sphere Detectors": 0, "Solid Bodies": 0}
+        # Convergence plot data: src_idx -> (rays_list, cv_list)
+        self._conv_data: dict[int, tuple[list, list]] = {}
+        self._conv_curves: dict[int, pg.PlotDataItem] = {}
+        self._conv_target_line = None
         self._last_save_path = None
         self._selected_group = None
         self._selected_name = None
@@ -114,12 +125,17 @@ class MainWindow(QMainWindow):
         self._receiver_3d = Receiver3DWidget()
         self._spectral_panel = SpectralDataPanel()
         self._spectral_panel.set_project(self._project)
+        self._bsdf_panel = BSDFPanel()
+        self._bsdf_panel.set_project(self._project)
+        self._far_field_panel = FarFieldPanel()
         self._center_tabs.addTab(self._viewport, "3D View")
         self._center_tabs.addTab(self._heatmap, "Heatmap")
+        self._center_tabs.addTab(self._far_field_panel, "Far-field")
         self._center_tabs.addTab(self._receiver_3d, "3D Receiver")
         self._center_tabs.addTab(self._plot_tab, "Plots")
         self._center_tabs.addTab(self._ang_dist, "Angular Dist.")
         self._center_tabs.addTab(self._spectral_panel, "Spectral Data")
+        self._center_tabs.addTab(self._bsdf_panel, "BSDF")
         main_split.addWidget(self._center_tabs)
 
         self._properties = PropertiesPanel()
@@ -138,6 +154,23 @@ class MainWindow(QMainWindow):
             QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, log_dock)
+
+        # ---- convergence dock ----
+        self._conv_plot = pg.PlotWidget()
+        self._conv_plot.setLabel("left", "CV", units="%")
+        self._conv_plot.setLabel("bottom", "Rays traced")
+        self._conv_plot.setTitle("Convergence (CV% per source)")
+        self._conv_plot.setMaximumHeight(140)
+        self._conv_plot.showGrid(x=True, y=True, alpha=0.3)
+        self._conv_plot.addLegend()
+        self._conv_dock = QDockWidget("Convergence")
+        self._conv_dock.setWidget(self._conv_plot)
+        self._conv_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable |
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._conv_dock)
+        self._conv_dock.hide()
 
         status = QStatusBar()
         self._progress = QProgressBar()
@@ -251,6 +284,7 @@ class MainWindow(QMainWindow):
         self._properties.properties_changed.connect(self._on_properties_changed)
         self._ang_dist.distributions_changed.connect(self._on_distributions_changed)
         self._spectral_panel.spectral_data_changed.connect(self._mark_dirty)
+        self._bsdf_panel.bsdf_changed.connect(self._on_bsdf_changed)
 
     # ------------------------------------------------------------------
     # Dirty-flag & unsaved-changes guard
@@ -351,6 +385,7 @@ class MainWindow(QMainWindow):
         self._ang_dist.set_project(self._project)
         self._heatmap.set_project(self._project)
         self._spectral_panel.set_project(self._project)
+        self._bsdf_panel.set_project(self._project)
         self._properties.clear_selection()
         self._heatmap.clear()
         self._plot_tab.clear()
@@ -375,6 +410,7 @@ class MainWindow(QMainWindow):
             self._ang_dist.set_project(self._project)
             self._heatmap.set_project(self._project)
             self._spectral_panel.set_project(self._project)
+            self._bsdf_panel.set_project(self._project)
             self._properties.clear_selection()
             self._heatmap.clear()
             self._viewport.clear_ray_paths()
@@ -421,6 +457,7 @@ class MainWindow(QMainWindow):
         self._ang_dist.set_project(self._project)
         self._heatmap.set_project(self._project)
         self._spectral_panel.set_project(self._project)
+        self._bsdf_panel.set_project(self._project)
         self._properties.clear_selection()
         self._heatmap.clear()
         self._viewport.clear_ray_paths()
@@ -460,25 +497,35 @@ class MainWindow(QMainWindow):
             if obj: self._properties.show_material(obj, project=self._project)
         elif group == "Optical Properties":
             obj = self._project.optical_properties.get(name)
-            if obj: self._properties.show_optical_properties(obj)
+            if obj:
+                bsdf_names = list(getattr(self._project, "bsdf_profiles", {}).keys())
+                self._properties.show_optical_properties(obj, bsdf_names=bsdf_names)
         elif group == "Detectors":
             obj = next((d for d in self._project.detectors if d.name == name), None)
             if obj: self._properties.show_detector(obj)
         elif group == "Sphere Detectors":
             obj = next((d for d in self._project.sphere_detectors if d.name == name), None)
             if obj: self._properties.show_sphere_detector(obj)
-        elif group == "Solid Bodies":
-            if "::" in name:
-                # Face node: "BoxName::face_id"
-                box_name, face_id = name.split("::", 1)
-                box = next((b for b in self._project.solid_bodies if b.name == box_name), None)
-                if box:
-                    self._properties.show_face(box, face_id, list(self._project.optical_properties.keys()))
-            else:
-                # Box-level node
-                box = next((b for b in self._project.solid_bodies if b.name == name), None)
-                if box:
-                    self._properties.show_solid_box(box, list(self._project.materials.keys()))
+        elif group == "Solid Bodies" and "::" in name:
+            # Face node: "BodyName::face_id" — determine parent body type
+            body_name, face_id = name.split("::", 1)
+            # Check all solid body types for a matching name
+            box = next((b for b in self._project.solid_bodies if b.name == body_name), None)
+            if box:
+                self._properties.show_face(box, face_id, list(self._project.optical_properties.keys()))
+            # Cylinder/prism face nodes don't have per-face property editors yet — skip
+        elif group == "Solid Bodies:box":
+            box = next((b for b in self._project.solid_bodies if b.name == name), None)
+            if box:
+                self._properties.show_solid_box(box, list(self._project.materials.keys()))
+        elif group == "Solid Bodies:cylinder":
+            cyl = next((c for c in getattr(self._project, "solid_cylinders", []) if c.name == name), None)
+            if cyl:
+                self._properties.show_solid_cylinder(cyl, list(self._project.materials.keys()))
+        elif group == "Solid Bodies:prism":
+            prism = next((p for p in getattr(self._project, "solid_prisms", []) if p.name == name), None)
+            if prism:
+                self._properties.show_solid_prism(prism, list(self._project.materials.keys()))
 
     def _on_multi_selected(self, group: str, names: list):
         """Handle Ctrl+click multi-selection of objects in the same group."""
@@ -502,6 +549,17 @@ class MainWindow(QMainWindow):
         self._mark_dirty()
         self._refresh_timer.start()  # debounced — coalesces rapid edits
 
+    def _on_bsdf_changed(self):
+        """Called when a BSDF profile is imported or deleted."""
+        self._mark_dirty()
+        # Refresh BSDF dropdown in properties panel if an optical property is selected
+        if self._selected_group == "Optical Properties" and self._selected_name:
+            op = self._project.optical_properties.get(self._selected_name)
+            if op:
+                bsdf_names = list(getattr(self._project, "bsdf_profiles", {}).keys())
+                self._properties.show_optical_properties(op, bsdf_names=bsdf_names)
+        self._refresh_all()
+
     def _on_distributions_changed(self):
         self._mark_dirty()
         if self._selected_group == "Sources" and self._selected_name:
@@ -512,8 +570,13 @@ class MainWindow(QMainWindow):
 
     def _add_object(self, group):
         self._mark_dirty()
-        self._counter[group] += 1
-        n = self._counter[group]
+        # Normalize legacy group key for counter lookup
+        counter_key = group.split(":")[0] if ":" in group else group
+        if counter_key not in self._counter:
+            self._counter[counter_key] = 0
+        self._counter[counter_key] += 1
+        n = self._counter[counter_key]
+        default_mat = next(iter(self._project.materials), "pmma")
         if group == "Sources":
             self._project.sources.append(
                 PointSource(f"Source_{n}", np.array([0.0, 0.0, 0.5]),
@@ -535,14 +598,43 @@ class MainWindow(QMainWindow):
             from backlight_sim.core.materials import OpticalProperties
             on = f"OptProp_{n}"
             self._project.optical_properties[on] = OpticalProperties(on)
-        elif group == "Solid Bodies":
+        elif group in ("Solid Bodies", "Solid Bodies:box"):
             box_name = f"Box_{n}"
             self._project.solid_bodies.append(
                 SolidBox(
                     name=box_name,
                     center=np.array([0.0, 0.0, 0.0]),
                     dimensions=(50.0, 30.0, 3.0),
-                    material_name=next(iter(self._project.materials), "pmma"),
+                    material_name=default_mat,
+                )
+            )
+        elif group == "Solid Bodies:cylinder":
+            cyl_name = f"Cylinder_{n}"
+            if not hasattr(self._project, "solid_cylinders"):
+                self._project.solid_cylinders = []
+            self._project.solid_cylinders.append(
+                SolidCylinder(
+                    name=cyl_name,
+                    center=np.array([0.0, 0.0, 0.0]),
+                    axis=np.array([0.0, 0.0, 1.0]),
+                    radius=5.0,
+                    length=10.0,
+                    material_name=default_mat,
+                )
+            )
+        elif group == "Solid Bodies:prism":
+            prism_name = f"Prism_{n}"
+            if not hasattr(self._project, "solid_prisms"):
+                self._project.solid_prisms = []
+            self._project.solid_prisms.append(
+                SolidPrism(
+                    name=prism_name,
+                    center=np.array([0.0, 0.0, 0.0]),
+                    axis=np.array([0.0, 0.0, 1.0]),
+                    n_sides=6,
+                    circumscribed_radius=5.0,
+                    length=10.0,
+                    material_name=default_mat,
                 )
             )
         self._refresh_all()
@@ -561,16 +653,18 @@ class MainWindow(QMainWindow):
             self._project.materials.pop(name, None)
         elif group == "Optical Properties":
             self._project.optical_properties.pop(name, None)
-        elif group == "Solid Bodies":
-            if "::" in name:
-                # Face node — clear the face optics override (don't delete the face)
-                box_name, face_id = name.split("::", 1)
-                box = next((b for b in self._project.solid_bodies if b.name == box_name), None)
-                if box:
-                    box.face_optics.pop(face_id, None)
-            else:
-                # Box-level — remove the SolidBox
-                self._project.solid_bodies = [b for b in self._project.solid_bodies if b.name != name]
+        elif group == "Solid Bodies" and "::" in name:
+            # Face node — clear the face optics override
+            box_name, face_id = name.split("::", 1)
+            box = next((b for b in self._project.solid_bodies if b.name == box_name), None)
+            if box:
+                box.face_optics.pop(face_id, None)
+        elif group == "Solid Bodies:box":
+            self._project.solid_bodies = [b for b in self._project.solid_bodies if b.name != name]
+        elif group == "Solid Bodies:cylinder":
+            self._project.solid_cylinders = [c for c in getattr(self._project, "solid_cylinders", []) if c.name != name]
+        elif group == "Solid Bodies:prism":
+            self._project.solid_prisms = [p for p in getattr(self._project, "solid_prisms", []) if p.name != name]
         self._clear_selected_object()
         self._properties.clear_selection()
         self._refresh_all()
@@ -629,6 +723,7 @@ class MainWindow(QMainWindow):
         self._ang_dist.set_project(self._project)
         self._heatmap.set_project(self._project)
         self._spectral_panel.set_project(self._project)
+        self._bsdf_panel.set_project(self._project)
         self._properties.clear_selection()
         self._heatmap.clear()
         self._viewport.clear_ray_paths()
@@ -696,6 +791,7 @@ class MainWindow(QMainWindow):
         self._ang_dist.set_project(self._project)
         self._heatmap.set_project(self._project)
         self._spectral_panel.set_project(self._project)
+        self._bsdf_panel.set_project(self._project)
         self._properties.clear_selection()
         self._heatmap.clear()
         self._viewport.clear_ray_paths()
@@ -746,8 +842,19 @@ class MainWindow(QMainWindow):
             f"{s.rays_per_source:,} rays/src, {s.max_bounces} max bounces"
         )
 
+        # Reset convergence plot
+        self._conv_data.clear()
+        self._conv_curves.clear()
+        self._conv_plot.clear()
+        self._conv_plot.addLegend()
+        cv_target = getattr(self._project.settings, "convergence_cv_target", 2.0)
+        self._conv_target_line = self._conv_plot.addLine(
+            y=cv_target, pen=pg.mkPen("r", style=pg.QtCore.Qt.PenStyle.DashLine)
+        )
+
         self._sim_thread = SimulationThread(self._project)
         self._sim_thread.progress.connect(lambda f: self._progress.setValue(int(f * 100)))
+        self._sim_thread.convergence.connect(self._on_convergence_update)
         self._sim_thread.finished_sim.connect(self._on_sim_finished)
         self._sim_thread.start()
 
@@ -766,6 +873,21 @@ class MainWindow(QMainWindow):
         self._heatmap.update_results(result)
         self._plot_tab.update_results(result)
         self._receiver_3d.update_results(result)
+
+        # Update far-field panel if any far-field sphere detector has results
+        for sd in self._project.sphere_detectors:
+            if getattr(sd, "mode", "near_field") == "far_field":
+                sd_result = result.sphere_detectors.get(sd.name) if hasattr(result, "sphere_detectors") else None
+                if sd_result is not None and getattr(sd_result, "candela_grid", None) is not None:
+                    self._far_field_panel.show_result(sd, sd_result)
+                    self._viewport.clear_farfield_lobe()
+                    self._viewport.refresh(self._project)
+                    try:
+                        self._viewport._draw_farfield_lobe(sd, sd_result)
+                    except Exception:
+                        pass
+                    break
+
         self._center_tabs.setCurrentWidget(self._heatmap)
         if result.ray_paths:
             self._viewport.show_ray_paths(result.ray_paths)
@@ -784,3 +906,28 @@ class MainWindow(QMainWindow):
             self._log("Simulation complete.")
 
         self._snapshot_history()
+
+    def _on_convergence_update(self, src_idx: int, n_rays: int, cv_pct: float):
+        """Update the live convergence plot with a new data point from the tracer."""
+        if src_idx not in self._conv_data:
+            self._conv_data[src_idx] = ([], [])
+            src_name = (
+                self._project.sources[src_idx].name
+                if src_idx < len(self._project.sources)
+                else f"Source {src_idx}"
+            )
+            colors = ["y", "c", "g", "m", "w", "r", "b"]
+            color = colors[src_idx % len(colors)]
+            curve = self._conv_plot.plot(
+                [], [], pen=pg.mkPen(color, width=1.5), name=src_name
+            )
+            self._conv_curves[src_idx] = curve
+            # Show dock on first data point
+            if not self._conv_dock.isVisible():
+                self._conv_dock.show()
+
+        rays_list, cv_list = self._conv_data[src_idx]
+        rays_list.append(n_rays)
+        cv_list.append(cv_pct)
+        self._conv_curves[src_idx].setData(rays_list, cv_list)
+
