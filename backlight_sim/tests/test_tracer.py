@@ -704,3 +704,138 @@ def test_spectral_mp_guard_falls_back_to_single_thread():
                for msg in warning_messages), (
         f"Expected spectral/single-thread warning, got: {warning_messages}"
     )
+
+
+# ------------------------------------------------------------------
+# Phase 3 — Numba JIT acceleration tests
+# ------------------------------------------------------------------
+
+
+def test_jit_numba_available_is_bool():
+    """_NUMBA_AVAILABLE must be a bool regardless of whether Numba is installed."""
+    from backlight_sim.sim.accel import _NUMBA_AVAILABLE
+    assert isinstance(_NUMBA_AVAILABLE, bool)
+
+
+def test_jit_warmup_runs_without_error():
+    """warmup_jit_kernels() should complete without raising any exception."""
+    from backlight_sim.sim.accel import warmup_jit_kernels
+    # Should not raise
+    result = warmup_jit_kernels()
+    assert isinstance(result, bool)
+
+
+def test_jit_intersect_plane_matches_numpy():
+    """intersect_plane JIT wrapper should produce same t-values as _intersect_rays_plane."""
+    from backlight_sim.sim.accel import intersect_plane
+    from backlight_sim.sim.tracer import _intersect_rays_plane
+
+    rng = np.random.default_rng(42)
+    # A horizontal plane at z=5, size 20x20
+    normal = np.array([0.0, 0.0, 1.0])
+    center = np.array([0.0, 0.0, 5.0])
+    u_axis = np.array([1.0, 0.0, 0.0])
+    v_axis = np.array([0.0, 1.0, 0.0])
+    size = (20.0, 20.0)
+
+    # 100 random rays starting below the plane pointing generally upward
+    origins = rng.uniform(-5, 5, (100, 3))
+    origins[:, 2] = rng.uniform(-2, 3, 100)  # z in [-2, 3], below plane at z=5
+    # Directions mostly upward
+    dirs_raw = rng.normal(0, 0.3, (100, 3))
+    dirs_raw[:, 2] = np.abs(dirs_raw[:, 2]) + 0.5
+    norms = np.linalg.norm(dirs_raw, axis=1, keepdims=True)
+    directions = dirs_raw / norms
+
+    t_numpy = _intersect_rays_plane(origins, directions, normal, center, u_axis, v_axis, size)
+    t_jit   = intersect_plane(origins, directions, normal, center, u_axis, v_axis, size)
+
+    # Both should give same finite hits
+    np.testing.assert_allclose(t_numpy, t_jit, rtol=1e-10, atol=1e-10,
+                                err_msg="JIT plane intersection differs from NumPy reference")
+
+
+def test_jit_intersect_sphere_matches_numpy():
+    """intersect_sphere JIT wrapper should produce same t-values as _intersect_rays_sphere."""
+    from backlight_sim.sim.accel import intersect_sphere
+    from backlight_sim.sim.tracer import _intersect_rays_sphere
+
+    rng = np.random.default_rng(7)
+    center = np.array([0.0, 0.0, 0.0])
+    radius = 5.0
+
+    # 100 random rays from outside the sphere, pointing inward
+    origins = rng.uniform(-15, 15, (100, 3))
+    # Ensure origins are outside the sphere
+    while True:
+        too_close = np.linalg.norm(origins - center, axis=1) < radius + 0.5
+        if not too_close.any():
+            break
+        origins[too_close] = rng.uniform(-15, 15, (too_close.sum(), 3))
+
+    # Directions pointing toward origin with some spread
+    dirs_raw = center - origins + rng.normal(0, 1.0, (100, 3))
+    norms = np.linalg.norm(dirs_raw, axis=1, keepdims=True)
+    directions = dirs_raw / norms
+
+    t_numpy = _intersect_rays_sphere(origins, directions, center, radius)
+    t_jit   = intersect_sphere(origins, directions, center, radius)
+
+    np.testing.assert_allclose(t_numpy, t_jit, rtol=1e-10, atol=1e-10,
+                                err_msg="JIT sphere intersection differs from NumPy reference")
+
+
+def test_jit_accumulate_grid_matches_numpy():
+    """accumulate_grid_jit should produce identical result to np.add.at scatter-add."""
+    from backlight_sim.sim.accel import accumulate_grid_jit
+
+    rng = np.random.default_rng(13)
+    grid_jit   = np.zeros((20, 30), dtype=float)
+    grid_numpy = np.zeros((20, 30), dtype=float)
+
+    # Random hit indices and weights
+    n_hits = 500
+    iy = rng.integers(0, 20, n_hits)
+    ix = rng.integers(0, 30, n_hits)
+    weights = rng.uniform(0.001, 0.1, n_hits)
+
+    accumulate_grid_jit(grid_jit, iy, ix, weights)
+    np.add.at(grid_numpy, (iy, ix), weights)
+
+    np.testing.assert_array_equal(grid_jit, grid_numpy,
+                                   err_msg="accumulate_grid_jit differs from np.add.at")
+
+
+def test_jit_accumulate_sphere_matches_numpy():
+    """accumulate_sphere_jit should produce identical result to np.add.at."""
+    from backlight_sim.sim.accel import accumulate_sphere_jit
+
+    rng = np.random.default_rng(99)
+    grid_jit   = np.zeros((18, 36), dtype=float)
+    grid_numpy = np.zeros((18, 36), dtype=float)
+
+    n_hits = 300
+    i_theta = rng.integers(0, 18, n_hits)
+    i_phi   = rng.integers(0, 36, n_hits)
+    weights = rng.uniform(0.001, 0.05, n_hits)
+
+    accumulate_sphere_jit(grid_jit, i_theta, i_phi, weights)
+    np.add.at(grid_numpy, (i_theta, i_phi), weights)
+
+    np.testing.assert_array_equal(grid_jit, grid_numpy,
+                                   err_msg="accumulate_sphere_jit differs from np.add.at")
+
+
+def test_simulation_deterministic_with_jit():
+    """Full simulation should give same result on two runs (determinism check with JIT)."""
+    # This also exercises the JIT path once Task 2 is complete (dispatch in tracer)
+    p1 = _make_box_scene(rays_per_source=3000)
+    p2 = _make_box_scene(rays_per_source=3000)
+    r1 = RayTracer(p1).run()
+    r2 = RayTracer(p2).run()
+    # Exact equality — same seed, same code path
+    np.testing.assert_array_equal(
+        r1.detectors["top_detector"].grid,
+        r2.detectors["top_detector"].grid,
+        err_msg="Simulation not deterministic — JIT dispatch may have introduced non-determinism",
+    )
