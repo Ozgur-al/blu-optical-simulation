@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import csv
+
 import numpy as np
+import pyqtgraph as pg
 from PySide6.QtCore import QSignalBlocker, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -11,13 +14,20 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QColorDialog,
+    QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -132,9 +142,9 @@ class PropertiesPanel(QStackedWidget):
         self._surfaceform.load(surf, mat_names, opt_prop_names)
         self.setCurrentWidget(self._surfaceform)
 
-    def show_material(self, mat):
+    def show_material(self, mat, project=None):
         self._finalize_active_editor()
-        self._materialform.load(mat)
+        self._materialform.load(mat, project=project)
         self.setCurrentWidget(self._materialform)
 
     def show_detector(self, det):
@@ -496,7 +506,18 @@ class MaterialForm(QWidget):
 
     def __init__(self):
         super().__init__()
-        fl = QFormLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        # Wrap everything in a scroll area so the form + spectral section fit
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(4, 4, 4, 4)
+
+        # ---- Standard material properties ----
+        fl = QFormLayout()
         self._name = _name_edit()
         self._type = QComboBox()
         self._type.addItems(["reflector", "absorber", "diffuser"])
@@ -520,8 +541,53 @@ class MaterialForm(QWidget):
         fl.addRow("Haze (deg):", self._haze)
         fl.addRow("Refractive Index:", self._ri)
         fl.addRow("Color:", self._color_btn)
+        scroll_layout.addLayout(fl)
+
+        # ---- Spectral R/T section ----
+        self._spec_group = QGroupBox("Spectral R/T")
+        self._spec_group.setCheckable(True)
+        self._spec_group.setChecked(False)
+        spec_layout = QVBoxLayout(self._spec_group)
+
+        spec_btns = QHBoxLayout()
+        self._spec_import_btn = QPushButton("Import CSV")
+        self._spec_import_btn.clicked.connect(self._import_spectral)
+        self._spec_export_btn = QPushButton("Export CSV")
+        self._spec_export_btn.clicked.connect(self._export_spectral)
+        self._spec_clear_btn = QPushButton("Clear")
+        self._spec_clear_btn.clicked.connect(self._clear_spectral)
+        for btn in (self._spec_import_btn, self._spec_export_btn, self._spec_clear_btn):
+            spec_btns.addWidget(btn)
+        spec_btns.addStretch()
+        spec_layout.addLayout(spec_btns)
+
+        self._spec_table = QTableWidget(0, 3)
+        self._spec_table.setHorizontalHeaderLabels(["wavelength_nm", "reflectance", "transmittance"])
+        self._spec_table.horizontalHeader().setStretchLastSection(True)
+        self._spec_table.verticalHeader().setVisible(False)
+        self._spec_table.setMaximumHeight(150)
+        self._spec_table.cellChanged.connect(self._on_spec_table_edited)
+        spec_layout.addWidget(self._spec_table)
+
+        self._spec_plot = pg.PlotWidget()
+        self._spec_plot.setLabel("bottom", "Wavelength (nm)")
+        self._spec_plot.setLabel("left", "Value")
+        self._spec_plot.setTitle("R/T")
+        self._spec_plot.showGrid(x=True, y=True, alpha=0.25)
+        self._spec_plot.addLegend()
+        self._spec_plot.setMaximumHeight(140)
+        spec_layout.addWidget(self._spec_plot)
+
+        scroll_layout.addWidget(self._spec_group)
+        scroll_layout.addStretch()
+
+        scroll.setWidget(scroll_content)
+        outer.addWidget(scroll)
+
         self._mat = None
+        self._project = None
         self._loading = False
+        self._loading_spec_table = False
         self._color = (0.55, 0.65, 1.0)
         for w in (self._ref, self._abs, self._trn, self._haze, self._ri):
             w.valueChanged.connect(self._apply)
@@ -530,9 +596,10 @@ class MaterialForm(QWidget):
         self._name.editingFinished.connect(self._apply)
         self._update_color_button()
 
-    def load(self, mat):
+    def load(self, mat, project=None):
         self._loading = True
         self._mat = mat
+        self._project = project
         blockers = [
             QSignalBlocker(self._name),
             QSignalBlocker(self._type),
@@ -555,6 +622,8 @@ class MaterialForm(QWidget):
         self._update_color_button()
         self._loading = False
         del blockers
+        # Load spectral R/T data
+        self._load_spectral_data()
 
     def _update_color_button(self):
         r = int(round(self._color[0] * 255))
@@ -589,6 +658,160 @@ class MaterialForm(QWidget):
         self._mat.haze = self._haze.value()
         self._mat.refractive_index = self._ri.value()
         self._mat.color = self._color
+        self.changed.emit()
+
+    # ------------------------------------------------------------------
+    # Spectral R/T editor
+    # ------------------------------------------------------------------
+
+    def _load_spectral_data(self):
+        """Load spectral R/T data from project into table and plot."""
+        self._loading_spec_table = True
+        self._spec_table.setRowCount(0)
+        self._spec_plot.clear()
+        if self._project is None or self._mat is None:
+            self._spec_group.setChecked(False)
+            self._loading_spec_table = False
+            return
+        entry = self._project.spectral_material_data.get(self._mat.name)
+        if entry:
+            lam = np.asarray(entry.get("wavelength_nm", []), dtype=float)
+            R = np.asarray(entry.get("reflectance", []), dtype=float)
+            T = np.asarray(entry.get("transmittance", []), dtype=float)
+            self._spec_group.setChecked(True)
+            self._fill_spec_table(lam, R, T)
+            self._plot_spec(lam, R, T)
+        else:
+            self._spec_group.setChecked(False)
+        self._loading_spec_table = False
+
+    def _fill_spec_table(self, lam: np.ndarray, R: np.ndarray, T: np.ndarray):
+        self._loading_spec_table = True
+        self._spec_table.setRowCount(0)
+        for i in range(len(lam)):
+            row = self._spec_table.rowCount()
+            self._spec_table.insertRow(row)
+            rv = float(R[i]) if i < len(R) else 0.0
+            tv = float(T[i]) if i < len(T) else 0.0
+            self._spec_table.setItem(row, 0, QTableWidgetItem(f"{float(lam[i]):.4g}"))
+            self._spec_table.setItem(row, 1, QTableWidgetItem(f"{rv:.6g}"))
+            self._spec_table.setItem(row, 2, QTableWidgetItem(f"{tv:.6g}"))
+        self._loading_spec_table = False
+
+    def _plot_spec(self, lam: np.ndarray, R: np.ndarray, T: np.ndarray):
+        self._spec_plot.clear()
+        if len(lam) == 0:
+            return
+        self._spec_plot.plot(lam, R, pen=pg.mkPen((80, 160, 255), width=2), name="R(λ)")
+        self._spec_plot.plot(lam, T, pen=pg.mkPen((80, 255, 120), width=2), name="T(λ)")
+
+    def _on_spec_table_edited(self, row: int, col: int):
+        if self._loading_spec_table or self._project is None or self._mat is None:
+            return
+        lam, R, T = self._read_spec_table()
+        if lam is None:
+            return
+        self._project.spectral_material_data[self._mat.name] = {
+            "wavelength_nm": lam.tolist(),
+            "reflectance": R.tolist(),
+            "transmittance": T.tolist(),
+        }
+        self._plot_spec(lam, R, T)
+        self.changed.emit()
+
+    def _read_spec_table(self):
+        lam, R, T = [], [], []
+        for row in range(self._spec_table.rowCount()):
+            wi = self._spec_table.item(row, 0)
+            ri = self._spec_table.item(row, 1)
+            ti = self._spec_table.item(row, 2)
+            if wi is None:
+                continue
+            try:
+                lam.append(float(wi.text()))
+                R.append(float(ri.text()) if ri is not None else 0.0)
+                T.append(float(ti.text()) if ti is not None else 0.0)
+            except ValueError:
+                continue
+        if len(lam) < 1:
+            return None, None, None
+        return np.array(lam, dtype=float), np.array(R, dtype=float), np.array(T, dtype=float)
+
+    def _import_spectral(self):
+        if self._project is None or self._mat is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Spectral R/T CSV", "",
+            "CSV files (*.csv *.txt);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            with open(path, newline="", encoding="utf-8") as f:
+                reader = csv.reader(f)
+                rows = [r for r in reader if r and not r[0].startswith("#")]
+            start = 0
+            try:
+                float(rows[0][0])
+            except (ValueError, IndexError):
+                start = 1
+            data = []
+            for r in rows[start:]:
+                if not r:
+                    continue
+                try:
+                    vals = [float(v) for v in r[:3]]
+                    data.append(vals)
+                except ValueError:
+                    continue
+            if not data:
+                raise ValueError("No numeric rows found.")
+            data = np.array(data, dtype=float)
+            lam = data[:, 0]
+            R = data[:, 1] if data.shape[1] > 1 else np.zeros_like(lam)
+            T = data[:, 2] if data.shape[1] > 2 else np.zeros_like(lam)
+        except Exception as exc:
+            QMessageBox.critical(self, "Import Error", str(exc))
+            return
+        self._project.spectral_material_data[self._mat.name] = {
+            "wavelength_nm": lam.tolist(),
+            "reflectance": R.tolist(),
+            "transmittance": T.tolist(),
+        }
+        self._fill_spec_table(lam, R, T)
+        self._plot_spec(lam, R, T)
+        self._spec_group.setChecked(True)
+        self.changed.emit()
+
+    def _export_spectral(self):
+        if self._project is None or self._mat is None:
+            return
+        entry = self._project.spectral_material_data.get(self._mat.name)
+        if not entry:
+            QMessageBox.information(self, "No Data", f"No spectral table for '{self._mat.name}'.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Spectral R/T CSV", f"{self._mat.name}_spectral.csv",
+            "CSV files (*.csv)",
+        )
+        if not path:
+            return
+        lam = np.asarray(entry.get("wavelength_nm", []), dtype=float)
+        R = np.asarray(entry.get("reflectance", []), dtype=float)
+        T = np.asarray(entry.get("transmittance", []), dtype=float)
+        data = np.column_stack([lam, R, T])
+        np.savetxt(
+            path, data, delimiter=",",
+            header="wavelength_nm,reflectance,transmittance", comments="",
+        )
+
+    def _clear_spectral(self):
+        if self._project is None or self._mat is None:
+            return
+        self._project.spectral_material_data.pop(self._mat.name, None)
+        self._spec_table.setRowCount(0)
+        self._spec_plot.clear()
+        self._spec_group.setChecked(False)
         self.changed.emit()
 
 
@@ -969,92 +1192,287 @@ class SettingsForm(QWidget):
 
 
 class BatchForm(QWidget):
-    """Batch-edit form for multiple selected objects of the same type."""
+    """Batch-edit form for multiple selected objects of the same type.
+
+    For sources, dynamically shows ALL PointSource fields.  Each field
+    displays the shared value when all selected sources agree, or a
+    placeholder "--" when they differ.  Changing a value applies it
+    immediately to every selected source.
+    """
 
     changed = Signal()
 
+    _PLACEHOLDER = "--"
+
     def __init__(self):
         super().__init__()
-        fl = QFormLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        self._scroll_content = QWidget()
+        self._form_layout = QFormLayout(self._scroll_content)
+
         self._header = QLabel("Batch Edit")
         self._header.setStyleSheet("font-weight: bold; padding: 4px;")
-        fl.addRow(self._header)
+        self._form_layout.addRow(self._header)
 
-        # Source batch fields
-        self._flux = _dspin(0, 1e7, 1, 100.0, 10.0)
-        self._dist = QComboBox()
-        self._dist.addItems(["isotropic", "lambertian"])
-        self._enabled = QCheckBox()
-        self._enabled.setChecked(True)
-        self._tolerance = _dspin(0, 100, 1, 0.0, 1.0)
-        self._thermal = _dspin(0, 1, 3, 1.0, 0.01)
-        self._src_widgets = []
-        for label, w in [
-            ("Flux:", self._flux),
-            ("Distribution:", self._dist),
-            ("Enabled:", self._enabled),
-            ("Flux tolerance ±%:", self._tolerance),
-            ("Thermal derate:", self._thermal),
-        ]:
-            fl.addRow(label, w)
-            self._src_widgets.extend([fl.itemAt(fl.count() - 1), fl.itemAt(fl.count() - 2)])
+        scroll.setWidget(self._scroll_content)
+        outer.addWidget(scroll)
 
-        # Surface batch fields
-        self._mat = QComboBox()
-        fl.addRow("Material:", self._mat)
+        self._objects: list = []
+        self._group: str = ""
+        self._loading: bool = False
+        # Dynamic source widgets — created on load
+        self._src_widgets: dict[str, QWidget] = {}
+        # Surface batch widgets
+        self._surf_mat: QComboBox | None = None
 
-        self._apply_btn = QPushButton("Apply to All Selected")
-        self._apply_btn.clicked.connect(self._apply)
-        fl.addRow("", self._apply_btn)
+    def _clear_dynamic(self):
+        """Remove all dynamically-created rows from the form (keep header)."""
+        while self._form_layout.rowCount() > 1:
+            self._form_layout.removeRow(1)
+        self._src_widgets.clear()
+        self._surf_mat = None
 
-        self._objects = []
-        self._group = ""
-        self._loading = False
+    # ------------------------------------------------------------------
 
     def load(self, group: str, objects: list, distribution_names=None, mat_names=None):
         self._loading = True
         self._group = group
         self._objects = objects
-        self._header.setText(f"Batch Edit — {len(objects)} {group}")
+        self._clear_dynamic()
+        self._header.setText(f"Batch Edit \u2014 {len(objects)} {group}")
 
-        # Show/hide relevant fields
-        is_src = group == "Sources"
-        is_surf = group == "Surfaces"
-        self._flux.setVisible(is_src)
-        self._dist.setVisible(is_src)
-        self._enabled.setVisible(is_src)
-        self._tolerance.setVisible(is_src)
-        self._thermal.setVisible(is_src)
-        self._mat.setVisible(is_surf)
-
-        if is_src and distribution_names:
-            base = ["isotropic", "lambertian"]
-            extra = [n for n in distribution_names if n not in base]
-            self._dist.clear()
-            self._dist.addItems(base + extra)
-
-        if is_surf and mat_names:
-            self._mat.clear()
-            self._mat.addItems(mat_names)
+        if group == "Sources":
+            self._build_source_fields(objects, distribution_names)
+        elif group == "Surfaces":
+            self._build_surface_fields(objects, mat_names)
+        elif group == "Materials":
+            pass  # No batch fields needed for materials currently
+        elif group == "Detectors":
+            pass
 
         self._loading = False
 
-    def _apply(self):
+    # ------------------------------------------------------------------
+    # Source batch — dynamic fields
+    # ------------------------------------------------------------------
+
+    def _shared_value(self, attr: str):
+        """Return the shared value if all objects agree, else None."""
+        vals = set()
+        for obj in self._objects:
+            v = getattr(obj, attr, None)
+            if isinstance(v, np.ndarray):
+                v = tuple(v.tolist())
+            elif isinstance(v, tuple):
+                v = tuple(v)
+            vals.add(v)
+        if len(vals) == 1:
+            return vals.pop()
+        return None
+
+    def _build_source_fields(self, objects: list, distribution_names=None):
+        fl = self._form_layout
+
+        # Enabled
+        self._src_widgets["enabled"] = cb = QCheckBox()
+        shared = self._shared_value("enabled")
+        if shared is not None:
+            cb.setChecked(shared)
+        else:
+            cb.setTristate(True)
+            cb.setCheckState(cb.checkState().__class__(1))  # Qt.CheckState.PartiallyChecked
+        cb.toggled.connect(self._apply_live)
+        fl.addRow("Enabled:", cb)
+
+        # Position X, Y, Z
+        pos_shared = self._shared_value("position")
+        for i, axis in enumerate(("X", "Y", "Z")):
+            key = f"pos_{axis.lower()}"
+            w = _dspin()
+            if pos_shared is not None:
+                w.setValue(pos_shared[i])
+            else:
+                w.setSpecialValueText(self._PLACEHOLDER)
+                w.setMinimum(w.minimum() - 1)
+                w.setValue(w.minimum())
+            w.valueChanged.connect(self._apply_live)
+            self._src_widgets[key] = w
+            fl.addRow(f"{axis}:", w)
+
+        # Flux
+        w = _dspin(0, 1e7, 1, 100.0, 10.0)
+        shared = self._shared_value("flux")
+        if shared is not None:
+            w.setValue(shared)
+        w.valueChanged.connect(self._apply_live)
+        self._src_widgets["flux"] = w
+        fl.addRow("Flux:", w)
+
+        # Distribution
+        w = QComboBox()
+        base = ["isotropic", "lambertian"]
+        extra = [n for n in (distribution_names or []) if n not in base]
+        w.addItems(base + extra)
+        shared = self._shared_value("distribution")
+        if shared is not None:
+            idx = w.findText(shared)
+            if idx >= 0:
+                w.setCurrentIndex(idx)
+            else:
+                w.addItem(shared)
+                w.setCurrentText(shared)
+        w.currentIndexChanged.connect(self._apply_live)
+        self._src_widgets["distribution"] = w
+        fl.addRow("Distribution:", w)
+
+        # Flux tolerance
+        w = _dspin(0, 100, 1, 0.0, 1.0)
+        shared = self._shared_value("flux_tolerance")
+        if shared is not None:
+            w.setValue(shared)
+        w.valueChanged.connect(self._apply_live)
+        self._src_widgets["flux_tolerance"] = w
+        fl.addRow("Flux tolerance \u00b1%:", w)
+
+        # Current (mA)
+        w = _dspin(0, 1e5, 1, 0.0, 1.0)
+        shared = self._shared_value("current_mA")
+        if shared is not None:
+            w.setValue(shared)
+        w.valueChanged.connect(self._apply_live)
+        self._src_widgets["current_mA"] = w
+        fl.addRow("Current (mA):", w)
+
+        # Flux/mA
+        w = _dspin(0, 1e5, 4, 0.0, 0.01)
+        shared = self._shared_value("flux_per_mA")
+        if shared is not None:
+            w.setValue(shared)
+        w.valueChanged.connect(self._apply_live)
+        self._src_widgets["flux_per_mA"] = w
+        fl.addRow("Flux/mA:", w)
+
+        # Thermal derate
+        w = _dspin(0, 1, 3, 1.0, 0.01)
+        shared = self._shared_value("thermal_derate")
+        if shared is not None:
+            w.setValue(shared)
+        w.valueChanged.connect(self._apply_live)
+        self._src_widgets["thermal_derate"] = w
+        fl.addRow("Thermal derate:", w)
+
+        # LED Color R, G, B
+        color_shared = self._shared_value("color_rgb")
+        color_row = QHBoxLayout()
+        for i, ch in enumerate(("R", "G", "B")):
+            key = f"color_{ch.lower()}"
+            w = _dspin(0, 1, 2, 1.0, 0.05)
+            if color_shared is not None:
+                w.setValue(color_shared[i])
+            w.valueChanged.connect(self._apply_live)
+            self._src_widgets[key] = w
+            color_row.addWidget(QLabel(f"{ch}:"))
+            color_row.addWidget(w)
+        fl.addRow("LED Color:", color_row)
+
+        # SPD
+        w = QComboBox()
+        w.addItems(["white", "warm_white", "cool_white",
+                     "mono_450", "mono_525", "mono_630"])
+        w.setEditable(True)
+        shared = self._shared_value("spd")
+        if shared is not None:
+            if w.findText(shared) < 0:
+                w.addItem(shared)
+            w.setCurrentText(shared)
+        else:
+            w.setEditText(self._PLACEHOLDER)
+        w.currentTextChanged.connect(self._apply_live)
+        self._src_widgets["spd"] = w
+        fl.addRow("SPD:", w)
+
+    # ------------------------------------------------------------------
+    # Surface batch
+    # ------------------------------------------------------------------
+
+    def _build_surface_fields(self, objects: list, mat_names=None):
+        fl = self._form_layout
+        w = QComboBox()
+        if mat_names:
+            w.addItems(mat_names)
+        w.currentIndexChanged.connect(self._apply_live)
+        self._surf_mat = w
+        fl.addRow("Material:", w)
+
+    # ------------------------------------------------------------------
+    # Apply
+    # ------------------------------------------------------------------
+
+    def _apply_live(self):
         if not self._objects or self._loading:
             return
         if self._group == "Sources":
-            for src in self._objects:
-                src.flux = self._flux.value()
-                src.distribution = self._dist.currentText()
-                src.enabled = self._enabled.isChecked()
-                src.flux_tolerance = self._tolerance.value()
-                src.thermal_derate = self._thermal.value()
+            self._apply_sources()
         elif self._group == "Surfaces":
-            mat = self._mat.currentText()
+            self._apply_surfaces()
+        self.changed.emit()
+
+    def _apply_sources(self):
+        ws = self._src_widgets
+        for src in self._objects:
+            # Enabled
+            cb = ws.get("enabled")
+            if cb is not None and not cb.isTristate():
+                src.enabled = cb.isChecked()
+            # Position
+            px = ws.get("pos_x")
+            py = ws.get("pos_y")
+            pz = ws.get("pos_z")
+            if px and py and pz:
+                pos = list(src.position)
+                if px.value() > px.minimum():
+                    pos[0] = px.value()
+                if py.value() > py.minimum():
+                    pos[1] = py.value()
+                if pz.value() > pz.minimum():
+                    pos[2] = pz.value()
+                src.position = np.array(pos)
+            # Scalar fields
+            for attr, key in [
+                ("flux", "flux"),
+                ("flux_tolerance", "flux_tolerance"),
+                ("current_mA", "current_mA"),
+                ("flux_per_mA", "flux_per_mA"),
+                ("thermal_derate", "thermal_derate"),
+            ]:
+                w = ws.get(key)
+                if w is not None:
+                    setattr(src, attr, w.value())
+            # Distribution
+            w = ws.get("distribution")
+            if w is not None:
+                src.distribution = w.currentText()
+            # SPD
+            w = ws.get("spd")
+            if w is not None and w.currentText() != self._PLACEHOLDER:
+                src.spd = w.currentText()
+            # Color
+            cr = ws.get("color_r")
+            cg = ws.get("color_g")
+            cb_c = ws.get("color_b")
+            if cr is not None and cg is not None and cb_c is not None:
+                src.color_rgb = (cr.value(), cg.value(), cb_c.value())
+
+    def _apply_surfaces(self):
+        if self._surf_mat is not None:
+            mat = self._surf_mat.currentText()
             if mat:
                 for surf in self._objects:
                     surf.material_name = mat
-        self.changed.emit()
 
 
 class SolidBoxForm(QWidget):

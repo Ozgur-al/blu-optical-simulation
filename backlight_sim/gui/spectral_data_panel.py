@@ -1,8 +1,7 @@
-"""Spectral Data tab: SPD editor, material spectral tables, blackbody generator, chromaticity diagram."""
+"""Spectral Data tab: SPD editor, blackbody generator, chromaticity diagram."""
 
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
 import numpy as np
@@ -14,7 +13,6 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -36,9 +34,6 @@ from backlight_sim.sim.spectral import (
     _CIE_Z,
     blackbody_spd,
     get_spd,
-    spectral_bin_centers,
-    xy_per_pixel,
-    xyz_per_pixel,
 )
 
 
@@ -60,9 +55,9 @@ def _planckian_locus_xy(
     for T in cct_values:
         lam, spd = blackbody_spd(float(T), n_bins=200)
         # Compute XYZ for this SPD
-        X = float(np.trapz(spd * np.interp(lam, _CIE_LAMBDA, _CIE_X), lam))
-        Y = float(np.trapz(spd * np.interp(lam, _CIE_LAMBDA, _CIE_Y), lam))
-        Z = float(np.trapz(spd * np.interp(lam, _CIE_LAMBDA, _CIE_Z), lam))
+        X = float(np.trapezoid(spd * np.interp(lam, _CIE_LAMBDA, _CIE_X), lam))
+        Y = float(np.trapezoid(spd * np.interp(lam, _CIE_LAMBDA, _CIE_Y), lam))
+        Z = float(np.trapezoid(spd * np.interp(lam, _CIE_LAMBDA, _CIE_Z), lam))
         s = X + Y + Z
         if s > 0:
             xs.append(X / s)
@@ -125,8 +120,7 @@ class SpectralDataPanel(QWidget):
 
     Provides:
     - Source SPD Manager (selector, table editor, plot, blackbody generator)
-    - Material Spectral Tables (selector, table editor, R/T plot)
-    - CIE 1931 Chromaticity Diagram (spectral locus, Planckian locus, per-pixel scatter)
+    - CIE 1931 Chromaticity Diagram (spectral locus, Planckian locus, selected SPD marker)
     """
 
     spectral_data_changed = Signal()
@@ -135,7 +129,6 @@ class SpectralDataPanel(QWidget):
         super().__init__(parent)
         self._project = None
         self._loading_spd_table = False
-        self._loading_mat_table = False
 
         main_layout = QHBoxLayout(self)
 
@@ -184,51 +177,12 @@ class SpectralDataPanel(QWidget):
         self._spd_plot.setLabel("left", "Relative Intensity")
         self._spd_plot.setTitle("SPD")
         self._spd_plot.showGrid(x=True, y=True, alpha=0.25)
+        self._spd_plot.setMouseEnabled(y=False)
+        self._spd_plot.setYRange(0, 1.1, padding=0)
         self._spd_plot.setMaximumHeight(160)
         spd_layout.addWidget(self._spd_plot)
 
         left_splitter.addWidget(spd_box)
-
-        # ---- Material Spectral Tables ----
-        mat_box = QGroupBox("Material Spectral Tables")
-        mat_layout = QVBoxLayout(mat_box)
-
-        mat_top = QHBoxLayout()
-        mat_top.addWidget(QLabel("Material:"))
-        self._mat_selector = QComboBox()
-        self._mat_selector.currentTextChanged.connect(self._on_mat_changed)
-        mat_top.addWidget(self._mat_selector, 1)
-        mat_layout.addLayout(mat_top)
-
-        mat_btns = QHBoxLayout()
-        self._mat_import_btn = QPushButton("Import CSV")
-        self._mat_import_btn.clicked.connect(self._import_mat)
-        self._mat_export_btn = QPushButton("Export CSV")
-        self._mat_export_btn.clicked.connect(self._export_mat)
-        self._mat_clear_btn = QPushButton("Clear")
-        self._mat_clear_btn.clicked.connect(self._clear_mat)
-        for btn in (self._mat_import_btn, self._mat_export_btn, self._mat_clear_btn):
-            mat_btns.addWidget(btn)
-        mat_btns.addStretch()
-        mat_layout.addLayout(mat_btns)
-
-        self._mat_table = QTableWidget(0, 3)
-        self._mat_table.setHorizontalHeaderLabels(["wavelength_nm", "reflectance", "transmittance"])
-        self._mat_table.horizontalHeader().setStretchLastSection(True)
-        self._mat_table.verticalHeader().setVisible(False)
-        self._mat_table.cellChanged.connect(self._on_mat_table_edited)
-        mat_layout.addWidget(self._mat_table, 1)
-
-        self._mat_plot = pg.PlotWidget()
-        self._mat_plot.setLabel("bottom", "Wavelength (nm)")
-        self._mat_plot.setLabel("left", "Value")
-        self._mat_plot.setTitle("Material Spectral Properties")
-        self._mat_plot.showGrid(x=True, y=True, alpha=0.25)
-        self._mat_plot.addLegend()
-        self._mat_plot.setMaximumHeight(160)
-        mat_layout.addWidget(self._mat_plot)
-
-        left_splitter.addWidget(mat_box)
         main_layout.addWidget(left_splitter, 2)
 
         # ---- Chromaticity Diagram ----
@@ -246,11 +200,17 @@ class SpectralDataPanel(QWidget):
         # Draw static loci
         self._draw_static_loci()
 
-        # Scatter item (per-pixel chromaticity — populated after simulation)
+        # Single marker for the selected SPD's chromaticity coordinate
         self._chroma_scatter = pg.ScatterPlotItem(
-            size=3, pen=None, brush=pg.mkBrush(255, 200, 50, 180)
+            size=12, pen=pg.mkPen('w', width=1.5),
+            brush=pg.mkBrush(255, 50, 50, 220),
         )
         self._chroma_plot.addItem(self._chroma_scatter)
+
+        # Label for the chromaticity coordinate
+        self._chroma_label = QLabel("x=-, y=-")
+        self._chroma_label.setStyleSheet("color: gray; font-size: 11px; padding: 2px;")
+        chroma_layout.addWidget(self._chroma_label)
 
         main_layout.addWidget(chroma_box, 1)
 
@@ -285,37 +245,48 @@ class SpectralDataPanel(QWidget):
         """Called by MainWindow when the project changes."""
         self._project = project
         self._refresh_spd_selector()
-        self._refresh_mat_selector()
 
-    def update_chromaticity(self, sim_result) -> None:
-        """Update chromaticity scatter from simulation result.
-
-        Parameters
-        ----------
-        sim_result : SimulationResult
-            Result from RayTracer.run().
-        """
+    def _update_chromaticity_for_spd(self) -> None:
+        """Compute CIE 1931 (x, y) of the currently selected SPD and show as a marker."""
         self._chroma_scatter.clear()
-        if sim_result is None:
+        name = self._spd_selector.currentText()
+        if not name:
+            self._chroma_label.setText("x=-, y=-")
             return
-        # Use first detector with spectral data
-        for dr in sim_result.detectors.values():
-            if dr.grid_spectral is not None:
-                try:
-                    wl = spectral_bin_centers(dr.grid_spectral.shape[2])
-                    xyz = xyz_per_pixel(dr.grid_spectral, wl)
-                    xy = xy_per_pixel(xyz)
-                    # Subsample to limit point count
-                    xs = xy[::4, ::4, 0].ravel()
-                    ys = xy[::4, ::4, 1].ravel()
-                    # Mask zero-luminance pixels
-                    Y = xyz[::4, ::4, 1].ravel()
-                    valid = Y > 1e-10
-                    self._chroma_scatter.setData(xs[valid], ys[valid])
-                except Exception:
-                    pass
-                break
-        # Restore fixed CIE 1931 view range (scatter data must not override it)
+
+        # Get the SPD data
+        lam = intensity = None
+        if name in _BUILTIN_SPD_NAMES:
+            lam, intensity = get_spd(name)
+        elif self._project is not None and name in self._project.spd_profiles:
+            entry = self._project.spd_profiles[name]
+            lam = np.asarray(entry["wavelength_nm"], dtype=float)
+            intensity = np.asarray(entry["intensity"], dtype=float)
+
+        if lam is None or len(lam) < 2:
+            self._chroma_label.setText("x=-, y=-")
+            return
+
+        # Integrate SPD * CIE color matching functions to get X, Y, Z
+        spd_x = np.interp(lam, _CIE_LAMBDA, _CIE_X)
+        spd_y = np.interp(lam, _CIE_LAMBDA, _CIE_Y)
+        spd_z = np.interp(lam, _CIE_LAMBDA, _CIE_Z)
+
+        X = float(np.trapezoid(intensity * spd_x, lam))
+        Y = float(np.trapezoid(intensity * spd_y, lam))
+        Z = float(np.trapezoid(intensity * spd_z, lam))
+
+        s = X + Y + Z
+        if s < 1e-12:
+            self._chroma_label.setText("x=-, y=-")
+            return
+
+        cx = X / s
+        cy = Y / s
+        self._chroma_scatter.setData([cx], [cy])
+        self._chroma_label.setText(f"x={cx:.4f}, y={cy:.4f}")
+
+        # Restore fixed CIE 1931 view range
         self._chroma_plot.setXRange(0.0, 0.85, padding=0.02)
         self._chroma_plot.setYRange(0.0, 0.92, padding=0.02)
 
@@ -359,6 +330,7 @@ class SpectralDataPanel(QWidget):
 
         self._fill_spd_table(lam, intensity, editable=editable)
         self._plot_spd(lam, intensity)
+        self._update_chromaticity_for_spd()
 
     def _fill_spd_table(self, lam: np.ndarray, intensity: np.ndarray, editable: bool = True):
         self._loading_spd_table = True
@@ -379,6 +351,7 @@ class SpectralDataPanel(QWidget):
         self._spd_plot.clear()
         pen = pg.mkPen((255, 200, 50), width=2)
         self._spd_plot.plot(lam, intensity, pen=pen)
+        self._spd_plot.setYRange(0, 1.1, padding=0)
 
     def _on_spd_table_edited(self, row: int, col: int):
         if self._loading_spd_table or self._project is None:
@@ -395,6 +368,7 @@ class SpectralDataPanel(QWidget):
             "intensity": intensity.tolist(),
         }
         self._plot_spd(lam, intensity)
+        self._update_chromaticity_for_spd()
         self.spectral_data_changed.emit()
 
     def _read_spd_table(self) -> tuple[np.ndarray | None, np.ndarray | None]:
@@ -541,185 +515,3 @@ class SpectralDataPanel(QWidget):
             idx += 1
         return name
 
-    # ------------------------------------------------------------------
-    # Material spectral table section
-    # ------------------------------------------------------------------
-
-    def _refresh_mat_selector(self):
-        current = self._mat_selector.currentText()
-        blocker = QSignalBlocker(self._mat_selector)
-        self._mat_selector.clear()
-        if self._project is None:
-            del blocker
-            return
-        # All material and optical_properties names
-        for name in sorted(self._project.materials.keys()):
-            self._mat_selector.addItem(name)
-        if hasattr(self._project, "optical_properties"):
-            for name in sorted(self._project.optical_properties.keys()):
-                if name not in self._project.materials:
-                    self._mat_selector.addItem(name)
-        del blocker
-        if current and self._mat_selector.findText(current) >= 0:
-            self._mat_selector.setCurrentText(current)
-        if self._mat_selector.count() > 0:
-            self._on_mat_changed(self._mat_selector.currentText())
-
-    def _on_mat_changed(self, name: str):
-        if self._loading_mat_table or not name or self._project is None:
-            return
-        entry = self._project.spectral_material_data.get(name)
-        if entry:
-            lam = np.asarray(entry.get("wavelength_nm", []), dtype=float)
-            R = np.asarray(entry.get("reflectance", []), dtype=float)
-            T = np.asarray(entry.get("transmittance", []), dtype=float)
-        else:
-            lam = np.array([], dtype=float)
-            R = np.array([], dtype=float)
-            T = np.array([], dtype=float)
-        self._fill_mat_table(lam, R, T)
-        self._plot_mat(lam, R, T)
-
-    def _fill_mat_table(self, lam: np.ndarray, R: np.ndarray, T: np.ndarray):
-        self._loading_mat_table = True
-        self._mat_table.setRowCount(0)
-        n = len(lam)
-        for i in range(n):
-            row = self._mat_table.rowCount()
-            self._mat_table.insertRow(row)
-            rv = R[i] if i < len(R) else 0.0
-            tv = T[i] if i < len(T) else 0.0
-            self._mat_table.setItem(row, 0, QTableWidgetItem(f"{float(lam[i]):.4g}"))
-            self._mat_table.setItem(row, 1, QTableWidgetItem(f"{float(rv):.6g}"))
-            self._mat_table.setItem(row, 2, QTableWidgetItem(f"{float(tv):.6g}"))
-        self._loading_mat_table = False
-
-    def _plot_mat(self, lam: np.ndarray, R: np.ndarray, T: np.ndarray):
-        self._mat_plot.clear()
-        if len(lam) == 0:
-            return
-        self._mat_plot.plot(lam, R, pen=pg.mkPen((80, 160, 255), width=2), name="R(λ)")
-        self._mat_plot.plot(lam, T, pen=pg.mkPen((80, 255, 120), width=2), name="T(λ)")
-
-    def _on_mat_table_edited(self, row: int, col: int):
-        if self._loading_mat_table or self._project is None:
-            return
-        name = self._mat_selector.currentText()
-        if not name:
-            return
-        lam, R, T = self._read_mat_table()
-        if lam is None:
-            return
-        self._project.spectral_material_data[name] = {
-            "wavelength_nm": lam.tolist(),
-            "reflectance": R.tolist(),
-            "transmittance": T.tolist(),
-        }
-        self._plot_mat(lam, R, T)
-        self.spectral_data_changed.emit()
-
-    def _read_mat_table(self) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None]:
-        lam, R, T = [], [], []
-        for row in range(self._mat_table.rowCount()):
-            wi = self._mat_table.item(row, 0)
-            ri = self._mat_table.item(row, 1)
-            ti = self._mat_table.item(row, 2)
-            if wi is None:
-                continue
-            try:
-                lam.append(float(wi.text()))
-                R.append(float(ri.text()) if ri is not None else 0.0)
-                T.append(float(ti.text()) if ti is not None else 0.0)
-            except ValueError:
-                continue
-        if len(lam) < 1:
-            return None, None, None
-        return (
-            np.array(lam, dtype=float),
-            np.array(R, dtype=float),
-            np.array(T, dtype=float),
-        )
-
-    def _import_mat(self):
-        if self._project is None:
-            return
-        name = self._mat_selector.currentText()
-        if not name:
-            return
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Import Spectral Table CSV", "",
-            "CSV files (*.csv *.txt);;All files (*)"
-        )
-        if not path:
-            return
-        try:
-            # Accept columns: wavelength_nm, reflectance[, transmittance]
-            with open(path, newline="", encoding="utf-8") as f:
-                reader = csv.reader(f)
-                rows = [row for row in reader if row and not row[0].startswith("#")]
-            # Skip header if non-numeric
-            start = 0
-            try:
-                float(rows[0][0])
-            except (ValueError, IndexError):
-                start = 1
-            data = []
-            for row in rows[start:]:
-                if not row:
-                    continue
-                try:
-                    vals = [float(v) for v in row[:3]]
-                    data.append(vals)
-                except ValueError:
-                    continue
-            if not data:
-                raise ValueError("No numeric rows found.")
-            data = np.array(data, dtype=float)
-            lam = data[:, 0]
-            R = data[:, 1] if data.shape[1] > 1 else np.zeros_like(lam)
-            T = data[:, 2] if data.shape[1] > 2 else np.zeros_like(lam)
-        except Exception as exc:
-            QMessageBox.critical(self, "Import Error", str(exc))
-            return
-        self._project.spectral_material_data[name] = {
-            "wavelength_nm": lam.tolist(),
-            "reflectance": R.tolist(),
-            "transmittance": T.tolist(),
-        }
-        self._on_mat_changed(name)
-        self.spectral_data_changed.emit()
-
-    def _export_mat(self):
-        if self._project is None:
-            return
-        name = self._mat_selector.currentText()
-        if not name:
-            return
-        entry = self._project.spectral_material_data.get(name)
-        if not entry:
-            QMessageBox.information(self, "No Data", f"No spectral table for '{name}'.")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export Spectral Table CSV", f"{name}_spectral.csv", "CSV files (*.csv)"
-        )
-        if not path:
-            return
-        lam = np.asarray(entry.get("wavelength_nm", []), dtype=float)
-        R = np.asarray(entry.get("reflectance", []), dtype=float)
-        T = np.asarray(entry.get("transmittance", []), dtype=float)
-        data = np.column_stack([lam, R, T])
-        np.savetxt(
-            path, data, delimiter=",",
-            header="wavelength_nm,reflectance,transmittance", comments=""
-        )
-
-    def _clear_mat(self):
-        if self._project is None:
-            return
-        name = self._mat_selector.currentText()
-        if not name:
-            return
-        self._project.spectral_material_data.pop(name, None)
-        self._mat_table.setRowCount(0)
-        self._mat_plot.clear()
-        self.spectral_data_changed.emit()

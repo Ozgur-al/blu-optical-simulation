@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -53,11 +54,56 @@ class AngularDistributionPanel(QWidget):
         self._meta.setStyleSheet("color: gray;")
         layout.addWidget(self._meta)
 
+        # View mode selector
+        view_row = QHBoxLayout()
+        view_row.addWidget(QLabel("View:"))
+        self._view_mode = QComboBox()
+        self._view_mode.addItems(["Cartesian", "Polar", "Mirrored 2D", "3D Lobe"])
+        self._view_mode.currentIndexChanged.connect(self._on_view_mode_changed)
+        view_row.addWidget(self._view_mode)
+        view_row.addStretch()
+        layout.addLayout(view_row)
+
+        # Stacked plots for different view modes
+        self._plot_stack = QStackedWidget()
+
+        # 0: Cartesian (theta vs I)
         self._plot = pg.PlotWidget()
         self._plot.showGrid(x=True, y=True, alpha=0.25)
         self._plot.setLabel("bottom", "Theta (deg)")
         self._plot.setLabel("left", "Relative Intensity")
-        layout.addWidget(self._plot, 1)
+        self._plot_stack.addWidget(self._plot)
+
+        # 1: Polar plot
+        self._polar_plot = pg.PlotWidget()
+        self._polar_plot.setAspectLocked(True)
+        self._polar_plot.showGrid(x=True, y=True, alpha=0.15)
+        self._polar_plot.setLabel("bottom", "X")
+        self._polar_plot.setLabel("left", "Y")
+        self._plot_stack.addWidget(self._polar_plot)
+
+        # 2: Mirrored 2D (shows -90 to +90)
+        self._mirror_plot = pg.PlotWidget()
+        self._mirror_plot.showGrid(x=True, y=True, alpha=0.25)
+        self._mirror_plot.setLabel("bottom", "Theta (deg)")
+        self._mirror_plot.setLabel("left", "Relative Intensity")
+        self._plot_stack.addWidget(self._mirror_plot)
+
+        # 3: 3D lobe (using pyqtgraph.opengl)
+        try:
+            import pyqtgraph.opengl as gl
+            self._lobe_view = gl.GLViewWidget()
+            self._lobe_view.setBackgroundColor(30, 30, 40)
+            self._lobe_view.setCameraPosition(distance=3, elevation=30, azimuth=45)
+            self._plot_stack.addWidget(self._lobe_view)
+            self._has_gl = True
+        except Exception as exc:
+            self._lobe_view = QLabel(f"OpenGL not available: {exc}")
+            self._plot_stack.addWidget(self._lobe_view)
+            self._has_gl = False
+        self._lobe_item = None
+
+        layout.addWidget(self._plot_stack, 1)
 
         edit_box = QWidget()
         eg = QGridLayout(edit_box)
@@ -173,12 +219,17 @@ class AngularDistributionPanel(QWidget):
             self,
             "Import Angular Distribution",
             "",
-            "Data files (*.csv *.txt);;All files (*)",
+            "All supported (*.csv *.txt *.ies *.ldt);;CSV/TXT (*.csv *.txt);;IES files (*.ies);;LDT files (*.ldt);;All files (*)",
         )
         if not path:
             return
         try:
-            profile = load_profile_csv(path)
+            ext = Path(path).suffix.lower()
+            if ext in (".ies", ".ldt"):
+                from backlight_sim.io.ies_parser import load_ies_or_ldt
+                profile = load_ies_or_ldt(path)
+            else:
+                profile = load_profile_csv(path)
         except Exception as exc:
             QMessageBox.critical(self, "Import Error", str(exc))
             return
@@ -292,7 +343,7 @@ class AngularDistributionPanel(QWidget):
         elif mode == "flux":
             # ∫I(θ)·sin(θ)·dθ  (trapezoid rule)
             theta_rad = np.radians(theta)
-            total = float(np.trapz(intensity * np.sin(theta_rad), theta_rad))
+            total = float(np.trapezoid(intensity * np.sin(theta_rad), theta_rad))
             if total > 0:
                 intensity = intensity / total
         elif mode == "range":
@@ -307,6 +358,12 @@ class AngularDistributionPanel(QWidget):
         self._plot_distribution(name)
         self.distributions_changed.emit()
 
+    def _on_view_mode_changed(self, idx: int):
+        self._plot_stack.setCurrentIndex(idx)
+        name = self._selector.currentText()
+        if name:
+            self._plot_distribution(name)
+
     def _on_selection_changed(self, name: str):
         if self._loading_table:
             return
@@ -314,6 +371,12 @@ class AngularDistributionPanel(QWidget):
 
     def _plot_distribution(self, name: str):
         self._plot.clear()
+        self._polar_plot.clear()
+        self._mirror_plot.clear()
+        if self._has_gl and self._lobe_item is not None:
+            self._lobe_view.removeItem(self._lobe_item)
+            self._lobe_item = None
+
         if self._project is None or not name:
             self._meta.setText("No distribution loaded.")
             self._table.setRowCount(0)
@@ -330,15 +393,84 @@ class AngularDistributionPanel(QWidget):
             self._table.setRowCount(0)
             return
         self._fill_table(theta, intensity)
-        self._plot.plot(theta, intensity, pen=pg.mkPen((255, 160, 40), width=2))
-        self._plot.plot(
-            theta,
-            intensity,
-            pen=None,
-            symbol="o",
-            symbolSize=5,
-            symbolBrush=(255, 160, 40),
-        )
         self._meta.setText(
             f"{name}: {theta.size} points | theta [{float(theta.min()):.1f}, {float(theta.max()):.1f}] deg"
         )
+
+        mode = self._view_mode.currentIndex()
+        pen = pg.mkPen((255, 160, 40), width=2)
+        sym_opts = dict(pen=None, symbol="o", symbolSize=5, symbolBrush=(255, 160, 40))
+
+        if mode == 0:
+            # Cartesian
+            self._plot.plot(theta, intensity, pen=pen)
+            self._plot.plot(theta, intensity, **sym_opts)
+
+        elif mode == 1:
+            # Polar: convert (theta, I) to (x, y) in polar coords
+            theta_rad = np.radians(theta)
+            x = intensity * np.sin(theta_rad)
+            y = intensity * np.cos(theta_rad)
+            self._polar_plot.plot(x, y, pen=pen)
+            self._polar_plot.plot(x, y, **sym_opts)
+            # Draw reference circles
+            for r in [0.25, 0.5, 0.75, 1.0]:
+                circ_t = np.linspace(0, np.pi, 100)
+                cx = r * np.sin(circ_t)
+                cy = r * np.cos(circ_t)
+                self._polar_plot.plot(cx, cy, pen=pg.mkPen((100, 100, 100, 80), width=1))
+            # Axis lines
+            self._polar_plot.plot([0, 0], [0, 1.1], pen=pg.mkPen((100, 100, 100, 120), width=1))
+            self._polar_plot.plot([-1.1, 1.1], [0, 0], pen=pg.mkPen((100, 100, 100, 120), width=1))
+
+        elif mode == 2:
+            # Mirrored 2D: show -theta to +theta
+            mirrored_theta = np.concatenate([-theta[::-1], theta])
+            mirrored_i = np.concatenate([intensity[::-1], intensity])
+            self._mirror_plot.plot(mirrored_theta, mirrored_i, pen=pen)
+            self._mirror_plot.plot(mirrored_theta, mirrored_i, **sym_opts)
+            self._mirror_plot.setLabel("bottom", "Theta (deg) — mirrored")
+
+        elif mode == 3 and self._has_gl:
+            # 3D lobe: revolution of I(theta) around Z axis
+            import pyqtgraph.opengl as gl
+            n_phi = 72
+            theta_rad = np.radians(theta)
+            phi = np.linspace(0, 2 * np.pi, n_phi)
+            # Build mesh vertices
+            verts = []
+            faces = []
+            for i, (t, inten) in enumerate(zip(theta_rad, intensity)):
+                r = float(inten)
+                z = r * np.cos(t)
+                for j, p in enumerate(phi):
+                    x = r * np.sin(t) * np.cos(p)
+                    y = r * np.sin(t) * np.sin(p)
+                    verts.append([x, y, z])
+
+            verts = np.array(verts, dtype=np.float32)
+            n_t = len(theta)
+            for i in range(n_t - 1):
+                for j in range(n_phi - 1):
+                    v0 = i * n_phi + j
+                    v1 = i * n_phi + j + 1
+                    v2 = (i + 1) * n_phi + j
+                    v3 = (i + 1) * n_phi + j + 1
+                    faces.append([v0, v1, v2])
+                    faces.append([v1, v3, v2])
+
+            if verts.size > 0 and len(faces) > 0:
+                faces = np.array(faces, dtype=np.uint32)
+                # Color based on intensity (height)
+                colors = np.zeros((len(faces), 4), dtype=np.float32)
+                for fi, face in enumerate(faces):
+                    avg_z = verts[face, 2].mean()
+                    t = max(0, min(1, avg_z / max(intensity.max(), 1e-9)))
+                    colors[fi] = [1.0 * t + 0.2, 0.6 * t + 0.1, 0.1, 0.85]
+
+                mesh = gl.GLMeshItem(
+                    vertexes=verts, faces=faces, faceColors=colors,
+                    smooth=True, drawEdges=False, shader="shaded",
+                )
+                self._lobe_view.addItem(mesh)
+                self._lobe_item = mesh

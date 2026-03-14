@@ -437,7 +437,7 @@ class MainWindow(QMainWindow):
                                                    list(self._project.optical_properties.keys()))
         elif group == "Materials":
             obj = self._project.materials.get(name)
-            if obj: self._properties.show_material(obj)
+            if obj: self._properties.show_material(obj, project=self._project)
         elif group == "Optical Properties":
             obj = self._project.optical_properties.get(name)
             if obj: self._properties.show_optical_properties(obj)
@@ -746,7 +746,6 @@ class MainWindow(QMainWindow):
         self._heatmap.update_results(result)
         self._plot_tab.update_results(result)
         self._receiver_3d.update_results(result)
-        self._spectral_panel.update_chromaticity(result)
         self._center_tabs.setCurrentWidget(self._heatmap)
         if result.ray_paths:
             self._viewport.show_ray_paths(result.ray_paths)
