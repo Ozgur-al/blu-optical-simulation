@@ -411,6 +411,7 @@ class MainWindow(QMainWindow):
         self._tree.multi_selected.connect(self._on_multi_selected)
         self._tree.add_requested.connect(self._add_object)
         self._tree.delete_requested.connect(self._delete_object)
+        self._tree.duplicate_requested.connect(self._duplicate_object)
         self._properties.properties_changed.connect(self._on_properties_changed)
         self._ang_dist.distributions_changed.connect(self._on_distributions_changed)
         self._spectral_panel.spectral_data_changed.connect(self._mark_dirty)
@@ -428,21 +429,109 @@ class MainWindow(QMainWindow):
         if self._selected_group and self._selected_name:
             self._delete_object(self._selected_group, self._selected_name)
 
+    def _duplicate_object(self, group, name):
+        """Duplicate the named object with an incremented name."""
+        import copy
+        counter_key = group.split(":")[0] if ":" in group else group
+        if counter_key not in self._counter:
+            self._counter[counter_key] = 0
+        self._counter[counter_key] += 1
+        n = self._counter[counter_key]
+
+        if group == "Sources":
+            orig = next((s for s in self._project.sources if s.name == name), None)
+            if orig is None:
+                return
+            dup = copy.deepcopy(orig)
+            dup.name = f"Source_{n}"
+            self._undo_stack.push(AddSourceCommand(self._project, dup, self._refresh_all))
+        elif group == "Surfaces":
+            orig = next((s for s in self._project.surfaces if s.name == name), None)
+            if orig is None:
+                return
+            dup = copy.deepcopy(orig)
+            dup.name = f"Surface_{n}"
+            self._undo_stack.push(AddSurfaceCommand(self._project, dup, self._refresh_all))
+        elif group == "Detectors":
+            orig = next((d for d in self._project.detectors if d.name == name), None)
+            if orig is None:
+                return
+            dup = copy.deepcopy(orig)
+            dup.name = f"Detector_{n}"
+            self._undo_stack.push(AddDetectorCommand(self._project, dup, self._refresh_all))
+        elif group == "Sphere Detectors":
+            orig = next((d for d in self._project.sphere_detectors if d.name == name), None)
+            if orig is None:
+                return
+            dup = copy.deepcopy(orig)
+            dup.name = f"SphereDetector_{n}"
+            self._undo_stack.push(AddSphereDetectorCommand(self._project, dup, self._refresh_all))
+        elif group == "Materials":
+            orig = self._project.materials.get(name)
+            if orig is None:
+                return
+            mn = f"Material_{n}"
+            dup = copy.deepcopy(orig)
+            dup.name = mn
+            self._undo_stack.push(AddMaterialCommand(self._project, mn, dup, self._refresh_all))
+        elif group == "Solid Bodies:box":
+            orig = next((b for b in self._project.solid_bodies if b.name == name), None)
+            if orig is None:
+                return
+            dup = copy.deepcopy(orig)
+            dup.name = f"Box_{n}"
+            self._undo_stack.push(AddSolidBodyCommand(self._project, dup, "box", self._refresh_all))
+        elif group == "Solid Bodies:cylinder":
+            lst = getattr(self._project, "solid_cylinders", [])
+            orig = next((c for c in lst if c.name == name), None)
+            if orig is None:
+                return
+            dup = copy.deepcopy(orig)
+            dup.name = f"Cylinder_{n}"
+            self._undo_stack.push(AddSolidBodyCommand(self._project, dup, "cylinder", self._refresh_all))
+        elif group == "Solid Bodies:prism":
+            lst = getattr(self._project, "solid_prisms", [])
+            orig = next((p for p in lst if p.name == name), None)
+            if orig is None:
+                return
+            dup = copy.deepcopy(orig)
+            dup.name = f"Prism_{n}"
+            self._undo_stack.push(AddSolidBodyCommand(self._project, dup, "prism", self._refresh_all))
+
     # ------------------------------------------------------------------
     # Layout persistence via QSettings
     # ------------------------------------------------------------------
 
     def _save_layout(self):
-        """Persist window geometry to QSettings."""
+        """Persist window geometry and tab state to QSettings."""
         settings = QSettings("BluOptical", "BluSim")
         settings.setValue("geometry", self.saveGeometry())
+        # Save open tab titles (order preserved)
+        tab_titles = [self._center_tabs.tabText(i)
+                      for i in range(self._center_tabs.count())]
+        settings.setValue("open_tabs", tab_titles)
+        settings.setValue("active_tab", self._center_tabs.currentIndex())
 
     def _restore_layout(self):
-        """Restore window geometry from QSettings."""
+        """Restore window geometry and tab state from QSettings."""
         settings = QSettings("BluOptical", "BluSim")
         geom = settings.value("geometry")
         if geom is not None:
             self.restoreGeometry(geom)
+        # Restore tabs
+        saved_tabs = settings.value("open_tabs")
+        if saved_tabs and isinstance(saved_tabs, list):
+            panel_map = {title: widget for title, widget in self._get_openable_panels()}
+            for title in saved_tabs:
+                if title in panel_map and title not in self._tab_registry:
+                    closable = title not in ("3D View", "Heatmap")
+                    self._open_tab(title, panel_map[title], closable=closable)
+            active = settings.value("active_tab")
+            if active is not None:
+                try:
+                    self._center_tabs.setCurrentIndex(int(active))
+                except (ValueError, TypeError):
+                    pass
 
     # ------------------------------------------------------------------
     # Dirty-flag & unsaved-changes guard

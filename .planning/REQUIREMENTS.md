@@ -44,7 +44,7 @@ Requirements for Phase 2 release. Each maps to roadmap phases.
 ### UI / UX
 
 - [x] **UI-01**: Application uses a dark theme with teal/cyan accent across all widgets including pyqtgraph plots and 3D viewport
-- [x] **UI-02**: All panels are dockable QDockWidgets that can be dragged, floated, tabbed, and rearranged, with layout persisting between sessions via QSettings
+- [x] **UI-02**: Left sidebar (scene tree + properties) with central tabbed panel area; panels openable from Window menu; tab state persists between sessions via QSettings
 - [x] **UI-03**: Top toolbar with icon+text buttons for common actions (New, Open, Save, Run, Cancel) and quick-add buttons (LED, Surface, Detector, SolidBox)
 - [x] **UI-04**: Full undo/redo system (Ctrl+Z / Ctrl+Y) using QUndoStack for all scene mutations (add, delete, property edit)
 - [x] **UI-05**: Properties panel uses collapsible sections for property groups with expand/collapse arrows
