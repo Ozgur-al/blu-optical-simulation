@@ -9,7 +9,7 @@ from backlight_sim.core.materials import Material
 from backlight_sim.core.sources import PointSource
 from backlight_sim.core.detectors import DetectorSurface
 from backlight_sim.core.project_model import Project, SimulationSettings
-from backlight_sim.io.geometry_builder import build_cavity
+from backlight_sim.io.geometry_builder import build_cavity, build_lgp_scene
 
 
 def preset_simple_box() -> Project:
@@ -68,12 +68,13 @@ def preset_automotive_cluster() -> Project:
         )
     )
 
-    # 4 columns × 2 rows
+    # 4 columns × 2 rows, centered in the cavity
+    n_col, n_row = 4, 2
     pitch_x, pitch_y = 25.0, 20.0
-    for col in range(4):
-        for row in range(2):
-            x = -W / 2 + pitch_x * (col + 0.5)
-            y = -H / 2 + pitch_y * (row + 0.5)
+    for col in range(n_col):
+        for row in range(n_row):
+            x = (col - (n_col - 1) / 2.0) * pitch_x
+            y = (row - (n_row - 1) / 2.0) * pitch_y
             project.sources.append(
                 PointSource(f"LED_{col+1}_{row+1}", np.array([x, y, 0.5]),
                             flux=80.0, direction=np.array([0, 0, 1]),
@@ -82,7 +83,18 @@ def preset_automotive_cluster() -> Project:
     return project
 
 
+def preset_edge_lit_lgp() -> Project:
+    """Edge-lit LGP: 80×50×3 mm slab with 6 LEDs on the left edge."""
+    project = Project(name="Edge-Lit LGP")
+    project.settings.rays_per_source = 10_000
+    project.settings.max_bounces = 200  # LGP needs many bounces for TIR propagation
+    build_lgp_scene(project, width=80.0, height=50.0, thickness=3.0,
+                    coupling_edges=["left"], led_count=6, led_flux=100.0)
+    return project
+
+
 PRESETS: dict[str, callable] = {
     "Simple Box (50×50×20 mm)": preset_simple_box,
     "Automotive Cluster (120×60×10 mm)": preset_automotive_cluster,
+    "Edge-Lit LGP (80×50×3 mm)": preset_edge_lit_lgp,
 }
