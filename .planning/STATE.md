@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-14T22:05:57.228Z"
+last_updated: "2026-03-14T22:06:08.883Z"
 progress:
   total_phases: 5
   completed_phases: 5
@@ -144,6 +144,7 @@ Recent decisions affecting current work:
 - [Phase 05-04]: grid.copy() for partial snapshots — fast shallow numpy copy; no ray_paths/sphere_detectors/solid_body_stats in partial to minimize cross-thread transfer
 - [Phase 05-04]: CollapsibleSection wraps inner QWidget+QGridLayout (not addLayout directly) to preserve existing grid structure
 - [Phase 05-04]: _threshold_color() returns CSS color string; applied via label.setStyleSheet() for green/yellow/red threshold feedback
+- [Phase 04-05]: pyqtgraph 0.14.0 pg.mkPen() requires integer 0-255 color tuples, not float 0.0-1.0 — float values cause silent polar plot curve rendering failure
 
 ### Roadmap Evolution
 

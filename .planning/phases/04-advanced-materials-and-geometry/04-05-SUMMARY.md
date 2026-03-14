@@ -38,6 +38,7 @@ key-decisions:
   - "smooth=False on GLMeshItem: pyqtgraph.opengl smooth=True interpolates vertex normals overriding per-face faceColors; must be False for visible gradient"
   - "Sphere detector accumulation in _trace_single_source uses inline numpy (not _accumulate_sphere helpers) to avoid passing SphereDetectorResult objects between processes"
   - "sph_grids dict returned from _trace_single_source alongside grids — matches existing flat-detector pattern"
+  - "pyqtgraph 0.14.0 pg.mkPen() requires integer 0-255 color tuples, not float 0.0-1.0 — float values cause silent rendering failure"
 
 patterns-established:
   - "Mode-visibility pattern: store label reference, connect currentIndexChanged to _update_mode_visibility, call at end of load()"
@@ -59,7 +60,7 @@ completed: 2026-03-14
 - **Duration:** 20 min
 - **Started:** 2026-03-14T21:25:00Z
 - **Completed:** 2026-03-14T21:45:37Z
-- **Tasks:** 3
+- **Tasks:** 3 (+ 1 additional post-checkpoint fix)
 - **Files modified:** 6
 
 ## Accomplishments
@@ -77,11 +78,12 @@ completed: 2026-03-14
 1. **Task 1: Fix menu/toolbar entries, BSDF visibility, and far-field tab auto-open** - `b9f08bc` (feat)
 2. **Task 2: Fix sphere detector support in multiprocessing tracer path** - `c0bcff4` (feat)
 3. **Task 3: Fix polar plot interaction, lobe colormap, and radius visibility** - `9cf1bd5` (feat)
+4. **Additional fix: Use 0-255 int colors for far-field polar plot curves** - `4a709df` (fix)
 
 ## Files Created/Modified
 
 - `backlight_sim/gui/main_window.py` — Added Cylinder/Prism to Add menu and toolbar; BSDF default tab; far-field tab auto-open with showed_farfield flag
-- `backlight_sim/gui/far_field_panel.py` — setMouseEnabled(False, False) and setMenuEnabled(False) on polar plot
+- `backlight_sim/gui/far_field_panel.py` — setMouseEnabled(False, False) and setMenuEnabled(False) on polar plot; curve colors converted from float 0-1 to int 0-255 for pyqtgraph 0.14.0 compatibility
 - `backlight_sim/gui/viewport_3d.py` — Changed smooth=True to smooth=False on far-field lobe GLMeshItem
 - `backlight_sim/gui/properties_panel.py` — radius label/widget hidden when SphereDetector mode is far_field; _update_mode_visibility() method added
 - `backlight_sim/sim/tracer.py` — Sphere detector intersection, accumulation, and candela merge in _run_multiprocess and _trace_single_source
@@ -96,7 +98,20 @@ completed: 2026-03-14
 
 ## Deviations from Plan
 
-None - plan executed exactly as written.
+### Auto-fixed Issues
+
+**1. [Rule 1 - Bug] Fixed pyqtgraph 0.14.0 polar plot curve color crash**
+- **Found during:** Post-checkpoint user acceptance testing
+- **Issue:** Far-field polar plot C-plane curves used float 0.0-1.0 color components, which pyqtgraph 0.14.0 rejects — it requires integer 0-255 values
+- **Fix:** Converted all `pg.mkPen(color=(r, g, b))` calls from float to 0-255 integer tuples in `far_field_panel.py`
+- **Files modified:** `backlight_sim/gui/far_field_panel.py`
+- **Verification:** Curves render correctly on pyqtgraph 0.14.0
+- **Committed in:** `4a709df` (separate post-checkpoint fix)
+
+---
+
+**Total deviations:** 1 auto-fixed (1 bug — rendering incompatibility)
+**Impact on plan:** Required for correct rendering on the target pyqtgraph version. No scope creep.
 
 ## Issues Encountered
 
