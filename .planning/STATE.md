@@ -2,6 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
+status: unknown
+last_updated: "2026-03-14T19:36:11.775Z"
+progress:
+  total_phases: 5
+  completed_phases: 3
+  total_plans: 15
+  completed_plans: 8
+---
+
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
 status: in-progress
 last_updated: "2026-03-14T18:18:19Z"
 progress:
@@ -56,6 +69,7 @@ Progress: [████████░░] 73%
 | Phase 02 P02 | 24 min | 3 tasks | 5 files |
 | Phase 03 P01 | 3.6 min | 2 tasks TDD | 6 files |
 | Phase 04 P02 | 5 | 2 tasks | 5 files |
+| Phase 03-performance-acceleration P02 | 20 | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -92,6 +106,9 @@ Recent decisions affecting current work:
 - [Phase 04]: Far-field accumulation negates ray direction (outgoing from luminaire = -ray_dir)
 - [Phase 04]: Beam/field angle uses 2*half_angle convention for standard cone angle measurement
 - [Phase 04]: compute_farfield_candela floors sin(theta) at 1e-6 to prevent division-by-zero at poles
+- [Phase 03-02]: BVH activation threshold = 50 total plane surfaces; traverse_bvh_batch is JIT but build_bvh_flat is pure NumPy
+- [Phase 03-02]: Adaptive sampling disabled in MP mode with warning; convergence metric = 1.96*std/sqrt(n)/mean * 100
+- [Phase 03-02]: Cylinder/prism intersection loops belong inside bounce loop body (20-space indent); bug fixed from prior session
 
 ### Roadmap Evolution
 

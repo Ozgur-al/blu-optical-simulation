@@ -12,9 +12,9 @@ Phase 2 extends a complete direct-lit Monte Carlo tracer into a full-fidelity op
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [x] **Phase 1: Refractive Physics and LGP** - Snell's law, Fresnel/TIR, solid box body, and end-to-end edge-lit LGP simulation (completed 2026-03-14)
-- [x] **Phase 2: Spectral Engine** - Per-ray wavelength, wavelength-dependent materials, spectral detector grids, CIE color display (completed 2026-03-14)
-- [ ] **Phase 3: Performance Acceleration** - Numba JIT for inner loops, BVH spatial acceleration, adaptive sampling
+- [x] **Phase 1: Refractive Physics and LGP** - Snell's law, Fresnel/TIR, solid box body, and end-to-end edge-lit LGP simulation (completed 2026-03-14)
+- [x] **Phase 2: Spectral Engine** - Per-ray wavelength, wavelength-dependent materials, spectral detector grids, CIE color display (completed 2026-03-14)
+- [x] **Phase 3: Performance Acceleration** - Numba JIT for inner loops, BVH spatial acceleration, adaptive sampling (completed 2026-03-14)
 - [ ] **Phase 4: Advanced Materials and Geometry** - Tabulated BRDF, far-field detector, cylinder and prism solid bodies
 
 ## Phase Details
@@ -78,24 +78,34 @@ Plans:
 - [ ] 04-01: Tabulated BRDF import, 2D CDF importance sampling, surface assignment
 - [ ] 04-02: Far-field angular detector with IES export, cylinder and prism solid body primitives
 
+### Phase 5: UI Revamp
+**Goal**: Application has a professional dark-themed interface with dockable panels, toolbar, undo/redo, collapsible properties, enhanced heatmap with live simulation preview — matching the look and workflow of engineering tools like Blender and Fusion 360
+**Depends on**: Phase 4
+**Requirements**: UI-01, UI-02, UI-03, UI-04, UI-05, UI-06, UI-07, UI-08
+**Success Criteria** (what must be TRUE):
+  1. Application launches with dark theme and teal accent across all widgets, including pyqtgraph plots and 3D viewport
+  2. All panels are dockable QDockWidgets with layout persistence via QSettings
+  3. Toolbar provides quick access to common actions and one-click object creation
+  4. Scene mutations (add/delete) can be undone/redone via Ctrl+Z / Ctrl+Y
+  5. Properties panel uses collapsible sections and object tree shows per-type colored icons
+  6. Heatmap updates live during simulation and shows selectable colormaps with KPI threshold coloring
+**Plans**: 4 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Dark theme (QSS + pyqtgraph config), QDockWidget layout, toolbar, QSettings persistence
+- [ ] 05-02-PLAN.md — Undo/redo system (QUndoStack commands, Edit menu, toolbar integration)
+- [ ] 05-03-PLAN.md — Collapsible properties panel (CollapsibleSection widget) + object tree icons and context menus
+- [ ] 05-04-PLAN.md — Enhanced heatmap (colormap selector, crosshair, KPI cards) + live simulation preview
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Refractive Physics and LGP | 3/3 | Complete   | 2026-03-14 |
 | 2. Spectral Engine | 2/2 | Complete   | 2026-03-14 |
-| 3. Performance Acceleration | 1/2 | In Progress | - |
+| 3. Performance Acceleration | 2/2 | Complete   | 2026-03-14 |
 | 4. Advanced Materials and Geometry | 1/4 | In Progress|  |
-
-### Phase 5: ui rewamp
-
-**Goal:** [To be planned]
-**Requirements**: TBD
-**Depends on:** Phase 4
-**Plans:** 1/4 plans executed
-
-Plans:
-- [ ] TBD (run /gsd:plan-phase 5 to break down)
+| 5. UI Revamp | 0/4 | Not Started | - |

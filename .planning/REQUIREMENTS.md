@@ -30,8 +30,8 @@ Requirements for Phase 2 release. Each maps to roadmap phases.
 ### Performance
 
 - [x] **PERF-01**: Ray-surface intersection and accumulation inner loops are Numba JIT-compiled for 10-50x speedup
-- [ ] **PERF-02**: BVH spatial acceleration is used for scenes with 50+ surfaces
-- [ ] **PERF-03**: Adaptive sampling stops ray generation per source when detector variance is below threshold
+- [x] **PERF-02**: BVH spatial acceleration is used for scenes with 50+ surfaces
+- [x] **PERF-03**: Adaptive sampling stops ray generation per source when detector variance is below threshold
 
 ### BRDF
 
@@ -39,7 +39,18 @@ Requirements for Phase 2 release. Each maps to roadmap phases.
 
 ### Detectors
 
-- [ ] **DET-01**: User can add a far-field angular detector that outputs candela distribution and exports as IES file
+- [x] **DET-01**: User can add a far-field angular detector that outputs candela distribution and exports as IES file
+
+### UI / UX
+
+- [ ] **UI-01**: Application uses a dark theme with teal/cyan accent across all widgets including pyqtgraph plots and 3D viewport
+- [ ] **UI-02**: All panels are dockable QDockWidgets that can be dragged, floated, tabbed, and rearranged, with layout persisting between sessions via QSettings
+- [ ] **UI-03**: Top toolbar with icon+text buttons for common actions (New, Open, Save, Run, Cancel) and quick-add buttons (LED, Surface, Detector, SolidBox)
+- [ ] **UI-04**: Full undo/redo system (Ctrl+Z / Ctrl+Y) using QUndoStack for all scene mutations (add, delete, property edit)
+- [ ] **UI-05**: Properties panel uses collapsible sections for property groups with expand/collapse arrows
+- [ ] **UI-06**: Object tree shows per-type colored icons and enhanced context menus with Duplicate action
+- [ ] **UI-07**: Heatmap panel has selectable colormaps, crosshair cursor with live pixel values, and KPI cards with color-coded thresholds (green/yellow/red)
+- [ ] **UI-08**: Live heatmap preview updates during simulation at 5% intervals, with auto-focus on heatmap dock after completion
 
 ## v2 Requirements
 
@@ -103,16 +114,24 @@ Which phases cover which requirements. Updated during roadmap creation.
 | GEOM-02 | Phase 4 | Pending |
 | GEOM-03 | Phase 4 | Pending |
 | PERF-01 | Phase 3 | Complete |
-| PERF-02 | Phase 3 | Pending |
-| PERF-03 | Phase 3 | Pending |
+| PERF-02 | Phase 3 | Complete |
+| PERF-03 | Phase 3 | Complete |
 | BRDF-01 | Phase 4 | Pending |
-| DET-01 | Phase 4 | Pending |
+| DET-01 | Phase 4 | Complete |
+| UI-01 | Phase 5 | Pending |
+| UI-02 | Phase 5 | Pending |
+| UI-03 | Phase 5 | Pending |
+| UI-04 | Phase 5 | Pending |
+| UI-05 | Phase 5 | Pending |
+| UI-06 | Phase 5 | Pending |
+| UI-07 | Phase 5 | Pending |
+| UI-08 | Phase 5 | Pending |
 
 **Coverage:**
-- v1 requirements: 16 total
-- Mapped to phases: 16
+- v1 requirements: 24 total
+- Mapped to phases: 24
 - Unmapped: 0
 
 ---
 *Requirements defined: 2025-07-11*
-*Last updated: 2026-03-14 — traceability filled after roadmap creation*
+*Last updated: 2026-03-14 — Phase 5 UI requirements added*
