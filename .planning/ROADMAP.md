@@ -128,7 +128,10 @@ Plans:
   2. Right-clicking a scene object and selecting Duplicate creates a copy of that object
   3. SpectralDataPanel chromaticity scatter overlay updates after simulation completes
   4. Live heatmap preview shows spectral color mode during spectral simulations (grid_spectral included in partial results)
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 07-01-PLAN.md — Tab persistence fix, duplicate validation, chromaticity scatter cloud, live preview spectral color
 
 ## Progress
 
@@ -143,4 +146,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. Advanced Materials and Geometry | 5/5 | Complete   | 2026-03-14 |
 | 5. UI Revamp | 4/4 | Complete   | 2026-03-14 |
 | 6. Tracer Cross-Phase Wiring | 0/2 | Planned   | — |
-| 7. UI + Spectral Display Fixes | 0/? | Planned   | — |
+| 7. UI + Spectral Display Fixes | 0/1 | Planned   | — |
