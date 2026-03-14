@@ -58,6 +58,7 @@ Progress: [█████████░] 88%
 | Phase 04 P01 | 5 min | 2 tasks TDD | 5 files |
 | Phase 04 P02 | 5 | 2 tasks | 5 files |
 | Phase 04 P03 | 5 min | 3 tasks | 6 files |
+| Phase 04 P05 | 20 min | 3 tasks | 6 files |
 | Phase 03-performance-acceleration P02 | 20 | 2 tasks | 7 files |
 | Phase 05-ui-rewamp P02 | 6 | 2 tasks | 6 files |
 | Phase 05-ui-rewamp P03 | 5 | 2 tasks | 4 files |
@@ -121,6 +122,10 @@ Recent decisions affecting current work:
 - [Phase 05-03]: CollapsibleSection uses QToolButton with setArrowType for expand/collapse indicator
 - [Phase 05-03]: ObjectTree icon cache at class level (_ICONS dict); programmatic QPainter circles avoid image files
 - [Phase 05-03]: duplicate_requested signal defined in ObjectTree but wired by MainWindow (avoids Plan 02 conflict)
+- [Phase 04-05]: showed_farfield boolean flag controls tab focus: only focus Heatmap when no far-field results shown
+- [Phase 04-05]: smooth=False on GLMeshItem for far-field lobe: smooth=True overrides per-face faceColors with vertex-normal interpolation
+- [Phase 04-05]: Sphere detector accumulation in _trace_single_source uses inline numpy to avoid passing SphereDetectorResult between processes
+- [Phase 04-05]: sph_grids dict returned from _trace_single_source; merged in _run_multiprocess; compute_farfield_candela called after merge
 
 ### Roadmap Evolution
 
