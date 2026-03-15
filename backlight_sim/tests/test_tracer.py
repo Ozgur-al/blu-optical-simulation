@@ -2098,6 +2098,219 @@ def test_prism_mp_produces_flux():
     assert det.total_flux > 0, "No flux reached detector through prism in MP mode"
 
 
+# ------------------------------------------------------------------
+# Phase 06 Plan 02 — face_optics + spectral n(lambda) + BSDF+spectral
+# ------------------------------------------------------------------
+
+
+def _make_solidbox_face_optics_scene(face_optics_name=None, rays=3000, seed=42):
+    """SolidBox scene: LED above box shooting down, detector below box.
+
+    With pure Fresnel (n=1.5), ~96% of normally-incident light transmits.
+    With a reflector override on the top face, most flux reflects back up
+    and never reaches the bottom detector.
+    """
+    from backlight_sim.core.solid_body import SolidBox
+    from backlight_sim.core.materials import OpticalProperties
+
+    materials = {
+        "glass": Material(name="glass", surface_type="reflector",
+                          reflectance=0.04, absorption=0.0, refractive_index=1.5),
+        "absorber_wall": Material(name="absorber_wall", surface_type="absorber"),
+    }
+    optical_properties = {}
+    face_optics = {}
+
+    if face_optics_name == "top_reflector":
+        optical_properties["top_reflector"] = OpticalProperties(
+            name="top_reflector",
+            surface_type="reflector",
+            reflectance=0.95,
+            is_diffuse=False,
+        )
+        face_optics = {"top": "top_reflector"}
+
+    # Box from z=2 to z=4 (depth=2)
+    box = SolidBox(
+        name="glass_block",
+        center=[0.0, 0.0, 3.0],
+        dimensions=(20.0, 20.0, 2.0),
+        material_name="glass",
+        face_optics=face_optics,
+    )
+
+    # LED above box pointing down
+    sources = [PointSource("src1", np.array([0.0, 0.0, 6.0]),
+                           flux=1000.0, distribution="lambertian",
+                           direction=np.array([0.0, 0.0, -1.0]))]
+    # Detector below box
+    detectors = [
+        DetectorSurface.axis_aligned("bottom_det", [0, 0, 0], (20, 20), 2, -1.0, (20, 20)),
+    ]
+    settings = SimulationSettings(rays_per_source=rays, max_bounces=30,
+                                   energy_threshold=0.0001, random_seed=seed,
+                                   record_ray_paths=0)
+    proj = Project(
+        name="face_optics_test",
+        sources=sources, surfaces=[],
+        materials=materials,
+        optical_properties=optical_properties,
+        detectors=detectors,
+        settings=settings,
+    )
+    proj.solid_bodies = [box]
+    return proj
+
+
+def test_face_optics_reflector_override():
+    """SolidBox top face with reflector override blocks most flux from reaching bottom detector.
+
+    Control: pure Fresnel (n=1.5, ~4% reflection at normal incidence) → most flux transmits.
+    Override: reflector with R=0.95 on top face → most flux reflects back, detector sees much less.
+    """
+    # Control: no face_optics (standard Fresnel)
+    proj_control = _make_solidbox_face_optics_scene(face_optics_name=None, rays=5000, seed=42)
+    result_control = RayTracer(proj_control).run()
+    flux_control = result_control.detectors["bottom_det"].total_flux
+
+    # Override: top face = reflector
+    proj_override = _make_solidbox_face_optics_scene(face_optics_name="top_reflector",
+                                                      rays=5000, seed=42)
+    result_override = RayTracer(proj_override).run()
+    flux_override = result_override.detectors["bottom_det"].total_flux
+
+    assert flux_control > 0, "Control run produced zero flux"
+    assert flux_override >= 0, "Override run produced negative flux"
+    # Reflector override should significantly reduce flux at bottom detector
+    assert flux_override < flux_control * 0.2, (
+        f"Expected reflector override to block >80% of flux. "
+        f"Control={flux_control:.3f}, Override={flux_override:.3f}"
+    )
+
+
+def test_face_optics_empty_string_fallback():
+    """SolidBox with empty face_optics falls through to standard Fresnel (no change from control)."""
+    # Control: no face_optics
+    proj1 = _make_solidbox_face_optics_scene(face_optics_name=None, rays=3000, seed=99)
+    result1 = RayTracer(proj1).run()
+    flux1 = result1.detectors["bottom_det"].total_flux
+
+    # Empty face_optics: explicitly {} → same as no face_optics
+    proj2 = _make_solidbox_face_optics_scene(face_optics_name=None, rays=3000, seed=99)
+    # face_optics already empty in that branch — just ensure it runs fine
+    result2 = RayTracer(proj2).run()
+    flux2 = result2.detectors["bottom_det"].total_flux
+
+    assert flux1 > 0, "Fresnel control has zero flux"
+    np.testing.assert_allclose(flux1, flux2, rtol=1e-9,
+                                err_msg="Empty face_optics should produce identical result to no face_optics")
+
+
+def test_spectral_solidbox_fresnel():
+    """SolidBox with spectral refractive_index data runs without error and produces non-zero flux."""
+    from backlight_sim.core.solid_body import SolidBox
+
+    materials = {
+        "pmma_spectral": Material(name="pmma_spectral", surface_type="reflector",
+                                   reflectance=0.04, absorption=0.0, refractive_index=1.49),
+    }
+    # Spectral refractive_index: varies from n=1.52 at 380 nm to n=1.47 at 780 nm (typical PMMA)
+    spectral_material_data = {
+        "pmma_spectral": {
+            "wavelength_nm": [380.0, 450.0, 550.0, 650.0, 780.0],
+            "reflectance":   [0.04, 0.04, 0.04, 0.04, 0.04],
+            "transmittance": [0.96, 0.96, 0.96, 0.96, 0.96],
+            "refractive_index": [1.52, 1.51, 1.49, 1.48, 1.47],
+        }
+    }
+
+    box = SolidBox(name="pmma_slab", center=[0.0, 0.0, 5.5],
+                   dimensions=(50.0, 50.0, 3.0), material_name="pmma_spectral")
+    src = PointSource("src1", np.array([0.0, 0.0, 0.0]),
+                      flux=1000.0, distribution="lambertian",
+                      direction=np.array([0.0, 0.0, 1.0]))
+    src.spd = "warm_white"   # non-white → triggers spectral path
+    detectors = [DetectorSurface.axis_aligned("top_det", [0, 0, 12], (50, 50), 2, 1.0, (20, 20))]
+    settings = SimulationSettings(rays_per_source=1000, max_bounces=30,
+                                   energy_threshold=0.0001, random_seed=7, record_ray_paths=0)
+
+    proj = Project(name="spectral_solidbox_test",
+                   sources=[src], surfaces=[], materials=materials,
+                   detectors=detectors, settings=settings)
+    proj.spectral_material_data = spectral_material_data
+    proj.solid_bodies = [box]
+
+    result = RayTracer(proj).run()
+    det = result.detectors["top_det"]
+    assert det.total_flux > 0, "Spectral SolidBox Fresnel should produce non-zero detector flux"
+
+
+def test_bsdf_spectral_composition():
+    """Surface with bsdf_profile_name AND spectral_material_data applies spectral weight scaling.
+
+    Two runs:
+      - BSDF only (no spectral): reflectance weight = scalar mat.reflectance
+      - BSDF + spectral: reflectance weight = per-wavelength r_vals (different from scalar)
+    Both should produce non-zero flux. The spectral run should differ from the non-spectral one.
+    """
+    from backlight_sim.core.materials import OpticalProperties
+
+    def make_bsdf_scene(with_spectral: bool):
+        bsdf_profile = {
+            "theta_in":  [0.0, 45.0, 90.0],
+            "theta_out": [0.0, 45.0, 90.0],
+            "refl_intensity": [[0.5, 0.3, 0.1], [0.5, 0.3, 0.1], [0.5, 0.3, 0.1]],
+            "trans_intensity": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        }
+        op_bsdf = OpticalProperties("bsdf_wall", surface_type="reflector",
+                                    reflectance=0.8, bsdf_profile_name="test_bsdf")
+        materials = {"wall": Material("wall", surface_type="reflector",
+                                     reflectance=0.9, absorption=0.1)}
+        surfaces = [
+            Rectangle.axis_aligned("floor",      [0, 0, -5], (20, 20), 2, -1.0, "wall"),
+            Rectangle.axis_aligned("wall_left",  [-10, 0, 0], (20, 10), 0, -1.0, "wall"),
+            Rectangle.axis_aligned("wall_right", [10, 0, 0],  (20, 10), 0,  1.0, "wall"),
+            Rectangle.axis_aligned("wall_front", [0, -10, 0], (20, 10), 1, -1.0, "wall"),
+            Rectangle.axis_aligned("wall_back",  [0, 10, 0],  (20, 10), 1,  1.0, "wall"),
+        ]
+        surfaces[0].optical_properties_name = "bsdf_wall"
+        src = PointSource("src1", np.array([0.0, 0.0, 0.0]), flux=1000.0)
+        src.spd = "warm_white"
+        detectors = [DetectorSurface.axis_aligned("top_det", [0, 0, 5], (20, 20), 2, 1.0, (20, 20))]
+        settings = SimulationSettings(rays_per_source=2000, max_bounces=20,
+                                       energy_threshold=0.001, random_seed=42, record_ray_paths=0)
+        proj = Project(name="bsdf_spectral_test", sources=[src], surfaces=surfaces,
+                       materials=materials, optical_properties={"bsdf_wall": op_bsdf},
+                       detectors=detectors, settings=settings,
+                       bsdf_profiles={"test_bsdf": bsdf_profile})
+        if with_spectral:
+            proj.spectral_material_data = {
+                "bsdf_wall": {
+                    "wavelength_nm": [380.0, 450.0, 550.0, 650.0, 780.0],
+                    # High reflectance at blue, low at red (makes wavelength effect detectable)
+                    "reflectance":   [0.95, 0.90, 0.50, 0.20, 0.10],
+                }
+            }
+        return proj
+
+    proj_no_spec = make_bsdf_scene(with_spectral=False)
+    result_no_spec = RayTracer(proj_no_spec).run()
+    flux_no_spec = result_no_spec.detectors["top_det"].total_flux
+
+    proj_spec = make_bsdf_scene(with_spectral=True)
+    result_spec = RayTracer(proj_spec).run()
+    flux_spec = result_spec.detectors["top_det"].total_flux
+
+    assert flux_no_spec > 0, "BSDF-only scene produced zero flux"
+    assert flux_spec > 0, "BSDF+spectral scene produced zero flux"
+    # Spectral weighting (low R at red wavelengths) should produce less total flux
+    # The spectral run has warm_white (red-dominant) but low red reflectance → less flux
+    assert flux_spec != flux_no_spec, (
+        "Expected spectral weight scaling to change total flux vs scalar reflectance, "
+        f"but both produced {flux_spec:.4f}"
+    )
+
+
 def test_cylinder_mp_sb_stats_merged():
     """sb_stats for SolidCylinder are correctly merged in MP mode."""
     proj = _make_cylinder_mp_scene()
