@@ -145,5 +145,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. Performance Acceleration | 2/2 | Complete   | 2026-03-14 |
 | 4. Advanced Materials and Geometry | 5/5 | Complete   | 2026-03-14 |
 | 5. UI Revamp | 4/4 | Complete   | 2026-03-14 |
-| 6. Tracer Cross-Phase Wiring | 0/2 | Planned   | — |
+| 6. Tracer Cross-Phase Wiring | 1/2 | In Progress|  |
 | 7. UI + Spectral Display Fixes | 1/1 | Complete   | 2026-03-15 |

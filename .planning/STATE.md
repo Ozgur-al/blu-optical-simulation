@@ -3,6 +3,19 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
+last_updated: "2026-03-15T10:53:42.575Z"
+progress:
+  total_phases: 7
+  completed_phases: 6
+  total_plans: 19
+  completed_plans: 18
+---
+
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: unknown
 last_updated: "2026-03-15T10:39:15.834Z"
 progress:
   total_phases: 7
@@ -35,10 +48,10 @@ See: .planning/PROJECT.md (updated 2026-03-14)
 
 ## Current Position
 
-Phase: 7 of 7 (UI + Spectral Display Fixes) — In Progress
-Plan: 1 of 1 in current phase — COMPLETE (07-01 SUMMARY created, checkpoint awaiting human verify)
-Status: 07-01 complete. Tab persistence fix, chromaticity scatter cloud, live spectral preview, spectral panel wiring.
-Last activity: 2026-03-15 — Plan 07-01 complete (tracer.py, spectral_data_panel.py, main_window.py)
+Phase: 6 of 7 (Tracer Cross-Phase Wiring) — In Progress
+Plan: 1 of 2 in current phase — COMPLETE (06-01 SUMMARY created)
+Status: 06-01 complete. Cylinder/Prism expansion, intersection, Fresnel dispatch in _trace_single_source; sb_stats merge in _run_multiprocess.
+Last activity: 2026-03-15 — Plan 06-01 complete (tracer.py, test_tracer.py)
 
 Progress: [██████████] 99%
 
@@ -77,6 +90,7 @@ Progress: [██████████] 99%
 | Phase 05-ui-rewamp P03 | 5 | 2 tasks | 4 files |
 | Phase 05-ui-rewamp P04 | 18 | 2 tasks | 3 files |
 | Phase 07-ui-spectral-display-fixes P01 | 8 | 2 tasks | 3 files |
+| Phase 06 P01 | 138 | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -149,6 +163,7 @@ Recent decisions affecting current work:
 - [Phase 07-ui-spectral-display-fixes]: Separate _sim_scatter item from _chroma_scatter so SPD marker and simulation chromaticity cloud coexist independently
 - [Phase 07-ui-spectral-display-fixes]: update_from_result uses first detector with grid_spectral (not aggregating all detectors) — consistent with HeatmapPanel default
 - [Phase 07-ui-spectral-display-fixes]: isinstance(saved_tabs, str) coercion before list check in _restore_layout — Windows QSettings single-item list edge case
+- [Phase 06]: _trace_single_source expands solid_cylinders/solid_prisms using getattr guard; cylinder/prism merged_sb_stats initialized in _run_multiprocess
 
 ### Roadmap Evolution
 
