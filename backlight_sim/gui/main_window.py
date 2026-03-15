@@ -552,6 +552,8 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geom)
         # Restore tabs
         saved_tabs = settings.value("open_tabs")
+        if isinstance(saved_tabs, str):
+            saved_tabs = [saved_tabs]  # Windows QSettings single-element list edge case
         if saved_tabs and isinstance(saved_tabs, list):
             panel_map = {title: widget for title, widget in self._get_openable_panels()}
             for title in saved_tabs:
@@ -1225,6 +1227,7 @@ class MainWindow(QMainWindow):
         self._heatmap.update_results(result)
         self._plot_tab.update_results(result)
         self._receiver_3d.update_results(result)
+        self._spectral_panel.update_from_result(result)  # Chromaticity scatter
 
         # Update far-field panel if any far-field sphere detector has results
         showed_farfield = False
