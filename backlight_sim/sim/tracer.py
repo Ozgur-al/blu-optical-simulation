@@ -707,6 +707,65 @@ class RayTracer:
 
                         box, face_id, box_n, geom_eps = solid_face_map[sface.name]
 
+                        # --- face_optics override: per-face optical property (e.g., LGP bottom reflector) ---
+                        face_op_name = getattr(sface, "optical_properties_name", "")
+                        if face_op_name:
+                            face_op = self.project.optical_properties.get(face_op_name)
+                            if face_op is not None and face_op.surface_type in ("reflector", "absorber", "diffuser"):
+                                _dot_dn = np.einsum("ij,j->i", directions[hit_idx], face_normal)
+                                _flip = _dot_dn > 0
+                                _on = np.where(_flip[:, None], -face_normal, face_normal)
+
+                                # Record waypoints
+                                if n_rec_active > 0:
+                                    for local_i, global_i in enumerate(hit_idx):
+                                        if global_i < n_rec_active:
+                                            active_paths[global_i].append(hit_pts[local_i].copy())
+
+                                # Flux accounting
+                                _entering = _dot_dn < 0
+                                for local_i, global_i in enumerate(hit_idx):
+                                    w = float(weights[global_i])
+                                    if _entering[local_i]:
+                                        sb_stats[box.name][face_id]["entering_flux"] += w
+                                    else:
+                                        sb_stats[box.name][face_id]["exiting_flux"] += w
+
+                                if face_op.surface_type == "absorber":
+                                    alive[hit_idx] = False
+                                    continue
+                                elif face_op.surface_type == "reflector":
+                                    weights[hit_idx] *= face_op.reflectance
+                                    new_dirs = _reflect_batch(directions[hit_idx], _on,
+                                                              face_op.is_diffuse, self.rng)
+                                    if face_op.haze > 0 and not face_op.is_diffuse:
+                                        new_dirs = scatter_haze(new_dirs, face_op.haze, self.rng)
+                                    origins[hit_idx] = hit_pts + _on * geom_eps
+                                    directions[hit_idx] = new_dirs
+                                    continue
+                                elif face_op.surface_type == "diffuser":
+                                    n_rays_fo = len(hit_idx)
+                                    roll_fo = self.rng.uniform(size=n_rays_fo)
+                                    transmits_fo = roll_fo < face_op.transmittance
+                                    if transmits_fo.any():
+                                        ti_fo = hit_idx[transmits_fo]
+                                        through_n_fo = -_on[transmits_fo]
+                                        new_d_fo = sample_lambertian(int(transmits_fo.sum()),
+                                                                      through_n_fo[0], self.rng)
+                                        origins[ti_fo] = hit_pts[transmits_fo] + through_n_fo * geom_eps
+                                        directions[ti_fo] = new_d_fo
+                                    reflects_fo = ~transmits_fo
+                                    if reflects_fo.any():
+                                        ri_fo = hit_idx[reflects_fo]
+                                        weights[ri_fo] *= face_op.reflectance
+                                        refl_on_fo = _on[reflects_fo]
+                                        new_d_fo = _reflect_batch(directions[ri_fo], refl_on_fo,
+                                                                   face_op.is_diffuse, self.rng)
+                                        origins[ri_fo] = hit_pts[reflects_fo] + refl_on_fo * geom_eps
+                                        directions[ri_fo] = new_d_fo
+                                    continue
+                        # --- end face_optics override --- fall through to standard Fresnel below
+
                         # Determine entering vs exiting.
                         # face_normal is the outward normal (points out of the box).
                         # dot(d, face_normal) < 0 → ray goes against outward normal → entering.
@@ -723,7 +782,15 @@ class RayTracer:
                         on_back = -on_into   # points back toward incoming medium
 
                         n1_arr = current_n[hit_idx].copy()
-                        n2_arr = np.where(entering, box_n, 1.0)
+                        # Spectral n(lambda) for SolidBox material
+                        spec_data_sb = (self.project.spectral_material_data or {}).get(box.material_name) if wavelengths is not None else None
+                        if spec_data_sb is not None and "refractive_index" in spec_data_sb:
+                            spec_wl_sb = np.asarray(spec_data_sb["wavelength_nm"], dtype=float)
+                            n_lambda_sb = np.interp(wavelengths[hit_idx], spec_wl_sb,
+                                                    np.asarray(spec_data_sb["refractive_index"], dtype=float))
+                            n2_arr = np.where(entering, n_lambda_sb, 1.0)
+                        else:
+                            n2_arr = np.where(entering, box_n, 1.0)
 
                         # cos_i = dot(d, on_into) because _fresnel_unpolarized convention:
                         # cos_theta_i is the cosine between ray and normal pointing into new medium,
@@ -806,7 +873,15 @@ class RayTracer:
                             on_into = np.where(entering[:, None], -face_normal, face_normal)
                         on_back = -on_into
                         n1_arr = current_n[hit_idx].copy()
-                        n2_arr = np.where(entering, cyl_n, 1.0)
+                        # Spectral n(lambda) for SolidCylinder material
+                        spec_data_cyl = (self.project.spectral_material_data or {}).get(cyl.material_name) if wavelengths is not None else None
+                        if spec_data_cyl is not None and "refractive_index" in spec_data_cyl:
+                            spec_wl_cyl = np.asarray(spec_data_cyl["wavelength_nm"], dtype=float)
+                            n_lambda_cyl = np.interp(wavelengths[hit_idx], spec_wl_cyl,
+                                                     np.asarray(spec_data_cyl["refractive_index"], dtype=float))
+                            n2_arr = np.where(entering, n_lambda_cyl, 1.0)
+                        else:
+                            n2_arr = np.where(entering, cyl_n, 1.0)
                         cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
                         R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
                         roll = self.rng.random(len(hit_idx))
@@ -857,7 +932,15 @@ class RayTracer:
                         on_into = np.where(entering[:, None], -face_normal, face_normal)
                         on_back = -on_into
                         n1_arr = current_n[hit_idx].copy()
-                        n2_arr = np.where(entering, prism_n, 1.0)
+                        # Spectral n(lambda) for SolidPrism material
+                        spec_data_prism = (self.project.spectral_material_data or {}).get(prism.material_name) if wavelengths is not None else None
+                        if spec_data_prism is not None and "refractive_index" in spec_data_prism:
+                            spec_wl_prism = np.asarray(spec_data_prism["wavelength_nm"], dtype=float)
+                            n_lambda_prism = np.interp(wavelengths[hit_idx], spec_wl_prism,
+                                                       np.asarray(spec_data_prism["refractive_index"], dtype=float))
+                            n2_arr = np.where(entering, n_lambda_prism, 1.0)
+                        else:
+                            n2_arr = np.where(entering, prism_n, 1.0)
                         cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
                         R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
                         roll = self.rng.random(len(hit_idx))
@@ -1039,14 +1122,35 @@ class RayTracer:
             # oriented normal pointing away from the incoming ray
             on = np.where(flip[:, None], -normal, normal)
 
-            # --- BSDF dispatch: overrides all scalar R/T/diffuse behavior ---
+            # --- Spectral R/T lookup (BEFORE BSDF dispatch so both paths can use it) ---
+            optics_name = getattr(surf, "optical_properties_name", "") or surf.material_name
+            spec_data = (spectral_material_data or {}).get(optics_name)
+            if spec_data is not None and wavelengths is not None:
+                ray_wl = wavelengths[hit_idx]
+                spec_wl = np.asarray(spec_data["wavelength_nm"], dtype=float)
+                r_vals = np.interp(ray_wl, spec_wl,
+                                   np.asarray(spec_data["reflectance"], dtype=float))
+                t_data = spec_data.get("transmittance")
+                if t_data is not None:
+                    t_vals_spec = np.interp(ray_wl, spec_wl,
+                                            np.asarray(t_data, dtype=float))
+                else:
+                    t_vals_spec = np.full_like(r_vals, mat.transmittance)
+            else:
+                r_vals = None
+                t_vals_spec = None
+
+            # --- BSDF dispatch: overrides scalar R/T/diffuse behavior, respects spectral R ---
             bsdf_name = getattr(mat, "bsdf_profile_name", "")
             if bsdf_name and (bsdf_cdf_cache or {}).get(bsdf_name) is not None:
                 bsdf_profile = (self.project.bsdf_profiles or {}).get(bsdf_name, {})
                 cdfs = (bsdf_cdf_cache or {}).get(bsdf_name)
                 n_hit = len(hit_idx)
-                # Apply reflectance weight scaling (energy conservation via material reflectance)
-                weights[hit_idx] *= mat.reflectance
+                # Apply spectral or scalar reflectance weight scaling (energy conservation)
+                if r_vals is not None:
+                    weights[hit_idx] *= r_vals
+                else:
+                    weights[hit_idx] *= mat.reflectance
                 # Determine R/T probability from BSDF profile angular distribution
                 # refl_total / trans_total give relative probabilities per theta_in bin
                 theta_in_vals = cdfs["theta_in"]
@@ -1094,24 +1198,7 @@ class RayTracer:
                     origins[ti] = hit_pts[transmits_bsdf] + through_n * _EPSILON
                     directions[ti] = new_dirs
                 continue
-
-            # Resolve spectral material properties (per-wavelength R/T lookup)
-            optics_name = getattr(surf, "optical_properties_name", "") or surf.material_name
-            spec_data = (spectral_material_data or {}).get(optics_name)
-            if spec_data is not None and wavelengths is not None:
-                ray_wl = wavelengths[hit_idx]
-                spec_wl = np.asarray(spec_data["wavelength_nm"], dtype=float)
-                r_vals = np.interp(ray_wl, spec_wl,
-                                   np.asarray(spec_data["reflectance"], dtype=float))
-                t_data = spec_data.get("transmittance")
-                if t_data is not None:
-                    t_vals_spec = np.interp(ray_wl, spec_wl,
-                                            np.asarray(t_data, dtype=float))
-                else:
-                    t_vals_spec = np.full_like(r_vals, mat.transmittance)
-            else:
-                r_vals = None
-                t_vals_spec = None
+            # r_vals and t_vals_spec are now available for reflector/diffuser branches below
 
             if mat.surface_type == "reflector":
                 if r_vals is not None:
@@ -1492,6 +1579,56 @@ def _trace_single_source(project, source_name, base_seed):
 
             box, face_id, box_n, geom_eps = solid_face_map[sface.name]
 
+            # --- face_optics override in MP path ---
+            face_op_name_mp = getattr(sface, "optical_properties_name", "")
+            if face_op_name_mp:
+                face_op_mp = project.optical_properties.get(face_op_name_mp)
+                if face_op_mp is not None and face_op_mp.surface_type in ("reflector", "absorber", "diffuser"):
+                    _dot_dn_mp = np.einsum("ij,j->i", directions[hit_idx], face_normal)
+                    _flip_mp = _dot_dn_mp > 0
+                    _on_mp = np.where(_flip_mp[:, None], -face_normal, face_normal)
+                    _entering_mp = _dot_dn_mp < 0
+                    for local_i, global_i in enumerate(hit_idx):
+                        w = float(weights[global_i])
+                        if _entering_mp[local_i]:
+                            sb_stats[box.name][face_id]["entering_flux"] += w
+                        else:
+                            sb_stats[box.name][face_id]["exiting_flux"] += w
+                    if face_op_mp.surface_type == "absorber":
+                        alive[hit_idx] = False
+                        continue
+                    elif face_op_mp.surface_type == "reflector":
+                        weights[hit_idx] *= face_op_mp.reflectance
+                        new_dirs_mp = _reflect_batch(directions[hit_idx], _on_mp,
+                                                     face_op_mp.is_diffuse, rng)
+                        if face_op_mp.haze > 0 and not face_op_mp.is_diffuse:
+                            new_dirs_mp = scatter_haze(new_dirs_mp, face_op_mp.haze, rng)
+                        origins[hit_idx] = hit_pts + _on_mp * geom_eps
+                        directions[hit_idx] = new_dirs_mp
+                        continue
+                    elif face_op_mp.surface_type == "diffuser":
+                        n_rays_fo_mp = len(hit_idx)
+                        roll_fo_mp = rng.uniform(size=n_rays_fo_mp)
+                        transmits_fo_mp = roll_fo_mp < face_op_mp.transmittance
+                        if transmits_fo_mp.any():
+                            ti_fo_mp = hit_idx[transmits_fo_mp]
+                            through_n_fo_mp = -_on_mp[transmits_fo_mp]
+                            new_d_fo_mp = sample_lambertian(int(transmits_fo_mp.sum()),
+                                                             through_n_fo_mp[0], rng)
+                            origins[ti_fo_mp] = hit_pts[transmits_fo_mp] + through_n_fo_mp * geom_eps
+                            directions[ti_fo_mp] = new_d_fo_mp
+                        reflects_fo_mp = ~transmits_fo_mp
+                        if reflects_fo_mp.any():
+                            ri_fo_mp = hit_idx[reflects_fo_mp]
+                            weights[ri_fo_mp] *= face_op_mp.reflectance
+                            refl_on_fo_mp = _on_mp[reflects_fo_mp]
+                            new_d_fo_mp = _reflect_batch(directions[ri_fo_mp], refl_on_fo_mp,
+                                                          face_op_mp.is_diffuse, rng)
+                            origins[ri_fo_mp] = hit_pts[reflects_fo_mp] + refl_on_fo_mp * geom_eps
+                            directions[ri_fo_mp] = new_d_fo_mp
+                        continue
+            # --- end face_optics override in MP path ---
+
             dot_dn = np.einsum("ij,j->i", directions[hit_idx], face_normal)
             entering = dot_dn < 0
 
@@ -1671,13 +1808,21 @@ def _trace_single_source(project, source_name, base_seed):
                 dot = np.einsum("ij,j->i", directions[hit_idx], normal)
                 flip = dot > 0
                 on = np.where(flip[:, None], -normal, normal)
+                # Spectral R/T lookup (before BSDF dispatch — positional fix for future spectral+MP)
+                # In current code, spectral+MP is guarded; r_vals_mp will be None in practice.
+                optics_name_mp = getattr(surf, 'optical_properties_name', '') or surf.material_name
+                spec_data_mp = None  # MP path: spectral guard means wavelengths always None here
+                r_vals_mp = None
                 # BSDF dispatch
                 bsdf_name_mp = getattr(mat, 'bsdf_profile_name', '')
                 if bsdf_name_mp and bsdf_cdf_cache_mp.get(bsdf_name_mp) is not None:
                     bsdf_prof_mp = (getattr(project, 'bsdf_profiles', {}) or {}).get(bsdf_name_mp, {})
                     cdfs_mp = bsdf_cdf_cache_mp[bsdf_name_mp]
-                    # Apply reflectance weight scaling (energy conservation)
-                    weights[hit_idx] *= mat.reflectance
+                    # Apply spectral or scalar reflectance weight scaling (energy conservation)
+                    if r_vals_mp is not None:
+                        weights[hit_idx] *= r_vals_mp
+                    else:
+                        weights[hit_idx] *= mat.reflectance
                     # Determine R/T probability from BSDF angular distribution
                     theta_in_vals_mp = cdfs_mp['theta_in']
                     refl_total_mp = cdfs_mp['refl_total']
