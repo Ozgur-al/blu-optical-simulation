@@ -55,7 +55,7 @@ class CollapsibleSection(QWidget):
         self._content = QFrame()
         self._content.setVisible(not collapsed)
         self._content_layout = QVBoxLayout(self._content)
-        self._content_layout.setContentsMargins(8, 4, 4, 4)
+        self._content_layout.setContentsMargins(4, 4, 0, 4)
         self._content_layout.setSpacing(2)
         layout.addWidget(self._content)
 
