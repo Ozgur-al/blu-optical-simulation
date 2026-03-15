@@ -3,6 +3,19 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
+last_updated: "2026-03-15T11:11:14.581Z"
+progress:
+  total_phases: 7
+  completed_phases: 7
+  total_plans: 19
+  completed_plans: 19
+---
+
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: unknown
 last_updated: "2026-03-15T10:53:42.575Z"
 progress:
   total_phases: 7
@@ -48,10 +61,10 @@ See: .planning/PROJECT.md (updated 2026-03-14)
 
 ## Current Position
 
-Phase: 6 of 7 (Tracer Cross-Phase Wiring) — In Progress
-Plan: 1 of 2 in current phase — COMPLETE (06-01 SUMMARY created)
-Status: 06-01 complete. Cylinder/Prism expansion, intersection, Fresnel dispatch in _trace_single_source; sb_stats merge in _run_multiprocess.
-Last activity: 2026-03-15 — Plan 06-01 complete (tracer.py, test_tracer.py)
+Phase: 6 of 7 (Tracer Cross-Phase Wiring) — COMPLETE
+Plan: 2 of 2 in current phase — COMPLETE (06-02 SUMMARY created)
+Status: Phase 06 complete. face_optics override in SolidBox dispatch; spectral n(lambda) in Fresnel branches; BSDF+spectral composition fixed.
+Last activity: 2026-03-15 — Plan 06-02 complete (tracer.py, test_tracer.py)
 
 Progress: [██████████] 99%
 
@@ -91,6 +104,7 @@ Progress: [██████████] 99%
 | Phase 05-ui-rewamp P04 | 18 | 2 tasks | 3 files |
 | Phase 07-ui-spectral-display-fixes P01 | 8 | 2 tasks | 3 files |
 | Phase 06 P01 | 138 | 1 tasks | 2 files |
+| Phase 06-tracer-cross-phase-wiring P02 | 14 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -164,6 +178,9 @@ Recent decisions affecting current work:
 - [Phase 07-ui-spectral-display-fixes]: update_from_result uses first detector with grid_spectral (not aggregating all detectors) — consistent with HeatmapPanel default
 - [Phase 07-ui-spectral-display-fixes]: isinstance(saved_tabs, str) coercion before list check in _restore_layout — Windows QSettings single-item list edge case
 - [Phase 06]: _trace_single_source expands solid_cylinders/solid_prisms using getattr guard; cylinder/prism merged_sb_stats initialized in _run_multiprocess
+- [Phase 06-02]: face_optics override uses continue in each branch to skip Fresnel; empty optical_properties_name falls through unchanged
+- [Phase 06-02]: spectral refractive_index is optional extension to spectral_material_data — absent falls back to scalar box_n/cyl_n/prism_n (backward compatible)
+- [Phase 06-02]: BSDF+spectral composition: spectral R/T lookup repositioned before BSDF dispatch so r_vals replaces mat.reflectance in weight scaling
 
 ### Roadmap Evolution
 
@@ -183,5 +200,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-15
-Stopped at: Completed 07-01-PLAN.md — Tab persistence, chromaticity scatter, live spectral preview (checkpoint awaiting visual verification)
+Stopped at: Completed 06-02-PLAN.md — face_optics, spectral n(lambda), BSDF+spectral composition (all tests green)
 Resume file: None
