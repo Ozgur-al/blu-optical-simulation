@@ -181,7 +181,7 @@ class MainWindow(QMainWindow):
         main_splitter.addWidget(self._center_tabs)
         main_splitter.setStretchFactor(0, 0)
         main_splitter.setStretchFactor(1, 1)
-        main_splitter.setSizes([280, 1160])
+        main_splitter.setSizes([320, 1120])
 
         self.setCentralWidget(main_splitter)
 

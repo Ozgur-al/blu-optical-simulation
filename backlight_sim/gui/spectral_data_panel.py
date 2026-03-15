@@ -297,7 +297,7 @@ class SpectralDataPanel(QWidget):
         Called by MainWindow._on_sim_finished(). Plots all illuminated pixels
         as (x, y) points on the CIE 1931 diagram.
         """
-        from backlight_sim.sim.spectral import spectral_grid_to_xyz, spectral_bin_centers, xy_per_pixel
+        from backlight_sim.sim.spectral import xyz_per_pixel, spectral_bin_centers, xy_per_pixel
 
         # Remove previous simulation scatter (keep SPD marker separate)
         if getattr(self, "_sim_scatter", None) is not None:
@@ -317,7 +317,7 @@ class SpectralDataPanel(QWidget):
         try:
             n_bins = grid_spectral.shape[2]
             wl = spectral_bin_centers(n_bins)
-            xyz = spectral_grid_to_xyz(grid_spectral, wl)  # (ny, nx, 3)
+            xyz = xyz_per_pixel(grid_spectral, wl)  # (ny, nx, 3)
             xy = xy_per_pixel(xyz)  # (ny, nx, 2)
 
             # Filter illuminated pixels only (luminance > threshold)

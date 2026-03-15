@@ -118,7 +118,7 @@ class PropertiesPanel(QStackedWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumWidth(280)
+        self.setMinimumWidth(320)
 
         empty = QLabel("Select an object to edit")
         empty.setStyleSheet(f"color: {TEXT_MUTED}; padding: 8px;")
