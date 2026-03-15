@@ -96,7 +96,8 @@ class MainWindow(QMainWindow):
 
         # Undo/redo stack
         self._undo_stack = QUndoStack(self)
-        self._undo_stack.indexChanged.connect(lambda _: self._mark_dirty())
+        self._pushing_property = 0  # counter for nested macro/push operations
+        self._undo_stack.indexChanged.connect(self._on_undo_index_changed)
 
         # Debounce timer: coalesces rapid property edits into a single refresh
         self._refresh_timer = QTimer(self)
@@ -109,6 +110,7 @@ class MainWindow(QMainWindow):
         self._setup_toolbar()
         self._setup_shortcuts()
         self._connect_signals()
+        self._wire_property_undo()
         self._restore_layout()
         self._refresh_all()
 
@@ -834,6 +836,52 @@ class MainWindow(QMainWindow):
     def _on_properties_changed(self):
         self._mark_dirty()
         self._refresh_timer.start()  # debounced — coalesces rapid edits
+
+    # ── Property undo infrastructure ─────────────────────────────────────
+
+    def _wire_property_undo(self):
+        """Give the properties panel access to the undo stack."""
+        self._properties.set_undo_stack(
+            self._undo_stack,
+            self._push_property_command,
+            self._begin_property_macro,
+            self._end_property_macro,
+            self._refresh_for_property_edit,
+        )
+
+    def _push_property_command(self, cmd):
+        """Push a property command with flag guard to suppress form reload."""
+        self._pushing_property += 1
+        self._undo_stack.push(cmd)
+        self._pushing_property -= 1
+
+    def _begin_property_macro(self, text):
+        self._pushing_property += 1
+        self._undo_stack.beginMacro(text)
+
+    def _end_property_macro(self):
+        self._undo_stack.endMacro()
+        self._pushing_property -= 1
+
+    def _refresh_for_property_edit(self):
+        """Lightweight refresh used as command callback — starts debounce timer."""
+        self._refresh_timer.start()
+
+    def _on_undo_index_changed(self, _idx):
+        self._mark_dirty()
+        if self._pushing_property == 0:
+            # Undo/redo happened externally (Ctrl+Z/Y) — reload the form
+            self._reload_current_form()
+            self._refresh_timer.start()
+
+    def _reload_current_form(self):
+        """Re-populate the properties panel for the current selection."""
+        if self._selected_group and self._selected_name:
+            self._on_object_selected(self._selected_group, self._selected_name)
+        elif self._properties.currentWidget() is self._properties._settingsform:
+            self._properties.show_settings(self._project.settings)
+
+    # ─────────────────────────────────────────────────────────────────────
 
     def _on_bsdf_changed(self):
         """Called when a BSDF profile is imported or deleted."""

@@ -38,6 +38,53 @@ from backlight_sim.gui.theme import TEXT_MUTED
 from backlight_sim.core.detectors import DetectorSurface, SphereDetector
 from backlight_sim.core.geometry import Rectangle
 from backlight_sim.core.solid_body import SolidBox, SolidCylinder, SolidPrism, FACE_NAMES
+from backlight_sim.gui.commands import SetPropertyCommand
+
+
+def _vals_equal(a, b):
+    """Compare values, handling numpy arrays."""
+    if isinstance(a, np.ndarray) or isinstance(b, np.ndarray):
+        try:
+            return np.array_equal(a, b)
+        except TypeError:
+            return False
+    return a == b
+
+
+def _push_or_apply_changes(obj, changes, push_cmd_fn, begin_macro_fn,
+                           end_macro_fn, undo_stack, refresh_fn, changed_signal):
+    """Apply attribute changes via undo commands or direct mutation.
+
+    Parameters
+    ----------
+    obj : object with settable attributes
+    changes : list of (attr_name, new_value) pairs
+    push_cmd_fn : callable(QUndoCommand) or None — pushes with flag guard
+    begin_macro_fn / end_macro_fn : callable for macro grouping
+    undo_stack : QUndoStack (used for pushes inside macros)
+    refresh_fn : callback for commands
+    changed_signal : Signal to emit when using direct-mutation path
+    """
+    if push_cmd_fn is not None:
+        pending = []
+        for attr, new_val in changes:
+            old_val = getattr(obj, attr)
+            if not _vals_equal(old_val, new_val):
+                pending.append((attr, old_val, new_val))
+        if not pending:
+            return
+        if len(pending) == 1:
+            attr, old_val, new_val = pending[0]
+            push_cmd_fn(SetPropertyCommand(obj, attr, old_val, new_val, refresh_fn))
+        else:
+            begin_macro_fn(f"Edit {getattr(obj, 'name', '?')}")
+            for attr, old_val, new_val in pending:
+                undo_stack.push(SetPropertyCommand(obj, attr, old_val, new_val, refresh_fn))
+            end_macro_fn()
+    else:
+        for attr, new_val in changes:
+            setattr(obj, attr, new_val)
+        changed_signal.emit()
 
 
 _AXIS_MAP = {
@@ -197,6 +244,21 @@ class PropertiesPanel(QStackedWidget):
         self._finalize_active_editor()
         self._solidprismform.load(prism, mat_names)
         self.setCurrentWidget(self._solidprismform)
+
+    def set_undo_stack(self, undo_stack, push_fn, begin_macro_fn, end_macro_fn, refresh_fn):
+        """Wire undo infrastructure into all forms."""
+        forms = [
+            self._sourceform, self._surfaceform, self._materialform,
+            self._opticalpropertiesform, self._detectorform, self._spheredetectorform,
+            self._settingsform, self._solidboxform, self._faceform,
+            self._solidcylinderform, self._solidprismform,
+        ]
+        for form in forms:
+            form._push_command = push_fn
+            form._begin_macro = begin_macro_fn
+            form._end_macro = end_macro_fn
+            form._undo_stack = undo_stack
+            form._undo_refresh = refresh_fn
 
     def clear_selection(self):
         self._finalize_active_editor()
@@ -421,9 +483,14 @@ class SourceForm(QWidget):
         self._flux.blockSignals(True)
         self._flux.setValue(flux)
         self._flux.blockSignals(False)
-        self._src.flux = flux
-        self._src.distribution = dist
-        self.changed.emit()
+        changes = [('flux', flux), ('distribution', dist)]
+        _push_or_apply_changes(self._src, changes,
+                               getattr(self, '_push_command', None),
+                               getattr(self, '_begin_macro', None),
+                               getattr(self, '_end_macro', None),
+                               getattr(self, '_undo_stack', None),
+                               getattr(self, '_undo_refresh', None),
+                               self.changed)
 
     # ──────────────────────────────────────────────────────────────────
 
@@ -433,19 +500,27 @@ class SourceForm(QWidget):
         name = self._name.text().strip()
         if not name:
             return
-        self._src.name = name
-        self._src.enabled = self._enabled.isChecked()
-        self._src.position = np.array([self._px.value(), self._py.value(), self._pz.value()])
-        self._src.flux = self._flux.value()
-        self._src.distribution = self._dist.currentText()
-        self._src.flux_tolerance = self._tolerance.value()
-        self._src.current_mA = self._current.value()
-        self._src.flux_per_mA = self._flux_per_mA.value()
-        self._src.thermal_derate = self._thermal.value()
-        self._src.color_rgb = (self._cr.value(), self._cg.value(), self._cb.value())
-        self._src.spd = self._spd.currentText()
+        changes = [
+            ('name', name),
+            ('enabled', self._enabled.isChecked()),
+            ('position', np.array([self._px.value(), self._py.value(), self._pz.value()])),
+            ('flux', self._flux.value()),
+            ('distribution', self._dist.currentText()),
+            ('flux_tolerance', self._tolerance.value()),
+            ('current_mA', self._current.value()),
+            ('flux_per_mA', self._flux_per_mA.value()),
+            ('thermal_derate', self._thermal.value()),
+            ('color_rgb', (self._cr.value(), self._cg.value(), self._cb.value())),
+            ('spd', self._spd.currentText()),
+        ]
+        _push_or_apply_changes(self._src, changes,
+                               getattr(self, '_push_command', None),
+                               getattr(self, '_begin_macro', None),
+                               getattr(self, '_end_macro', None),
+                               getattr(self, '_undo_stack', None),
+                               getattr(self, '_undo_refresh', None),
+                               self.changed)
         self._update_peak_display()
-        self.changed.emit()
 
 
 class SurfaceForm(QWidget):
@@ -601,20 +676,28 @@ class SurfaceForm(QWidget):
         name = self._name.text().strip()
         if not name:
             return
-        self._surf.name = name
-        self._surf.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
-        self._surf.size = (self._sw.value(), self._sh.value())
         key = self._FACE_KEYS[self._face.currentIndex()]
         u, v = _axes_from_face_and_rotation(key, self._rx.value(), self._ry.value(), self._rz.value())
-        self._surf.u_axis = u.copy()
-        self._surf.v_axis = v.copy()
-        if self._mat.currentText():
-            self._surf.material_name = self._mat.currentText()
         op_text = self._opt_prop.currentText()
-        self._surf.optical_properties_name = "" if op_text == "(none)" else op_text
+        changes = [
+            ('name', name),
+            ('center', np.array([self._cx.value(), self._cy.value(), self._cz.value()])),
+            ('size', (self._sw.value(), self._sh.value())),
+            ('u_axis', u.copy()),
+            ('v_axis', v.copy()),
+            ('optical_properties_name', "" if op_text == "(none)" else op_text),
+        ]
+        if self._mat.currentText():
+            changes.append(('material_name', self._mat.currentText()))
+        _push_or_apply_changes(self._surf, changes,
+                               getattr(self, '_push_command', None),
+                               getattr(self, '_begin_macro', None),
+                               getattr(self, '_end_macro', None),
+                               getattr(self, '_undo_stack', None),
+                               getattr(self, '_undo_refresh', None),
+                               self.changed)
         n = self._surf.normal
         self._normal_lbl.setText(f"normal: ({n[0]:.2f}, {n[1]:.2f}, {n[2]:.2f})")
-        self.changed.emit()
 
 
 class MaterialForm(QWidget):
@@ -783,16 +866,24 @@ class MaterialForm(QWidget):
         name = self._name.text().strip()
         if not name:
             return
-        self._mat.name = name
-        self._mat.surface_type = self._type.currentText()
-        self._mat.reflectance = self._ref.value()
-        self._mat.absorption = self._abs.value()
-        self._mat.transmittance = self._trn.value()
-        self._mat.is_diffuse = self._mode.currentIndex() == 0
-        self._mat.haze = self._haze.value()
-        self._mat.refractive_index = self._ri.value()
-        self._mat.color = self._color
-        self.changed.emit()
+        changes = [
+            ('name', name),
+            ('surface_type', self._type.currentText()),
+            ('reflectance', self._ref.value()),
+            ('absorption', self._abs.value()),
+            ('transmittance', self._trn.value()),
+            ('is_diffuse', self._mode.currentIndex() == 0),
+            ('haze', self._haze.value()),
+            ('refractive_index', self._ri.value()),
+            ('color', self._color),
+        ]
+        _push_or_apply_changes(self._mat, changes,
+                               getattr(self, '_push_command', None),
+                               getattr(self, '_begin_macro', None),
+                               getattr(self, '_end_macro', None),
+                               getattr(self, '_undo_stack', None),
+                               getattr(self, '_undo_refresh', None),
+                               self.changed)
 
     # ------------------------------------------------------------------
     # Spectral R/T editor
@@ -1086,17 +1177,25 @@ class OpticalPropertiesForm(QWidget):
         name = self._name.text().strip()
         if not name:
             return
-        self._op.name = name
-        self._op.surface_type = self._type.currentText()
-        self._op.reflectance = self._ref.value()
-        self._op.absorption = self._abs.value()
-        self._op.transmittance = self._trn.value()
-        self._op.is_diffuse = self._mode.currentIndex() == 0
-        self._op.haze = self._haze.value()
-        self._op.color = self._color
         bsdf_text = self._bsdf_combo.currentText()
-        self._op.bsdf_profile_name = "" if bsdf_text == "(None)" else bsdf_text
-        self.changed.emit()
+        changes = [
+            ('name', name),
+            ('surface_type', self._type.currentText()),
+            ('reflectance', self._ref.value()),
+            ('absorption', self._abs.value()),
+            ('transmittance', self._trn.value()),
+            ('is_diffuse', self._mode.currentIndex() == 0),
+            ('haze', self._haze.value()),
+            ('color', self._color),
+            ('bsdf_profile_name', "" if bsdf_text == "(None)" else bsdf_text),
+        ]
+        _push_or_apply_changes(self._op, changes,
+                               getattr(self, '_push_command', None),
+                               getattr(self, '_begin_macro', None),
+                               getattr(self, '_end_macro', None),
+                               getattr(self, '_undo_stack', None),
+                               getattr(self, '_undo_refresh', None),
+                               self.changed)
 
 
 class DetectorForm(QWidget):
@@ -1240,15 +1339,23 @@ class DetectorForm(QWidget):
         name = self._name.text().strip()
         if not name:
             return
-        self._det.name = name
-        self._det.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
-        self._det.size = (self._sw.value(), self._sh.value())
         key = self._FACE_KEYS[self._face.currentIndex()]
         u, v = _axes_from_face_and_rotation(key, self._rx.value(), self._ry.value(), self._rz.value())
-        self._det.u_axis = u.copy()
-        self._det.v_axis = v.copy()
-        self._det.resolution = (self._rx_res.value(), self._ry_res.value())
-        self.changed.emit()
+        changes = [
+            ('name', name),
+            ('center', np.array([self._cx.value(), self._cy.value(), self._cz.value()])),
+            ('size', (self._sw.value(), self._sh.value())),
+            ('u_axis', u.copy()),
+            ('v_axis', v.copy()),
+            ('resolution', (self._rx_res.value(), self._ry_res.value())),
+        ]
+        _push_or_apply_changes(self._det, changes,
+                               getattr(self, '_push_command', None),
+                               getattr(self, '_begin_macro', None),
+                               getattr(self, '_end_macro', None),
+                               getattr(self, '_undo_stack', None),
+                               getattr(self, '_undo_refresh', None),
+                               self.changed)
 
 
 class SphereDetectorForm(QWidget):
@@ -1326,12 +1433,20 @@ class SphereDetectorForm(QWidget):
         name = self._name.text().strip()
         if not name:
             return
-        self._det.name = name
-        self._det.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
-        self._det.radius = self._radius.value()
-        self._det.resolution = (self._n_phi.value(), self._n_theta.value())
-        self._det.mode = self._mode.currentText()
-        self.changed.emit()
+        changes = [
+            ('name', name),
+            ('center', np.array([self._cx.value(), self._cy.value(), self._cz.value()])),
+            ('radius', self._radius.value()),
+            ('resolution', (self._n_phi.value(), self._n_theta.value())),
+            ('mode', self._mode.currentText()),
+        ]
+        _push_or_apply_changes(self._det, changes,
+                               getattr(self, '_push_command', None),
+                               getattr(self, '_begin_macro', None),
+                               getattr(self, '_end_macro', None),
+                               getattr(self, '_undo_stack', None),
+                               getattr(self, '_undo_refresh', None),
+                               self.changed)
 
 
 _QUALITY_PRESETS = {
@@ -1530,20 +1645,30 @@ class SettingsForm(QWidget):
     def _apply(self):
         if self._s is None or self._loading:
             return
-        self._s.rays_per_source = self._rays.value()
-        self._s.max_bounces = self._bounce.value()
-        self._s.energy_threshold = self._thresh.value()
-        self._s.random_seed = self._seed.value()
-        self._s.record_ray_paths = self._rec.value()
-        self._s.distance_unit = self._unit.currentText()
-        self._s.flux_unit = self._flux_unit.currentText()
-        self._s.angle_unit = self._angle_unit.currentText()
-        self._s.use_multiprocessing = self._mp.isChecked()
+        changes = [
+            ('rays_per_source', self._rays.value()),
+            ('max_bounces', self._bounce.value()),
+            ('energy_threshold', self._thresh.value()),
+            ('random_seed', self._seed.value()),
+            ('record_ray_paths', self._rec.value()),
+            ('distance_unit', self._unit.currentText()),
+            ('flux_unit', self._flux_unit.currentText()),
+            ('angle_unit', self._angle_unit.currentText()),
+            ('use_multiprocessing', self._mp.isChecked()),
+        ]
         if hasattr(self._s, "adaptive_sampling"):
-            self._s.adaptive_sampling = self._adaptive.isChecked()
-            self._s.convergence_cv_target = self._cv_target.value()
-            self._s.check_interval = self._check_interval.value()
-        self.changed.emit()
+            changes.extend([
+                ('adaptive_sampling', self._adaptive.isChecked()),
+                ('convergence_cv_target', self._cv_target.value()),
+                ('check_interval', self._check_interval.value()),
+            ])
+        _push_or_apply_changes(self._s, changes,
+                               getattr(self, '_push_command', None),
+                               getattr(self, '_begin_macro', None),
+                               getattr(self, '_end_macro', None),
+                               getattr(self, '_undo_stack', None),
+                               getattr(self, '_undo_refresh', None),
+                               self.changed)
 
 
 class BatchForm(QWidget):
@@ -1971,13 +2096,21 @@ class SolidBoxForm(QWidget):
         name = self._name.text().strip()
         if not name:
             return
-        self._box.name = name
-        self._box.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
-        self._box.dimensions = (self._dw.value(), self._dh.value(), self._dd.value())
+        changes = [
+            ('name', name),
+            ('center', np.array([self._cx.value(), self._cy.value(), self._cz.value()])),
+            ('dimensions', (self._dw.value(), self._dh.value(), self._dd.value())),
+            ('coupling_edges', [eid for eid, cb in self._edge_checks.items() if cb.isChecked()]),
+        ]
         if self._mat.currentText():
-            self._box.material_name = self._mat.currentText()
-        self._box.coupling_edges = [eid for eid, cb in self._edge_checks.items() if cb.isChecked()]
-        self.changed.emit()
+            changes.append(('material_name', self._mat.currentText()))
+        _push_or_apply_changes(self._box, changes,
+                               getattr(self, '_push_command', None),
+                               getattr(self, '_begin_macro', None),
+                               getattr(self, '_end_macro', None),
+                               getattr(self, '_undo_stack', None),
+                               getattr(self, '_undo_refresh', None),
+                               self.changed)
 
 
 class FaceForm(QWidget):
@@ -2026,11 +2159,19 @@ class FaceForm(QWidget):
         if self._box is None or self._loading:
             return
         selected = self._opt_prop.currentText()
+        new_optics = dict(self._box.face_optics)
         if selected == "(use bulk material)" or not selected:
-            self._box.face_optics.pop(self._face_id, None)
+            new_optics.pop(self._face_id, None)
         else:
-            self._box.face_optics[self._face_id] = selected
-        self.changed.emit()
+            new_optics[self._face_id] = selected
+        changes = [('face_optics', new_optics)]
+        _push_or_apply_changes(self._box, changes,
+                               getattr(self, '_push_command', None),
+                               getattr(self, '_begin_macro', None),
+                               getattr(self, '_end_macro', None),
+                               getattr(self, '_undo_stack', None),
+                               getattr(self, '_undo_refresh', None),
+                               self.changed)
 
 
 class SolidCylinderForm(QWidget):
@@ -2143,18 +2284,26 @@ class SolidCylinderForm(QWidget):
         name = self._name.text().strip()
         if not name:
             return
-        self._cyl.name = name
-        self._cyl.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
         axis = np.array([self._ax.value(), self._ay.value(), self._az.value()])
         norm = np.linalg.norm(axis)
         if norm > 1e-9:
             axis = axis / norm
-        self._cyl.axis = axis
-        self._cyl.radius = self._radius.value()
-        self._cyl.length = self._length.value()
+        changes = [
+            ('name', name),
+            ('center', np.array([self._cx.value(), self._cy.value(), self._cz.value()])),
+            ('axis', axis),
+            ('radius', self._radius.value()),
+            ('length', self._length.value()),
+        ]
         if self._mat.currentText():
-            self._cyl.material_name = self._mat.currentText()
-        self.changed.emit()
+            changes.append(('material_name', self._mat.currentText()))
+        _push_or_apply_changes(self._cyl, changes,
+                               getattr(self, '_push_command', None),
+                               getattr(self, '_begin_macro', None),
+                               getattr(self, '_end_macro', None),
+                               getattr(self, '_undo_stack', None),
+                               getattr(self, '_undo_refresh', None),
+                               self.changed)
 
 
 class SolidPrismForm(QWidget):
@@ -2275,16 +2424,24 @@ class SolidPrismForm(QWidget):
         name = self._name.text().strip()
         if not name:
             return
-        self._prism.name = name
-        self._prism.center = np.array([self._cx.value(), self._cy.value(), self._cz.value()])
         axis = np.array([self._ax.value(), self._ay.value(), self._az.value()])
         norm = np.linalg.norm(axis)
         if norm > 1e-9:
             axis = axis / norm
-        self._prism.axis = axis
-        self._prism.n_sides = self._n_sides.value()
-        self._prism.circumscribed_radius = self._circ_r.value()
-        self._prism.length = self._length.value()
+        changes = [
+            ('name', name),
+            ('center', np.array([self._cx.value(), self._cy.value(), self._cz.value()])),
+            ('axis', axis),
+            ('n_sides', self._n_sides.value()),
+            ('circumscribed_radius', self._circ_r.value()),
+            ('length', self._length.value()),
+        ]
         if self._mat.currentText():
-            self._prism.material_name = self._mat.currentText()
-        self.changed.emit()
+            changes.append(('material_name', self._mat.currentText()))
+        _push_or_apply_changes(self._prism, changes,
+                               getattr(self, '_push_command', None),
+                               getattr(self, '_begin_macro', None),
+                               getattr(self, '_end_macro', None),
+                               getattr(self, '_undo_stack', None),
+                               getattr(self, '_undo_refresh', None),
+                               self.changed)

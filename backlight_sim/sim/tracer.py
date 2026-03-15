@@ -775,10 +775,13 @@ class RayTracer:
                                     if transmits_fo.any():
                                         ti_fo = hit_idx[transmits_fo]
                                         through_n_fo = -_on[transmits_fo]
-                                        new_d_fo = sample_lambertian(int(transmits_fo.sum()),
-                                                                      through_n_fo[0], self.rng)
                                         origins[ti_fo] = hit_pts[transmits_fo] + through_n_fo * geom_eps
-                                        directions[ti_fo] = new_d_fo
+                                        # Per-ray Lambertian to handle mixed-side hits correctly
+                                        _n_tr_fo = int(transmits_fo.sum())
+                                        _new_d_fo = np.empty((_n_tr_fo, 3))
+                                        for _j in range(_n_tr_fo):
+                                            _new_d_fo[_j] = sample_lambertian(1, through_n_fo[_j], self.rng)[0]
+                                        directions[ti_fo] = _new_d_fo
                                     reflects_fo = ~transmits_fo
                                     if reflects_fo.any():
                                         ri_fo = hit_idx[reflects_fo]
@@ -898,6 +901,56 @@ class RayTracer:
                             entering = dot_dn < 0
                             on_into = np.where(entering[:, None], -face_normal, face_normal)
                         on_back = -on_into
+                        # --- face_optics override: per-face optical property ---
+                        _fo_name = getattr(cface, "optical_properties_name", "")
+                        if _fo_name:
+                            _fo = self.project.optical_properties.get(_fo_name)
+                            if _fo is not None and _fo.surface_type in ("reflector", "absorber", "diffuser"):
+                                if n_rec_active > 0:
+                                    for local_i, global_i in enumerate(hit_idx):
+                                        if global_i < n_rec_active:
+                                            active_paths[global_i].append(hit_pts[local_i].copy())
+                                for local_i, global_i in enumerate(hit_idx):
+                                    w = float(weights[global_i])
+                                    if entering[local_i]:
+                                        sb_stats[cyl.name][face_id]["entering_flux"] += w
+                                    else:
+                                        sb_stats[cyl.name][face_id]["exiting_flux"] += w
+                                if _fo.surface_type == "absorber":
+                                    alive[hit_idx] = False
+                                    continue
+                                elif _fo.surface_type == "reflector":
+                                    weights[hit_idx] *= _fo.reflectance
+                                    new_dirs = _reflect_batch(directions[hit_idx], on_back,
+                                                              _fo.is_diffuse, self.rng)
+                                    if _fo.haze > 0 and not _fo.is_diffuse:
+                                        new_dirs = scatter_haze(new_dirs, _fo.haze, self.rng)
+                                    origins[hit_idx] = hit_pts + on_back * geom_eps
+                                    directions[hit_idx] = new_dirs
+                                    continue
+                                elif _fo.surface_type == "diffuser":
+                                    _n_fo = len(hit_idx)
+                                    _roll_fo = self.rng.uniform(size=_n_fo)
+                                    _transmits = _roll_fo < _fo.transmittance
+                                    if _transmits.any():
+                                        _ti = hit_idx[_transmits]
+                                        _through_n = on_into[_transmits]
+                                        origins[_ti] = hit_pts[_transmits] + _through_n * geom_eps
+                                        _n_tr = int(_transmits.sum())
+                                        _new_d = np.empty((_n_tr, 3))
+                                        for _j in range(_n_tr):
+                                            _new_d[_j] = sample_lambertian(1, _through_n[_j], self.rng)[0]
+                                        directions[_ti] = _new_d
+                                    _reflects = ~_transmits
+                                    if _reflects.any():
+                                        _ri = hit_idx[_reflects]
+                                        weights[_ri] *= _fo.reflectance
+                                        _refl_on = on_back[_reflects]
+                                        _new_d_r = _reflect_batch(directions[_ri], _refl_on,
+                                                                   _fo.is_diffuse, self.rng)
+                                        origins[_ri] = hit_pts[_reflects] + _refl_on * geom_eps
+                                        directions[_ri] = _new_d_r
+                                    continue
                         n1_arr = current_n[hit_idx].copy()
                         exit_n = n_stack[hit_idx, np.maximum(n_depth[hit_idx] - 1, 0)]
                         # Spectral n(lambda) for SolidCylinder material
@@ -959,6 +1012,56 @@ class RayTracer:
                         entering = dot_dn < 0
                         on_into = np.where(entering[:, None], -face_normal, face_normal)
                         on_back = -on_into
+                        # --- face_optics override: per-face optical property ---
+                        _fo_name = getattr(pface, "optical_properties_name", "")
+                        if _fo_name:
+                            _fo = self.project.optical_properties.get(_fo_name)
+                            if _fo is not None and _fo.surface_type in ("reflector", "absorber", "diffuser"):
+                                if n_rec_active > 0:
+                                    for local_i, global_i in enumerate(hit_idx):
+                                        if global_i < n_rec_active:
+                                            active_paths[global_i].append(hit_pts[local_i].copy())
+                                for local_i, global_i in enumerate(hit_idx):
+                                    w = float(weights[global_i])
+                                    if entering[local_i]:
+                                        sb_stats[prism.name][face_id]["entering_flux"] += w
+                                    else:
+                                        sb_stats[prism.name][face_id]["exiting_flux"] += w
+                                if _fo.surface_type == "absorber":
+                                    alive[hit_idx] = False
+                                    continue
+                                elif _fo.surface_type == "reflector":
+                                    weights[hit_idx] *= _fo.reflectance
+                                    new_dirs = _reflect_batch(directions[hit_idx], on_back,
+                                                              _fo.is_diffuse, self.rng)
+                                    if _fo.haze > 0 and not _fo.is_diffuse:
+                                        new_dirs = scatter_haze(new_dirs, _fo.haze, self.rng)
+                                    origins[hit_idx] = hit_pts + on_back * geom_eps
+                                    directions[hit_idx] = new_dirs
+                                    continue
+                                elif _fo.surface_type == "diffuser":
+                                    _n_fo = len(hit_idx)
+                                    _roll_fo = self.rng.uniform(size=_n_fo)
+                                    _transmits = _roll_fo < _fo.transmittance
+                                    if _transmits.any():
+                                        _ti = hit_idx[_transmits]
+                                        _through_n = on_into[_transmits]
+                                        origins[_ti] = hit_pts[_transmits] + _through_n * geom_eps
+                                        _n_tr = int(_transmits.sum())
+                                        _new_d = np.empty((_n_tr, 3))
+                                        for _j in range(_n_tr):
+                                            _new_d[_j] = sample_lambertian(1, _through_n[_j], self.rng)[0]
+                                        directions[_ti] = _new_d
+                                    _reflects = ~_transmits
+                                    if _reflects.any():
+                                        _ri = hit_idx[_reflects]
+                                        weights[_ri] *= _fo.reflectance
+                                        _refl_on = on_back[_reflects]
+                                        _new_d_r = _reflect_batch(directions[_ri], _refl_on,
+                                                                   _fo.is_diffuse, self.rng)
+                                        origins[_ri] = hit_pts[_reflects] + _refl_on * geom_eps
+                                        directions[_ri] = _new_d_r
+                                    continue
                         n1_arr = current_n[hit_idx].copy()
                         exit_n = n_stack[hit_idx, np.maximum(n_depth[hit_idx] - 1, 0)]
                         # Spectral n(lambda) for SolidPrism material
@@ -1653,10 +1756,13 @@ def _trace_single_source(project, source_name, base_seed):
                         if transmits_fo_mp.any():
                             ti_fo_mp = hit_idx[transmits_fo_mp]
                             through_n_fo_mp = -_on_mp[transmits_fo_mp]
-                            new_d_fo_mp = sample_lambertian(int(transmits_fo_mp.sum()),
-                                                             through_n_fo_mp[0], rng)
                             origins[ti_fo_mp] = hit_pts[transmits_fo_mp] + through_n_fo_mp * geom_eps
-                            directions[ti_fo_mp] = new_d_fo_mp
+                            # Per-ray Lambertian to handle mixed-side hits correctly
+                            _n_tr_mp = int(transmits_fo_mp.sum())
+                            _new_d_mp = np.empty((_n_tr_mp, 3))
+                            for _j in range(_n_tr_mp):
+                                _new_d_mp[_j] = sample_lambertian(1, through_n_fo_mp[_j], rng)[0]
+                            directions[ti_fo_mp] = _new_d_mp
                         reflects_fo_mp = ~transmits_fo_mp
                         if reflects_fo_mp.any():
                             ri_fo_mp = hit_idx[reflects_fo_mp]
@@ -1747,6 +1853,52 @@ def _trace_single_source(project, source_name, base_seed):
                 entering = dot_dn < 0
                 on_into = np.where(entering[:, None], -face_normal, face_normal)
             on_back = -on_into
+            # --- face_optics override: per-face optical property ---
+            _fo_name = getattr(cface, "optical_properties_name", "")
+            if _fo_name:
+                _fo = project.optical_properties.get(_fo_name)
+                if _fo is not None and _fo.surface_type in ("reflector", "absorber", "diffuser"):
+                    for local_i, global_i in enumerate(hit_idx):
+                        w = float(weights[global_i])
+                        if entering[local_i]:
+                            sb_stats[cyl.name][face_id]["entering_flux"] += w
+                        else:
+                            sb_stats[cyl.name][face_id]["exiting_flux"] += w
+                    if _fo.surface_type == "absorber":
+                        alive[hit_idx] = False
+                        continue
+                    elif _fo.surface_type == "reflector":
+                        weights[hit_idx] *= _fo.reflectance
+                        new_dirs = _reflect_batch(directions[hit_idx], on_back,
+                                                  _fo.is_diffuse, rng)
+                        if _fo.haze > 0 and not _fo.is_diffuse:
+                            new_dirs = scatter_haze(new_dirs, _fo.haze, rng)
+                        origins[hit_idx] = hit_pts + on_back * geom_eps
+                        directions[hit_idx] = new_dirs
+                        continue
+                    elif _fo.surface_type == "diffuser":
+                        _n_fo = len(hit_idx)
+                        _roll_fo = rng.uniform(size=_n_fo)
+                        _transmits = _roll_fo < _fo.transmittance
+                        if _transmits.any():
+                            _ti = hit_idx[_transmits]
+                            _through_n = on_into[_transmits]
+                            origins[_ti] = hit_pts[_transmits] + _through_n * geom_eps
+                            _n_tr = int(_transmits.sum())
+                            _new_d = np.empty((_n_tr, 3))
+                            for _j in range(_n_tr):
+                                _new_d[_j] = sample_lambertian(1, _through_n[_j], rng)[0]
+                            directions[_ti] = _new_d
+                        _reflects = ~_transmits
+                        if _reflects.any():
+                            _ri = hit_idx[_reflects]
+                            weights[_ri] *= _fo.reflectance
+                            _refl_on = on_back[_reflects]
+                            _new_d_r = _reflect_batch(directions[_ri], _refl_on,
+                                                       _fo.is_diffuse, rng)
+                            origins[_ri] = hit_pts[_reflects] + _refl_on * geom_eps
+                            directions[_ri] = _new_d_r
+                        continue
             n1_arr = current_n[hit_idx].copy()
             exit_n = n_stack[hit_idx, np.maximum(n_depth[hit_idx] - 1, 0)]
             n2_arr = np.where(entering, cyl_n, exit_n)
@@ -1796,6 +1948,52 @@ def _trace_single_source(project, source_name, base_seed):
             entering = dot_dn < 0
             on_into = np.where(entering[:, None], -face_normal, face_normal)
             on_back = -on_into
+            # --- face_optics override: per-face optical property ---
+            _fo_name = getattr(pface, "optical_properties_name", "")
+            if _fo_name:
+                _fo = project.optical_properties.get(_fo_name)
+                if _fo is not None and _fo.surface_type in ("reflector", "absorber", "diffuser"):
+                    for local_i, global_i in enumerate(hit_idx):
+                        w = float(weights[global_i])
+                        if entering[local_i]:
+                            sb_stats[prism.name][face_id]["entering_flux"] += w
+                        else:
+                            sb_stats[prism.name][face_id]["exiting_flux"] += w
+                    if _fo.surface_type == "absorber":
+                        alive[hit_idx] = False
+                        continue
+                    elif _fo.surface_type == "reflector":
+                        weights[hit_idx] *= _fo.reflectance
+                        new_dirs = _reflect_batch(directions[hit_idx], on_back,
+                                                  _fo.is_diffuse, rng)
+                        if _fo.haze > 0 and not _fo.is_diffuse:
+                            new_dirs = scatter_haze(new_dirs, _fo.haze, rng)
+                        origins[hit_idx] = hit_pts + on_back * geom_eps
+                        directions[hit_idx] = new_dirs
+                        continue
+                    elif _fo.surface_type == "diffuser":
+                        _n_fo = len(hit_idx)
+                        _roll_fo = rng.uniform(size=_n_fo)
+                        _transmits = _roll_fo < _fo.transmittance
+                        if _transmits.any():
+                            _ti = hit_idx[_transmits]
+                            _through_n = on_into[_transmits]
+                            origins[_ti] = hit_pts[_transmits] + _through_n * geom_eps
+                            _n_tr = int(_transmits.sum())
+                            _new_d = np.empty((_n_tr, 3))
+                            for _j in range(_n_tr):
+                                _new_d[_j] = sample_lambertian(1, _through_n[_j], rng)[0]
+                            directions[_ti] = _new_d
+                        _reflects = ~_transmits
+                        if _reflects.any():
+                            _ri = hit_idx[_reflects]
+                            weights[_ri] *= _fo.reflectance
+                            _refl_on = on_back[_reflects]
+                            _new_d_r = _reflect_batch(directions[_ri], _refl_on,
+                                                       _fo.is_diffuse, rng)
+                            origins[_ri] = hit_pts[_reflects] + _refl_on * geom_eps
+                            directions[_ri] = _new_d_r
+                        continue
             n1_arr = current_n[hit_idx].copy()
             exit_n = n_stack[hit_idx, np.maximum(n_depth[hit_idx] - 1, 0)]
             n2_arr = np.where(entering, prism_n, exit_n)
