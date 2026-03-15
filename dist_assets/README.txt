@@ -1,99 +1,133 @@
 Blu Optical Simulation v1.0.0
 ===============================
 
-A fast Monte Carlo ray-tracing simulator for backlight unit (BLU) optical
-design. Runs entirely from a folder -- no installation, no admin rights needed.
+Monte Carlo ray-tracing simulator for backlight unit (BLU) optical design.
+No installation required -- extract the folder, run the exe.
 
 
 GETTING STARTED
 ---------------
-1. Extract the BluOpticalSim folder anywhere you like (Desktop, Documents, etc.)
-2. Open the folder and double-click  BluOpticalSim.exe  to launch the app.
-3. Load a sample project: File > Open, then browse to the  samples\  sub-folder.
-4. Or start fresh: use the Presets menu to load a built-in scene.
+1. Extract the BluOpticalSim folder anywhere (Desktop, USB drive, network share).
+2. Double-click BluOpticalSim.exe.
+3. Load a sample project from File > Open, then browse to the samples\ folder.
+4. Or start from scratch with one of the built-in presets (Presets menu).
 
-The app stores your settings and history in:
-  %LOCALAPPDATA%\BluOpticalSim\
-No files are written to the installation folder, so it works fine on read-only
-network shares too.
+Your settings are stored in %LOCALAPPDATA%\BluOpticalSim\, not in the app
+folder, so it runs fine from read-only locations.
 
 
-SYSTEM REQUIREMENTS
--------------------
-  - Windows 10 (64-bit) or Windows 11
-  - No installation required
-  - No administrator rights required
-  - ~250 MB disk space (the BluOpticalSim folder)
-  - Minimum 4 GB RAM recommended for large simulations
-  - OpenGL 2.0 compatible GPU (integrated graphics is fine)
+WHAT IT DOES
+------------
+  - Ray trace: Semi-vectorized Monte Carlo engine with configurable ray count,
+    bounce limit, and energy threshold. Runs off the main thread so the UI
+    stays responsive.
 
+  - 3D preview: OpenGL viewport with wireframe, solid, and transparent modes.
+    Six camera presets (XY, YZ, XZ planes), object selection highlighting,
+    material-coloured surfaces, ray path display after simulation.
 
-WINDOWS SMARTSCREEN WARNING
------------------------------
-Because this application is distributed as a standalone zip and is not yet
-signed with a commercial code-signing certificate, Windows SmartScreen may
-display a warning the first time you run it.  This is normal.
+  - 2D heatmap: Detector output as a colour-mapped image with draggable ROI
+    for live region statistics. Full KPI dashboard -- uniformity, efficiency,
+    hotspot ratio, edge-to-centre, error metrics, design score.
 
-To proceed:
-  1. The dialog says "Windows protected your PC" -- click  More info
-     (small blue link below the main message).
-  2. A "Run anyway" button appears -- click it.
-  3. The app will launch normally.  This dialog only appears on the first run.
+  - Solid bodies: Box, cylinder, and prism geometries with Fresnel reflection,
+    Snell refraction, and total internal reflection. Per-face optical overrides
+    (absorber, reflector, diffuser coatings on individual faces).
 
-If your IT policy prevents running unsigned executables, please contact your
-IT administrator and ask them to whitelist BluOpticalSim.exe, or ask for a
-signed build from your supplier.
+  - Sphere detector: Far-field intensity capture on a spherical surface.
+
+  - Geometry builder: Guided dialog for cavities (tilted walls), LED grids,
+    optical stacks (diffuser + film layers), and light guide plates.
+
+  - LED layout editor: 2D top-view drag-and-drop positioning of LEDs.
+
+  - Angular distributions: Import CSV, IES (IESNA LM-63), or EULUMDAT (.ldt)
+    files. Edit point-by-point, normalise, plot, and assign to sources.
+
+  - Parameter sweep: Vary one or two parameters across a range, view results
+    in a sortable table with live KPI plot. Multi-parameter grid sweep for
+    Pareto analysis.
+
+  - Variants & history: Clone projects as named variants, compare side-by-side,
+    and snapshot design history for A/B review.
+
+  - Export: PNG heatmap, KPI CSV, detector grid CSV, self-contained HTML report,
+    or a batch ZIP with everything.
+
+  - Multiprocessing: Each source traces in a separate process for faster runs
+    on multi-core machines.
 
 
 SAMPLE PROJECTS
 ---------------
-The  samples\  sub-folder contains ready-to-run .blu project files:
+The samples\ folder contains three ready-to-run .blu files:
 
   Simple_Box_Demo.blu
-      A single Lambertian LED in a 50 x 50 x 20 mm white reflective box.
-      Good starting point for learning the UI.
+      Single Lambertian LED in a 50 x 50 x 20 mm reflective box.
+      Good starting point for learning the interface.
 
   Automotive_Cluster_Demo.blu
-      A 4 x 2 LED grid in a 120 x 60 x 10 mm cavity with 10-degree wall tilt.
-      Demonstrates uniformity optimization and parameter sweep.
+      4 x 2 LED grid in a 120 x 60 x 10 mm cavity with 10-degree wall tilt.
+      Try a parameter sweep on wall reflectance or LED flux.
 
   Edge_Lit_LGP_Demo.blu
-      A 310 x 120 x 2 mm light guide plate with 36 LEDs on one coupling edge.
-      High bounce-count scene -- use quality preset "Standard" or higher.
+      310 x 120 x 2 mm light guide plate with 36 edge-coupled LEDs.
+      High bounce count -- use the Standard or High quality preset.
 
-To open a sample: File > Open > browse to  samples\  and select a .blu file.
-You can also drag .blu files directly onto the application window.
+
+KEYBOARD SHORTCUTS
+------------------
+  F5          Run simulation
+  Escape      Cancel simulation
+  Ctrl+N      New project
+  Ctrl+O      Open project
+  Ctrl+S      Save project
+  Ctrl+Z      Undo
+  Ctrl+Y      Redo
+
+
+SYSTEM REQUIREMENTS
+-------------------
+  - Windows 10 64-bit or Windows 11
+  - No admin rights needed
+  - ~300 MB disk space
+  - 4 GB RAM minimum (8 GB recommended for large scenes)
+  - Any GPU with OpenGL 2.0 (integrated graphics works)
+
+
+WINDOWS SMARTSCREEN
+-------------------
+Windows may show a "Windows protected your PC" warning on first launch because
+the exe is not code-signed. This is expected for standalone-distributed apps.
+
+  1. Click "More info" (blue text below the warning).
+  2. Click "Run anyway".
+  3. The warning will not appear again.
+
+If your IT policy blocks unsigned executables, ask your administrator to
+whitelist BluOpticalSim.exe by path or hash.
 
 
 UPDATE NOTIFICATIONS
 --------------------
-Blu Optical Simulation checks for a newer release when it starts up.
-If a new version is found, a brief notification appears in the status bar at
-the bottom of the window.
+On startup the app checks GitHub for a newer release. If one exists, a brief
+message appears in the status bar. The check:
 
-The check is completely optional:
-  - It runs in the background and never delays startup.
-  - It requires an internet connection; if your network blocks outbound HTTPS
-    (corporate firewall, proxy), the check silently times out after 5 seconds
-    and you will not see any error message.
-  - No usage data is collected or sent -- the check is a single read-only GET
-    request to the GitHub Releases API.
+  - Runs in a background thread and never blocks the UI.
+  - Times out silently after 5 seconds if the network is unavailable.
+  - Sends no usage data -- it is a single read-only API request.
 
 
-USER DATA LOCATION
-------------------
-  Recent projects list, window layout, and preferences:
-    %LOCALAPPDATA%\BluOpticalSim\
+USER DATA
+---------
+Settings, recent file list, and window layout are stored in:
+  %LOCALAPPDATA%\BluOpticalSim\
 
-  To reset all settings, delete the above folder and restart the app.
-
-
-SUPPORT & UPDATES
------------------
-  GitHub repository : https://github.com/Ozgur-al/blu-optical-simulation
-  Issue tracker     : https://github.com/Ozgur-al/blu-optical-simulation/issues
+Delete that folder to reset everything to defaults.
 
 
-LICENSE
--------
-  See LICENSE file (if included) or the GitHub repository for licensing terms.
+LINKS
+-----
+  Source code  : https://github.com/Ozgur-al/blu-optical-simulation
+  Bug reports  : https://github.com/Ozgur-al/blu-optical-simulation/issues
+  Releases     : https://github.com/Ozgur-al/blu-optical-simulation/releases
