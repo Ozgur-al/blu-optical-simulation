@@ -40,6 +40,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - v1.0 shipped with 7 phases (originally 4 planned + Phase 5 UI Revamp + Phases 6-7 gap closure)
 - VTK renderer deferred to v2 (pyqtgraph.opengl sufficient)
 - Spectral+MP guard forces single-thread (future work to lift)
+- Phase 1 added: distribution for admin locked work computer compatibility, splash screen etc.
 
 ### Pending Todos
 
