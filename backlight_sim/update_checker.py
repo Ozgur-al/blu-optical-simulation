@@ -25,7 +25,7 @@ from backlight_sim.__version__ import __version__
 # ---------------------------------------------------------------------------
 # Configuration — update URL is abstracted so it can be swapped later
 # ---------------------------------------------------------------------------
-_GITHUB_OWNER = "blu-optical"
+_GITHUB_OWNER = "Ozgur-al"
 _GITHUB_REPO = "blu-optical-simulation"
 _UPDATE_URL = (
     f"https://api.github.com/repos/{_GITHUB_OWNER}/{_GITHUB_REPO}/releases/latest"

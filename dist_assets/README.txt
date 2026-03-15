@@ -1,4 +1,4 @@
-Blu Optical Simulation v2.0.0
+Blu Optical Simulation v1.0.0
 ===============================
 
 A fast Monte Carlo ray-tracing simulator for backlight unit (BLU) optical
@@ -90,10 +90,8 @@ USER DATA LOCATION
 
 SUPPORT & UPDATES
 -----------------
-  GitHub repository : https://github.com/blu-optical/blu-optical-simulation
-  Issue tracker     : https://github.com/blu-optical/blu-optical-simulation/issues
-
-  For internal/corporate deployments, contact your simulation tools team.
+  GitHub repository : https://github.com/Ozgur-al/blu-optical-simulation
+  Issue tracker     : https://github.com/Ozgur-al/blu-optical-simulation/issues
 
 
 LICENSE
