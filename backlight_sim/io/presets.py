@@ -84,17 +84,17 @@ def preset_automotive_cluster() -> Project:
 
 
 def preset_edge_lit_lgp() -> Project:
-    """Edge-lit LGP: 80×50×3 mm slab with 6 LEDs on the left edge."""
+    """Edge-lit LGP: 310×120×2 mm slab with 36 LEDs on the front (bottom-long) edge."""
     project = Project(name="Edge-Lit LGP")
     project.settings.rays_per_source = 10_000
     project.settings.max_bounces = 200  # LGP needs many bounces for TIR propagation
-    build_lgp_scene(project, width=80.0, height=50.0, thickness=3.0,
-                    coupling_edges=["left"], led_count=6, led_flux=100.0)
+    build_lgp_scene(project, width=310.0, height=120.0, thickness=2.0,
+                    coupling_edges=["front"], led_count=36, led_flux=100.0)
     return project
 
 
 PRESETS: dict[str, callable] = {
     "Simple Box (50×50×20 mm)": preset_simple_box,
     "Automotive Cluster (120×60×10 mm)": preset_automotive_cluster,
-    "Edge-Lit LGP (80×50×3 mm)": preset_edge_lit_lgp,
+    "Edge-Lit LGP (310×120×2 mm)": preset_edge_lit_lgp,
 }

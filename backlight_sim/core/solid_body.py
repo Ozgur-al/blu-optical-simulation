@@ -192,8 +192,8 @@ class SolidBox:
             "bottom": (np.array([cx,       cy,       cz - hd]), 2, -1.0, (W, H)),
             "right":  (np.array([cx + hw,  cy,       cz     ]), 0,  1.0, (H, D)),
             "left":   (np.array([cx - hw,  cy,       cz     ]), 0, -1.0, (H, D)),
-            "back":   (np.array([cx,       cy + hh,  cz     ]), 1,  1.0, (W, D)),
-            "front":  (np.array([cx,       cy - hh,  cz     ]), 1, -1.0, (W, D)),
+            "back":   (np.array([cx,       cy + hh,  cz     ]), 1,  1.0, (D, W)),
+            "front":  (np.array([cx,       cy - hh,  cz     ]), 1, -1.0, (D, W)),
         }
 
         faces: list[Rectangle] = []

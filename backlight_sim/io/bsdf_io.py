@@ -102,11 +102,8 @@ def validate_bsdf(profile: dict) -> tuple[bool, str]:
     For each theta_in row, the total integrated reflectance + transmittance must
     not exceed 1.0 (within a small tolerance). This ensures no energy is created.
 
-    The check is done by summing the refl_intensity and trans_intensity values
-    per row. If any row sum > 1.0 + tolerance, the profile is rejected.
-
-    Note: this is a loose check on raw intensities (not proper solid-angle
-    integration). A properly normalized BSDF file would have row sums <= 1.0.
+    The check uses sin-weighted integration over theta_out for each theta_in row,
+    making it resolution-independent (invariant to the number of theta_out samples).
 
     Parameters
     ----------
@@ -132,8 +129,17 @@ def validate_bsdf(profile: dict) -> tuple[bool, str]:
         )
 
     tolerance = 1e-3
-    # Sum over theta_out axis (axis=1) for each theta_in row
-    total_per_row = refl.sum(axis=1) + trans.sum(axis=1)
+    # Sin-weighted integration over theta_out for resolution-independent energy check
+    theta_out_arr = np.asarray(profile.get("theta_out", []), dtype=float)
+    if theta_out_arr.ndim == 1 and len(theta_out_arr) == refl.shape[1]:
+        theta_out_rad = np.radians(theta_out_arr)
+        sin_w = np.sin(theta_out_rad)
+        d_theta = np.gradient(theta_out_rad)
+        weight = sin_w * d_theta
+        total_per_row = (refl * weight).sum(axis=1) + (trans * weight).sum(axis=1)
+    else:
+        # Fallback: raw sum for profiles without theta_out metadata
+        total_per_row = refl.sum(axis=1) + trans.sum(axis=1)
 
     bad_rows = np.where(total_per_row > 1.0 + tolerance)[0]
     if bad_rows.size > 0:
