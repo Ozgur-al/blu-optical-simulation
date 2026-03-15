@@ -38,9 +38,9 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 **Goal:** Make the app distributable and runnable on admin-locked work computers with polished branding (splash screen, icon), version check, and bundled distribution assets (README, sample files).
 **Requirements**: [DIST-01, DIST-02, DIST-03, DIST-04, DIST-05]
 **Depends on:** Phase 0
-**Plans:** 3 plans
+**Plans:** 3 plans (1/3 complete)
 
 Plans:
-- [ ] 01-01-PLAN.md — Foundation: version constant, app icon, user data config
+- [x] 01-01-PLAN.md — Foundation: version constant, app icon, user data config (complete 2026-03-15)
 - [ ] 01-02-PLAN.md — Splash screen with progress feedback and icon integration
 - [ ] 01-03-PLAN.md — Version check, build pipeline updates, distribution assets
