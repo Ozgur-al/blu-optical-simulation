@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v2.0-distribution
 milestone_name: "Distribution & Splash Screen"
 status: in_progress
-last_updated: "2026-03-15T22:08:00Z"
+last_updated: "2026-03-15T22:12:35Z"
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 4
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # Project State
@@ -23,17 +23,17 @@ See: .planning/PROJECT.md (updated 2026-03-15)
 ## Current Position
 
 Milestone: v2.0-distribution — In Progress
-Phase: 01-distribution-for-admin-locked-work-computer-compatibility-splash-screen-etc — Plan 1 of 4 complete
-Status: Plan 01-01 (Foundation Artifacts) complete. Plans 02-04 pending.
-Last activity: 2026-03-15 — Plan 01-01 executed: __version__.py, config.py, icon.ico
+Phase: 01-distribution-for-admin-locked-work-computer-compatibility-splash-screen-etc — Plan 2 of 4 complete
+Status: Plan 01-02 (Splash Screen & Icon) complete. Plans 03-04 pending.
+Last activity: 2026-03-15 — Plan 01-02 executed: splash.py, app.py updated
 
-Progress: [##--------] 25% (1/4 plans)
+Progress: [####------] 50% (2/4 plans)
 
 ## Current Position Detail
 
 Phase: 01-distribution-for-admin-locked-work-computer-compatibility-splash-screen-etc
-Current Plan: 2 of 4
-Stopped at: Completed 01-01-PLAN.md
+Current Plan: 3 of 4
+Stopped at: Completed 01-02-PLAN.md
 
 ## Accumulated Context
 
@@ -43,6 +43,8 @@ Stopped at: Completed 01-01-PLAN.md
 - User data dir uses %LOCALAPPDATA%/BluOpticalSim on Windows — corporate-safe, no admin rights needed
 - config.py strictly no PySide6 — headless-safe for io/ and sim/ layer consumption
 - Icon generated at runtime via QPainter + Pillow; script checked in so icon can be regenerated
+- Splash uses QWidget with Qt.SplashScreen flag instead of QSplashScreen for full QSS/dark theme control
+- Staged loading: 20% theme/icon, 60% after MainWindow import, 90% after construct, 100% on close
 
 ### Roadmap Evolution
 
@@ -62,5 +64,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-03-15
-Stopped at: Completed 01-01-PLAN.md (foundation artifacts)
+Stopped at: Completed 01-02-PLAN.md (splash screen and app icon)
 Resume file: None
