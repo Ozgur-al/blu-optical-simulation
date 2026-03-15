@@ -227,6 +227,17 @@ class RayTracer:
                 fid: {"entering_flux": 0.0, "exiting_flux": 0.0}
                 for fid in FACE_NAMES
             }
+        for cyl in getattr(self.project, "solid_cylinders", []):
+            merged_sb_stats[cyl.name] = {
+                fid: {"entering_flux": 0.0, "exiting_flux": 0.0}
+                for fid in ("top_cap", "bottom_cap", "side")
+            }
+        for prism in getattr(self.project, "solid_prisms", []):
+            all_face_ids = ["cap_top", "cap_bottom"] + [f"side_{i}" for i in range(prism.n_sides)]
+            merged_sb_stats[prism.name] = {
+                fid: {"entering_flux": 0.0, "exiting_flux": 0.0}
+                for fid in all_face_ids
+            }
 
         total_emitted_flux = sum(s.effective_flux for s in sources)
 
@@ -1196,6 +1207,39 @@ def _trace_single_source(project, source_name, base_seed):
             for fid in FACE_NAMES
         }
 
+    # Expand SolidCylinder objects into face-like objects and build lookup
+    cyl_faces = []
+    cyl_face_map = {}
+    for cyl in getattr(project, "solid_cylinders", []):
+        mat = materials.get(cyl.material_name)
+        cyl_n = mat.refractive_index if mat is not None else 1.0
+        geom_eps = max(_EPSILON, min(cyl.radius, cyl.length / 2.0) * 1e-4)
+        for face in cyl.get_faces():
+            cyl_faces.append(face)
+            face_id = face.name.split("::", 1)[1]
+            cyl_face_map[face.name] = (cyl, face_id, cyl_n, geom_eps)
+        sb_stats[cyl.name] = {
+            fid: {"entering_flux": 0.0, "exiting_flux": 0.0}
+            for fid in ("top_cap", "bottom_cap", "side")
+        }
+
+    # Expand SolidPrism objects into face-like objects and build lookup
+    prism_faces = []
+    prism_face_map = {}
+    for prism in getattr(project, "solid_prisms", []):
+        mat = materials.get(prism.material_name)
+        prism_n = mat.refractive_index if mat is not None else 1.0
+        geom_eps = max(_EPSILON, min(prism.circumscribed_radius, prism.length / 2.0) * 1e-4)
+        for face in prism.get_faces():
+            prism_faces.append(face)
+            face_id = face.name.split("::", 1)[1]
+            prism_face_map[face.name] = (prism, face_id, prism_n, geom_eps)
+        all_face_ids = ["cap_top", "cap_bottom"] + [f"side_{i}" for i in range(prism.n_sides)]
+        sb_stats[prism.name] = {
+            fid: {"entering_flux": 0.0, "exiting_flux": 0.0}
+            for fid in all_face_ids
+        }
+
     n = settings.rays_per_source
     eff_flux = source.effective_flux
     if source.flux_tolerance > 0:
@@ -1322,6 +1366,38 @@ def _trace_single_source(project, source_name, base_seed):
                 best_t[closer] = t[closer]
                 best_type[closer] = 3
                 best_obj[closer] = sfi
+
+        # SolidCylinder face intersections (type 4)
+        for cfi, cface in enumerate(cyl_faces):
+            if isinstance(cface, CylinderCap):
+                t = _intersect_rays_disc(
+                    active_origins, active_dirs,
+                    cface.center, cface.normal, cface.radius,
+                )
+            else:  # CylinderSide
+                t = _intersect_rays_cylinder_side(
+                    active_origins, active_dirs,
+                    cface.center, cface.axis, cface.radius, cface.length / 2.0,
+                )
+            closer = t < best_t
+            best_t[closer] = t[closer]
+            best_type[closer] = 4
+            best_obj[closer] = cfi
+
+        # SolidPrism face intersections (type 5)
+        for pfi, pface in enumerate(prism_faces):
+            if isinstance(pface, PrismCap):
+                t = _intersect_prism_cap(active_origins, active_dirs, pface)
+            else:  # Rectangle side face
+                t = _intersect_plane_accel(
+                    active_origins, active_dirs,
+                    pface.normal, pface.center,
+                    pface.u_axis, pface.v_axis, pface.size,
+                )
+            closer = t < best_t
+            best_t[closer] = t[closer]
+            best_type[closer] = 5
+            best_obj[closer] = pfi
 
         # Detectors always tested separately
         for di, det in enumerate(detectors):
@@ -1464,6 +1540,111 @@ def _trace_single_source(project, source_name, base_seed):
                 new_dirs = d_rfl - 2.0 * dot_vals * on_b
                 norms = np.linalg.norm(new_dirs, axis=1, keepdims=True)
                 new_dirs = new_dirs / np.maximum(norms, 1e-12)
+                origins[rfl_i] = hit_pts[reflects] + on_b * geom_eps
+                directions[rfl_i] = new_dirs
+
+        # SolidCylinder face hits (type 4) -- Fresnel/TIR physics
+        for cfi, cface in enumerate(cyl_faces):
+            mask = (best_type == 4) & (best_obj == cfi)
+            if not mask.any():
+                continue
+            hit_idx = active_idx[mask]
+            t_vals = best_t[mask]
+            hit_pts = origins[hit_idx] + t_vals[:, None] * directions[hit_idx]
+            cyl, face_id, cyl_n, geom_eps = cyl_face_map[cface.name]
+            if isinstance(cface, CylinderSide):
+                cyl_axis = cface.axis
+                diff = hit_pts - cyl.center
+                proj = np.einsum("ij,j->i", diff, cyl_axis)
+                radial = diff - proj[:, None] * cyl_axis
+                r_norms = np.linalg.norm(radial, axis=1, keepdims=True)
+                face_normals = radial / np.maximum(r_norms, 1e-12)
+                dot_dn = np.einsum("ij,ij->i", directions[hit_idx], face_normals)
+                entering = dot_dn < 0
+                on_into = np.where(entering[:, None], -face_normals, face_normals)
+            else:
+                face_normal = cface.normal
+                dot_dn = np.einsum("ij,j->i", directions[hit_idx], face_normal)
+                entering = dot_dn < 0
+                on_into = np.where(entering[:, None], -face_normal, face_normal)
+            on_back = -on_into
+            n1_arr = current_n[hit_idx].copy()
+            n2_arr = np.where(entering, cyl_n, 1.0)
+            cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
+            R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
+            roll = rng.random(len(hit_idx))
+            reflects = roll < R_arr
+            refracts = ~reflects
+            for local_i, global_i in enumerate(hit_idx):
+                w = float(weights[global_i])
+                if entering[local_i]:
+                    sb_stats[cyl.name][face_id]["entering_flux"] += w
+                else:
+                    sb_stats[cyl.name][face_id]["exiting_flux"] += w
+            if refracts.any():
+                ri = hit_idx[refracts]
+                on_r = on_into[refracts]
+                n1_r = n1_arr[refracts]
+                n2_r = n2_arr[refracts]
+                new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
+                current_n[ri] = n2_r
+                origins[ri] = hit_pts[refracts] + on_r * geom_eps
+                directions[ri] = new_dirs
+            if reflects.any():
+                rfl_i = hit_idx[reflects]
+                on_b = on_back[reflects]
+                d_rfl = directions[rfl_i]
+                dot_vals = np.einsum("ij,ij->i", d_rfl, on_b)[:, None]
+                new_dirs = d_rfl - 2.0 * dot_vals * on_b
+                norms_r = np.linalg.norm(new_dirs, axis=1, keepdims=True)
+                new_dirs = new_dirs / np.maximum(norms_r, 1e-12)
+                origins[rfl_i] = hit_pts[reflects] + on_b * geom_eps
+                directions[rfl_i] = new_dirs
+
+        # SolidPrism face hits (type 5) -- Fresnel/TIR physics
+        for pfi, pface in enumerate(prism_faces):
+            mask = (best_type == 5) & (best_obj == pfi)
+            if not mask.any():
+                continue
+            hit_idx = active_idx[mask]
+            t_vals = best_t[mask]
+            hit_pts = origins[hit_idx] + t_vals[:, None] * directions[hit_idx]
+            prism, face_id, prism_n, geom_eps = prism_face_map[pface.name]
+            face_normal = pface.normal
+            dot_dn = np.einsum("ij,j->i", directions[hit_idx], face_normal)
+            entering = dot_dn < 0
+            on_into = np.where(entering[:, None], -face_normal, face_normal)
+            on_back = -on_into
+            n1_arr = current_n[hit_idx].copy()
+            n2_arr = np.where(entering, prism_n, 1.0)
+            cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
+            R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
+            roll = rng.random(len(hit_idx))
+            reflects = roll < R_arr
+            refracts = ~reflects
+            for local_i, global_i in enumerate(hit_idx):
+                w = float(weights[global_i])
+                if entering[local_i]:
+                    sb_stats[prism.name][face_id]["entering_flux"] += w
+                else:
+                    sb_stats[prism.name][face_id]["exiting_flux"] += w
+            if refracts.any():
+                ri = hit_idx[refracts]
+                on_r = on_into[refracts]
+                n1_r = n1_arr[refracts]
+                n2_r = n2_arr[refracts]
+                new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
+                current_n[ri] = n2_r
+                origins[ri] = hit_pts[refracts] + on_r * geom_eps
+                directions[ri] = new_dirs
+            if reflects.any():
+                rfl_i = hit_idx[reflects]
+                on_b = on_back[reflects]
+                d_rfl = directions[rfl_i]
+                dot_vals = np.einsum("ij,ij->i", d_rfl, on_b)[:, None]
+                new_dirs = d_rfl - 2.0 * dot_vals * on_b
+                norms_r = np.linalg.norm(new_dirs, axis=1, keepdims=True)
+                new_dirs = new_dirs / np.maximum(norms_r, 1e-12)
                 origins[rfl_i] = hit_pts[reflects] + on_b * geom_eps
                 directions[rfl_i] = new_dirs
 
