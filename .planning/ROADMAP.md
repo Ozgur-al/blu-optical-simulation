@@ -131,7 +131,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 07-01-PLAN.md — Tab persistence fix, duplicate validation, chromaticity scatter cloud, live preview spectral color
+- [x] 07-01-PLAN.md — Tab persistence fix, duplicate validation, chromaticity scatter cloud, live preview spectral color
 
 ## Progress
 
