@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStackedWidget,
     QTableWidget,
@@ -216,6 +217,7 @@ class SourceForm(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         content = QWidget()
+        content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         vbox = QVBoxLayout(content)
         vbox.setContentsMargins(4, 4, 4, 4)
         vbox.setSpacing(2)
@@ -462,6 +464,7 @@ class SurfaceForm(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         content = QWidget()
+        content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         vbox = QVBoxLayout(content)
         vbox.setContentsMargins(4, 4, 4, 4)
         vbox.setSpacing(2)
@@ -628,6 +631,7 @@ class MaterialForm(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll_content = QWidget()
+        scroll_content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setContentsMargins(4, 4, 4, 4)
         scroll_layout.setSpacing(2)
@@ -1111,6 +1115,7 @@ class DetectorForm(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         content = QWidget()
+        content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         vbox = QVBoxLayout(content)
         vbox.setContentsMargins(4, 4, 4, 4)
         vbox.setSpacing(2)
@@ -1350,6 +1355,7 @@ class SettingsForm(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         content = QWidget()
+        content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         vbox = QVBoxLayout(content)
         vbox.setContentsMargins(4, 4, 4, 4)
         vbox.setSpacing(2)
@@ -1562,6 +1568,7 @@ class BatchForm(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll_content = QWidget()
+        self._scroll_content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._form_layout = QFormLayout(self._scroll_content)
 
         self._header = QLabel("Batch Edit")
@@ -1841,6 +1848,7 @@ class SolidBoxForm(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         content = QWidget()
+        content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         vbox = QVBoxLayout(content)
         vbox.setContentsMargins(4, 4, 4, 4)
         vbox.setSpacing(2)

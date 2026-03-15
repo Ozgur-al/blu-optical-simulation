@@ -161,6 +161,7 @@ class MainWindow(QMainWindow):
         left_splitter.addWidget(self._properties)
         left_splitter.setStretchFactor(0, 1)
         left_splitter.setStretchFactor(1, 1)
+        left_splitter.setSizes([400, 400])
 
         # Center: tabbed panel area
         self._center_tabs = QTabWidget()
