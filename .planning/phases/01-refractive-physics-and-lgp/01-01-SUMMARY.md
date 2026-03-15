@@ -4,6 +4,7 @@ plan: 01
 subsystem: physics-engine
 tags: [fresnel, snell, tir, solid-body, ray-tracing, tdd]
 requirements: [LGP-02, GEOM-01]
+requirements-completed: [LGP-02, GEOM-01]
 
 dependency_graph:
   requires: []

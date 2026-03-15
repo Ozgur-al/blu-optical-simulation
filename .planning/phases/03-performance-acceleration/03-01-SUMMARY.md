@@ -3,6 +3,7 @@ phase: 03-performance-acceleration
 plan: 01
 subsystem: simulation-engine
 tags: [numba, jit, acceleration, monte-carlo, performance]
+requirements-completed: [PERF-01]
 dependency_graph:
   requires: []
   provides: [JIT-intersect-plane, JIT-intersect-sphere, JIT-accumulate-grid, JIT-accumulate-sphere, warmup-jit-kernels]

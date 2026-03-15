@@ -8,6 +8,7 @@ commits:
   - 82eb8ea
   - 3db662e
   - 9bb33f0
+requirements-completed: [UI-01, UI-03]
 ---
 
 ## What was built

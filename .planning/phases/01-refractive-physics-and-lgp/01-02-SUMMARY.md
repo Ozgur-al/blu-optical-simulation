@@ -3,6 +3,7 @@ phase: 01-refractive-physics-and-lgp
 plan: 02
 subsystem: io-and-gui
 tags: [lgp, serialization, geometry-builder, presets, kpi-dashboard]
+requirements-completed: [LGP-01, LGP-03]
 dependency_graph:
   requires: [01-01]
   provides: [lgp-io, lgp-builder, lgp-preset, lgp-kpis]

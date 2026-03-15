@@ -146,8 +146,9 @@ def generate_html_report(
                 {center_rows}
             </table>
             """
-            except Exception:
-                pass  # Non-critical — skip color uniformity on error
+            except Exception as exc:
+                import warnings
+                warnings.warn(f"Color uniformity report section failed: {exc}", stacklevel=2)
 
         det_sections.append(f"""
         <h2>Detector: {det_name}</h2>

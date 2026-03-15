@@ -1665,6 +1665,10 @@ class BatchForm(QWidget):
         shared = self._shared_value("flux")
         if shared is not None:
             w.setValue(shared)
+        else:
+            w.setSpecialValueText(self._PLACEHOLDER)
+            w.setMinimum(w.minimum() - 1)
+            w.setValue(w.minimum())
         w.valueChanged.connect(self._apply_live)
         self._src_widgets["flux"] = w
         fl.addRow("Flux:", w)
@@ -1682,6 +1686,9 @@ class BatchForm(QWidget):
             else:
                 w.addItem(shared)
                 w.setCurrentText(shared)
+        else:
+            w.insertItem(0, self._PLACEHOLDER)
+            w.setCurrentIndex(0)
         w.currentIndexChanged.connect(self._apply_live)
         self._src_widgets["distribution"] = w
         fl.addRow("Distribution:", w)
@@ -1691,6 +1698,10 @@ class BatchForm(QWidget):
         shared = self._shared_value("flux_tolerance")
         if shared is not None:
             w.setValue(shared)
+        else:
+            w.setSpecialValueText(self._PLACEHOLDER)
+            w.setMinimum(w.minimum() - 1)
+            w.setValue(w.minimum())
         w.valueChanged.connect(self._apply_live)
         self._src_widgets["flux_tolerance"] = w
         fl.addRow("Flux tolerance \u00b1%:", w)
@@ -1700,6 +1711,10 @@ class BatchForm(QWidget):
         shared = self._shared_value("current_mA")
         if shared is not None:
             w.setValue(shared)
+        else:
+            w.setSpecialValueText(self._PLACEHOLDER)
+            w.setMinimum(w.minimum() - 1)
+            w.setValue(w.minimum())
         w.valueChanged.connect(self._apply_live)
         self._src_widgets["current_mA"] = w
         fl.addRow("Current (mA):", w)
@@ -1709,6 +1724,10 @@ class BatchForm(QWidget):
         shared = self._shared_value("flux_per_mA")
         if shared is not None:
             w.setValue(shared)
+        else:
+            w.setSpecialValueText(self._PLACEHOLDER)
+            w.setMinimum(w.minimum() - 1)
+            w.setValue(w.minimum())
         w.valueChanged.connect(self._apply_live)
         self._src_widgets["flux_per_mA"] = w
         fl.addRow("Flux/mA:", w)
@@ -1718,6 +1737,10 @@ class BatchForm(QWidget):
         shared = self._shared_value("thermal_derate")
         if shared is not None:
             w.setValue(shared)
+        else:
+            w.setSpecialValueText(self._PLACEHOLDER)
+            w.setMinimum(w.minimum() - 1)
+            w.setValue(w.minimum())
         w.valueChanged.connect(self._apply_live)
         self._src_widgets["thermal_derate"] = w
         fl.addRow("Thermal derate:", w)
@@ -1730,6 +1753,10 @@ class BatchForm(QWidget):
             w = _dspin(0, 1, 2, 1.0, 0.05)
             if color_shared is not None:
                 w.setValue(color_shared[i])
+            else:
+                w.setSpecialValueText(self._PLACEHOLDER)
+                w.setMinimum(w.minimum() - 1)
+                w.setValue(w.minimum())
             w.valueChanged.connect(self._apply_live)
             self._src_widgets[key] = w
             color_row.addWidget(QLabel(f"{ch}:"))
@@ -1798,7 +1825,7 @@ class BatchForm(QWidget):
                 if pz.value() > pz.minimum():
                     pos[2] = pz.value()
                 src.position = np.array(pos)
-            # Scalar fields
+            # Scalar fields — skip fields still showing mixed-state placeholder
             for attr, key in [
                 ("flux", "flux"),
                 ("flux_tolerance", "flux_tolerance"),
@@ -1807,22 +1834,23 @@ class BatchForm(QWidget):
                 ("thermal_derate", "thermal_derate"),
             ]:
                 w = ws.get(key)
-                if w is not None:
+                if w is not None and w.value() > w.minimum():
                     setattr(src, attr, w.value())
             # Distribution
             w = ws.get("distribution")
-            if w is not None:
+            if w is not None and w.currentText() != self._PLACEHOLDER:
                 src.distribution = w.currentText()
             # SPD
             w = ws.get("spd")
             if w is not None and w.currentText() != self._PLACEHOLDER:
                 src.spd = w.currentText()
-            # Color
+            # Color — skip if any channel is still in mixed-state
             cr = ws.get("color_r")
             cg = ws.get("color_g")
             cb_c = ws.get("color_b")
             if cr is not None and cg is not None and cb_c is not None:
-                src.color_rgb = (cr.value(), cg.value(), cb_c.value())
+                if cr.value() > cr.minimum() and cg.value() > cg.minimum() and cb_c.value() > cb_c.minimum():
+                    src.color_rgb = (cr.value(), cg.value(), cb_c.value())
 
     def _apply_surfaces(self):
         if self._surf_mat is not None:
@@ -2012,30 +2040,66 @@ class SolidCylinderForm(QWidget):
 
     def __init__(self):
         super().__init__()
-        fl = QFormLayout(self)
-        fl.addRow(QLabel("<b>Solid Cylinder</b>"))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        content = QWidget()
+        content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        vbox = QVBoxLayout(content)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(2)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+        # ---- Identity section ----
+        sec_identity = CollapsibleSection("Identity", collapsed=False)
+        fl_identity = QFormLayout()
         self._name = _name_edit()
+        self._mat = QComboBox()
+        fl_identity.addRow("Name:", self._name)
+        fl_identity.addRow("Material:", self._mat)
+        sec_identity.addLayout(fl_identity)
+        vbox.addWidget(sec_identity)
+
+        # ---- Position section ----
+        sec_pos = CollapsibleSection("Position", collapsed=False)
+        fl_pos = QFormLayout()
         self._cx = _dspin()
         self._cy = _dspin()
         self._cz = _dspin()
+        fl_pos.addRow("Center X:", self._cx)
+        fl_pos.addRow("Center Y:", self._cy)
+        fl_pos.addRow("Center Z:", self._cz)
+        sec_pos.addLayout(fl_pos)
+        vbox.addWidget(sec_pos)
+
+        # ---- Orientation section ----
+        sec_orient = CollapsibleSection("Orientation", collapsed=True)
+        fl_orient = QFormLayout()
         self._ax = _dspin(-1.0, 1.0, 4, 0.0, 0.01)
         self._ay = _dspin(-1.0, 1.0, 4, 0.0, 0.01)
         self._az = _dspin(-1.0, 1.0, 4, 1.0, 0.01)
+        fl_orient.addRow("Axis X:", self._ax)
+        fl_orient.addRow("Axis Y:", self._ay)
+        fl_orient.addRow("Axis Z:", self._az)
+        sec_orient.addLayout(fl_orient)
+        vbox.addWidget(sec_orient)
+
+        # ---- Dimensions section ----
+        sec_dim = CollapsibleSection("Dimensions", collapsed=False)
+        fl_dim = QFormLayout()
         self._radius = _dspin(0.01, 9999, 3, 5.0, 0.5)
         self._length = _dspin(0.01, 9999, 3, 10.0, 0.5)
-        self._mat = QComboBox()
-
-        fl.addRow("Name:", self._name)
-        fl.addRow("Center X:", self._cx)
-        fl.addRow("Center Y:", self._cy)
-        fl.addRow("Center Z:", self._cz)
-        fl.addRow("Axis X:", self._ax)
-        fl.addRow("Axis Y:", self._ay)
-        fl.addRow("Axis Z:", self._az)
-        fl.addRow("Radius:", self._radius)
-        fl.addRow("Length:", self._length)
-        fl.addRow("Material:", self._mat)
+        fl_dim.addRow("Radius:", self._radius)
+        fl_dim.addRow("Length:", self._length)
+        sec_dim.addLayout(fl_dim)
+        vbox.addWidget(sec_dim)
+        vbox.addStretch()
 
         self._cyl: SolidCylinder | None = None
         self._loading = False
@@ -2100,16 +2164,59 @@ class SolidPrismForm(QWidget):
 
     def __init__(self):
         super().__init__()
-        fl = QFormLayout(self)
-        fl.addRow(QLabel("<b>Solid Prism</b>"))
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        content = QWidget()
+        content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        vbox = QVBoxLayout(content)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(2)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+        # ---- Identity section ----
+        sec_identity = CollapsibleSection("Identity", collapsed=False)
+        fl_identity = QFormLayout()
         self._name = _name_edit()
+        self._mat = QComboBox()
+        fl_identity.addRow("Name:", self._name)
+        fl_identity.addRow("Material:", self._mat)
+        sec_identity.addLayout(fl_identity)
+        vbox.addWidget(sec_identity)
+
+        # ---- Position section ----
+        sec_pos = CollapsibleSection("Position", collapsed=False)
+        fl_pos = QFormLayout()
         self._cx = _dspin()
         self._cy = _dspin()
         self._cz = _dspin()
+        fl_pos.addRow("Center X:", self._cx)
+        fl_pos.addRow("Center Y:", self._cy)
+        fl_pos.addRow("Center Z:", self._cz)
+        sec_pos.addLayout(fl_pos)
+        vbox.addWidget(sec_pos)
+
+        # ---- Orientation section ----
+        sec_orient = CollapsibleSection("Orientation", collapsed=True)
+        fl_orient = QFormLayout()
         self._ax = _dspin(-1.0, 1.0, 4, 0.0, 0.01)
         self._ay = _dspin(-1.0, 1.0, 4, 0.0, 0.01)
         self._az = _dspin(-1.0, 1.0, 4, 1.0, 0.01)
+        fl_orient.addRow("Axis X:", self._ax)
+        fl_orient.addRow("Axis Y:", self._ay)
+        fl_orient.addRow("Axis Z:", self._az)
+        sec_orient.addLayout(fl_orient)
+        vbox.addWidget(sec_orient)
+
+        # ---- Dimensions section ----
+        sec_dim = CollapsibleSection("Dimensions", collapsed=False)
+        fl_dim = QFormLayout()
         self._n_sides = QSpinBox()
         self._n_sides.setRange(3, 12)
         self._n_sides.setValue(6)
@@ -2117,19 +2224,12 @@ class SolidPrismForm(QWidget):
         self._circ_r = _dspin(0.01, 9999, 3, 5.0, 0.5)
         self._circ_r.setToolTip("Circumscribed radius: distance from center to corner vertex")
         self._length = _dspin(0.01, 9999, 3, 10.0, 0.5)
-        self._mat = QComboBox()
-
-        fl.addRow("Name:", self._name)
-        fl.addRow("Center X:", self._cx)
-        fl.addRow("Center Y:", self._cy)
-        fl.addRow("Center Z:", self._cz)
-        fl.addRow("Axis X:", self._ax)
-        fl.addRow("Axis Y:", self._ay)
-        fl.addRow("Axis Z:", self._az)
-        fl.addRow("Sides:", self._n_sides)
-        fl.addRow("Circ. radius:", self._circ_r)
-        fl.addRow("Length:", self._length)
-        fl.addRow("Material:", self._mat)
+        fl_dim.addRow("Sides:", self._n_sides)
+        fl_dim.addRow("Circ. radius:", self._circ_r)
+        fl_dim.addRow("Length:", self._length)
+        sec_dim.addLayout(fl_dim)
+        vbox.addWidget(sec_dim)
+        vbox.addStretch()
 
         self._prism: SolidPrism | None = None
         self._loading = False

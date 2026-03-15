@@ -3,6 +3,7 @@ phase: 01-refractive-physics-and-lgp
 plan: 03
 subsystem: gui
 tags: [solid-body, lgp, object-tree, properties-panel, viewport-3d, geometry-builder, presets, pyside6]
+requirements-completed: [GEOM-01]
 
 dependency_graph:
   requires:
@@ -47,10 +48,6 @@ key_decisions:
 patterns_established:
   - "3-level tree item: _item_group_and_name() detects face nodes (grandparent == group header)"
   - "SolidBox/FaceForm follow existing _loading guard pattern — no signal leakage on load"
-
-requirements_completed:
-  - GEOM-01
-  - LGP-01
 
 duration: 8min
 completed: "2026-03-14"

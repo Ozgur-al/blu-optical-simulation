@@ -231,8 +231,9 @@ class SpectralDataPanel(QWidget):
             xp, yp = _planckian_locus_xy()
             planck_pen = pg.mkPen((255, 180, 80), width=2.0)
             self._chroma_plot.plot(xp, yp, pen=planck_pen)
-        except Exception:
-            pass  # Non-critical — skip if computation fails
+        except Exception as exc:
+            import warnings
+            warnings.warn(f"CIE locus computation failed: {exc}", stacklevel=2)
 
         # Fix view range to the standard CIE 1931 horseshoe region
         self._chroma_plot.setXRange(0.0, 0.85, padding=0.02)
@@ -348,8 +349,9 @@ class SpectralDataPanel(QWidget):
             # Restore fixed CIE 1931 view range
             self._chroma_plot.setXRange(0.0, 0.85, padding=0.02)
             self._chroma_plot.setYRange(0.0, 0.92, padding=0.02)
-        except Exception:
-            pass  # Non-critical display enhancement
+        except Exception as exc:
+            import warnings
+            warnings.warn(f"Chromaticity scatter update failed: {exc}", stacklevel=2)
 
     # ------------------------------------------------------------------
     # SPD section
@@ -446,7 +448,11 @@ class SpectralDataPanel(QWidget):
                 continue
         if len(lam) < 2:
             return None, None
-        return np.array(lam, dtype=float), np.array(intensity, dtype=float)
+        lam_arr = np.array(lam, dtype=float)
+        int_arr = np.maximum(np.array(intensity, dtype=float), 0.0)
+        # Sort by wavelength
+        order = np.argsort(lam_arr)
+        return lam_arr[order], int_arr[order]
 
     def _import_spd(self):
         if self._project is None:
@@ -462,6 +468,10 @@ class SpectralDataPanel(QWidget):
                 data = data.reshape(1, -1)
             lam = data[:, 0]
             intensity = data[:, 1]
+            # Sort by wavelength and clamp negatives
+            order = np.argsort(lam)
+            lam = lam[order]
+            intensity = np.maximum(intensity[order], 0.0)
         except Exception as exc:
             QMessageBox.critical(self, "Import Error", str(exc))
             return

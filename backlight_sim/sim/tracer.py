@@ -45,6 +45,26 @@ _EPSILON = 1e-6
 # BVH activation threshold: use BVH when total plane surfaces >= this count
 _BVH_THRESHOLD = 50
 
+# Maximum nesting depth for per-ray refractive index stack
+_N_STACK_MAX = 8
+
+
+def _n_stack_update(n_depth, n_stack, ri, entering_mask, n1_vals):
+    """Push/pop per-ray refractive index stack on solid body refraction.
+
+    Call after ``current_n[ri] = n2_r`` for refracted rays only.
+    *entering_mask* is a boolean array (len == len(ri)) indicating which
+    refracted rays are entering (True) vs exiting (False) the solid.
+    """
+    push = ri[entering_mask]
+    if len(push):
+        d = n_depth[push]
+        n_stack[push, np.minimum(d, _N_STACK_MAX - 1)] = n1_vals[entering_mask]
+        n_depth[push] = np.minimum(d + 1, _N_STACK_MAX)
+    pop = ri[~entering_mask]
+    if len(pop):
+        n_depth[pop] = np.maximum(n_depth[pop] - 1, 0)
+
 
 # ------------------------------------------------------------------
 # Fresnel / Snell physics helpers
@@ -416,6 +436,9 @@ class RayTracer:
             )
 
         # ---- BVH setup for plane surfaces (activated when total plane count >= threshold) ----
+        # Only Rectangle surfaces and SolidBox faces are included; cylinder sides (quadratic),
+        # cylinder discs (radial check), and prism caps (polygon check) use different intersection
+        # algorithms and are brute-forced separately in the bounce loop below.
         n_all_planes = len(surfaces) + len(solid_faces)
         use_bvh = n_all_planes >= _BVH_THRESHOLD
         bvh_bounds = bvh_meta = bvh_n_nodes = None
@@ -530,6 +553,8 @@ class RayTracer:
                 alive = np.ones(n, dtype=bool)
                 # Per-ray refractive index tracking (starts in air, n=1.0)
                 current_n = np.ones(n, dtype=float)
+                n_stack = np.ones((n, _N_STACK_MAX), dtype=float)
+                n_depth = np.zeros(n, dtype=int)
 
                 # Sample wavelengths per ray (use custom project SPD profiles if available)
                 if has_spectral:
@@ -782,15 +807,16 @@ class RayTracer:
                         on_back = -on_into   # points back toward incoming medium
 
                         n1_arr = current_n[hit_idx].copy()
+                        exit_n = n_stack[hit_idx, np.maximum(n_depth[hit_idx] - 1, 0)]
                         # Spectral n(lambda) for SolidBox material
                         spec_data_sb = (self.project.spectral_material_data or {}).get(box.material_name) if wavelengths is not None else None
                         if spec_data_sb is not None and "refractive_index" in spec_data_sb:
                             spec_wl_sb = np.asarray(spec_data_sb["wavelength_nm"], dtype=float)
                             n_lambda_sb = np.interp(wavelengths[hit_idx], spec_wl_sb,
                                                     np.asarray(spec_data_sb["refractive_index"], dtype=float))
-                            n2_arr = np.where(entering, n_lambda_sb, 1.0)
+                            n2_arr = np.where(entering, n_lambda_sb, exit_n)
                         else:
-                            n2_arr = np.where(entering, box_n, 1.0)
+                            n2_arr = np.where(entering, box_n, exit_n)
 
                         # cos_i = dot(d, on_into) because _fresnel_unpolarized convention:
                         # cos_theta_i is the cosine between ray and normal pointing into new medium,
@@ -825,8 +851,8 @@ class RayTracer:
                             n1_r = n1_arr[refracts]
                             n2_r = n2_arr[refracts]
                             new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
-                            # Update refractive index: entering→box_n, exiting→1.0
                             current_n[ri] = n2_r
+                            _n_stack_update(n_depth, n_stack, ri, entering[refracts], n1_r)
                             # Offset origin into new medium (along on_into direction)
                             origins[ri] = hit_pts[refracts] + on_r * geom_eps
                             directions[ri] = new_dirs
@@ -873,15 +899,16 @@ class RayTracer:
                             on_into = np.where(entering[:, None], -face_normal, face_normal)
                         on_back = -on_into
                         n1_arr = current_n[hit_idx].copy()
+                        exit_n = n_stack[hit_idx, np.maximum(n_depth[hit_idx] - 1, 0)]
                         # Spectral n(lambda) for SolidCylinder material
                         spec_data_cyl = (self.project.spectral_material_data or {}).get(cyl.material_name) if wavelengths is not None else None
                         if spec_data_cyl is not None and "refractive_index" in spec_data_cyl:
                             spec_wl_cyl = np.asarray(spec_data_cyl["wavelength_nm"], dtype=float)
                             n_lambda_cyl = np.interp(wavelengths[hit_idx], spec_wl_cyl,
                                                      np.asarray(spec_data_cyl["refractive_index"], dtype=float))
-                            n2_arr = np.where(entering, n_lambda_cyl, 1.0)
+                            n2_arr = np.where(entering, n_lambda_cyl, exit_n)
                         else:
-                            n2_arr = np.where(entering, cyl_n, 1.0)
+                            n2_arr = np.where(entering, cyl_n, exit_n)
                         cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
                         R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
                         roll = self.rng.random(len(hit_idx))
@@ -904,6 +931,7 @@ class RayTracer:
                             n2_r = n2_arr[refracts]
                             new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
                             current_n[ri] = n2_r
+                            _n_stack_update(n_depth, n_stack, ri, entering[refracts], n1_r)
                             origins[ri] = hit_pts[refracts] + on_r * geom_eps
                             directions[ri] = new_dirs
                         if reflects.any():
@@ -932,15 +960,16 @@ class RayTracer:
                         on_into = np.where(entering[:, None], -face_normal, face_normal)
                         on_back = -on_into
                         n1_arr = current_n[hit_idx].copy()
+                        exit_n = n_stack[hit_idx, np.maximum(n_depth[hit_idx] - 1, 0)]
                         # Spectral n(lambda) for SolidPrism material
                         spec_data_prism = (self.project.spectral_material_data or {}).get(prism.material_name) if wavelengths is not None else None
                         if spec_data_prism is not None and "refractive_index" in spec_data_prism:
                             spec_wl_prism = np.asarray(spec_data_prism["wavelength_nm"], dtype=float)
                             n_lambda_prism = np.interp(wavelengths[hit_idx], spec_wl_prism,
                                                        np.asarray(spec_data_prism["refractive_index"], dtype=float))
-                            n2_arr = np.where(entering, n_lambda_prism, 1.0)
+                            n2_arr = np.where(entering, n_lambda_prism, exit_n)
                         else:
-                            n2_arr = np.where(entering, prism_n, 1.0)
+                            n2_arr = np.where(entering, prism_n, exit_n)
                         cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
                         R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
                         roll = self.rng.random(len(hit_idx))
@@ -963,6 +992,7 @@ class RayTracer:
                             n2_r = n2_arr[refracts]
                             new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
                             current_n[ri] = n2_r
+                            _n_stack_update(n_depth, n_stack, ri, entering[refracts], n1_r)
                             origins[ri] = hit_pts[refracts] + on_r * geom_eps
                             directions[ri] = new_dirs
                         if reflects.any():
@@ -1146,17 +1176,12 @@ class RayTracer:
                 bsdf_profile = (self.project.bsdf_profiles or {}).get(bsdf_name, {})
                 cdfs = (bsdf_cdf_cache or {}).get(bsdf_name)
                 n_hit = len(hit_idx)
-                # Apply spectral or scalar reflectance weight scaling (energy conservation)
-                if r_vals is not None:
-                    weights[hit_idx] *= r_vals
-                else:
-                    weights[hit_idx] *= mat.reflectance
                 # Determine R/T probability from BSDF profile angular distribution
                 # refl_total / trans_total give relative probabilities per theta_in bin
                 theta_in_vals = cdfs["theta_in"]
                 refl_total = cdfs["refl_total"]   # (M,) — sin-weighted integrals
                 trans_total = cdfs["trans_total"]  # (M,)
-                cos_i = np.clip(np.einsum("ij,j->i", -directions[hit_idx], on[0]), 0.0, 1.0)
+                cos_i = np.clip(np.einsum("ij,ij->i", -directions[hit_idx], on), 0.0, 1.0)
                 theta_i_deg = np.degrees(np.arccos(cos_i))
                 bin_idx = np.clip(
                     np.searchsorted(theta_in_vals, theta_i_deg, side="right") - 1,
@@ -1174,26 +1199,33 @@ class RayTracer:
                 if reflects_bsdf.any():
                     ri = hit_idx[reflects_bsdf]
                     inc = directions[ri]
-                    # oriented surface normal (pointing away from incoming ray) for each hit ray
                     on_r = on[reflects_bsdf]
-                    # Use first on as surface normal for BSDF (majority normal)
-                    surf_n = on_r[0] if len(on_r) > 0 else normal
-                    new_dirs = sample_bsdf(
-                        int(reflects_bsdf.sum()), inc, surf_n, bsdf_profile, "reflect",
-                        self.rng, cdfs=cdfs,
-                    )
+                    flip_r = flip[reflects_bsdf]
+                    new_dirs = np.empty_like(inc)
+                    for side_val, side_n in [(False, normal), (True, -normal)]:
+                        sm = flip_r == side_val
+                        if not sm.any():
+                            continue
+                        new_dirs[sm] = sample_bsdf(
+                            int(sm.sum()), inc[sm], side_n, bsdf_profile, "reflect",
+                            self.rng, cdfs=cdfs,
+                        )
                     origins[ri] = hit_pts[reflects_bsdf] + on_r * _EPSILON
                     directions[ri] = new_dirs
                 if transmits_bsdf.any():
                     ti = hit_idx[transmits_bsdf]
                     inc = directions[ti]
                     on_t = on[transmits_bsdf]
-                    surf_n = on_t[0] if len(on_t) > 0 else normal
-                    # Transmit through: opposite side of normal
-                    new_dirs = sample_bsdf(
-                        int(transmits_bsdf.sum()), inc, surf_n, bsdf_profile, "transmit",
-                        self.rng, cdfs=cdfs,
-                    )
+                    flip_t = flip[transmits_bsdf]
+                    new_dirs = np.empty_like(inc)
+                    for side_val, side_n in [(False, normal), (True, -normal)]:
+                        sm = flip_t == side_val
+                        if not sm.any():
+                            continue
+                        new_dirs[sm] = sample_bsdf(
+                            int(sm.sum()), inc[sm], side_n, bsdf_profile, "transmit",
+                            self.rng, cdfs=cdfs,
+                        )
                     through_n = -on_t
                     origins[ti] = hit_pts[transmits_bsdf] + through_n * _EPSILON
                     directions[ti] = new_dirs
@@ -1221,7 +1253,13 @@ class RayTracer:
                 if transmits.any():
                     ti = hit_idx[transmits]
                     through_n = -on[transmits]
-                    new_dirs = sample_lambertian(int(transmits.sum()), through_n[0], self.rng)
+                    flip_t = flip[transmits]
+                    new_dirs = np.empty((int(transmits.sum()), 3))
+                    for side_val, side_n in [(False, -normal), (True, normal)]:
+                        sm = flip_t == side_val
+                        if not sm.any():
+                            continue
+                        new_dirs[sm] = sample_lambertian(int(sm.sum()), side_n, self.rng)
                     origins[ti] = hit_pts[transmits] + through_n * _EPSILON
                     directions[ti] = new_dirs
 
@@ -1354,6 +1392,8 @@ def _trace_single_source(project, source_name, base_seed):
     weights = np.full(n, eff_flux / n)
     alive = np.ones(n, dtype=bool)
     current_n = np.ones(n, dtype=float)
+    n_stack = np.ones((n, _N_STACK_MAX), dtype=float)
+    n_depth = np.zeros(n, dtype=int)
     escaped_flux = 0.0
 
     # Pre-compute BSDF CDFs for all profiles in the project
@@ -1639,7 +1679,8 @@ def _trace_single_source(project, source_name, base_seed):
             on_back = -on_into   # points toward incoming ray (old medium)
 
             n1_arr = current_n[hit_idx].copy()
-            n2_arr = np.where(entering, box_n, 1.0)
+            exit_n = n_stack[hit_idx, np.maximum(n_depth[hit_idx] - 1, 0)]
+            n2_arr = np.where(entering, box_n, exit_n)
 
             cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
             R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
@@ -1665,6 +1706,7 @@ def _trace_single_source(project, source_name, base_seed):
                 n2_r = n2_arr[refracts]
                 new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
                 current_n[ri] = n2_r
+                _n_stack_update(n_depth, n_stack, ri, entering[refracts], n1_r)
                 origins[ri] = hit_pts[refracts] + on_r * geom_eps
                 directions[ri] = new_dirs
 
@@ -1706,7 +1748,8 @@ def _trace_single_source(project, source_name, base_seed):
                 on_into = np.where(entering[:, None], -face_normal, face_normal)
             on_back = -on_into
             n1_arr = current_n[hit_idx].copy()
-            n2_arr = np.where(entering, cyl_n, 1.0)
+            exit_n = n_stack[hit_idx, np.maximum(n_depth[hit_idx] - 1, 0)]
+            n2_arr = np.where(entering, cyl_n, exit_n)
             cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
             R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
             roll = rng.random(len(hit_idx))
@@ -1725,6 +1768,7 @@ def _trace_single_source(project, source_name, base_seed):
                 n2_r = n2_arr[refracts]
                 new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
                 current_n[ri] = n2_r
+                _n_stack_update(n_depth, n_stack, ri, entering[refracts], n1_r)
                 origins[ri] = hit_pts[refracts] + on_r * geom_eps
                 directions[ri] = new_dirs
             if reflects.any():
@@ -1753,7 +1797,8 @@ def _trace_single_source(project, source_name, base_seed):
             on_into = np.where(entering[:, None], -face_normal, face_normal)
             on_back = -on_into
             n1_arr = current_n[hit_idx].copy()
-            n2_arr = np.where(entering, prism_n, 1.0)
+            exit_n = n_stack[hit_idx, np.maximum(n_depth[hit_idx] - 1, 0)]
+            n2_arr = np.where(entering, prism_n, exit_n)
             cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
             R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
             roll = rng.random(len(hit_idx))
@@ -1772,6 +1817,7 @@ def _trace_single_source(project, source_name, base_seed):
                 n2_r = n2_arr[refracts]
                 new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
                 current_n[ri] = n2_r
+                _n_stack_update(n_depth, n_stack, ri, entering[refracts], n1_r)
                 origins[ri] = hit_pts[refracts] + on_r * geom_eps
                 directions[ri] = new_dirs
             if reflects.any():
@@ -1808,26 +1854,23 @@ def _trace_single_source(project, source_name, base_seed):
                 dot = np.einsum("ij,j->i", directions[hit_idx], normal)
                 flip = dot > 0
                 on = np.where(flip[:, None], -normal, normal)
-                # Spectral R/T lookup (before BSDF dispatch — positional fix for future spectral+MP)
-                # In current code, spectral+MP is guarded; r_vals_mp will be None in practice.
+                # Spectral R/T lookup (before BSDF dispatch).
+                # NOTE: spectral+MP is guarded at run() entry; wavelengths are always None here.
+                # When spectral+MP support is added, wire wavelength interpolation here
+                # (see _bounce_surfaces lines 1125-1141 for the single-thread implementation).
                 optics_name_mp = getattr(surf, 'optical_properties_name', '') or surf.material_name
-                spec_data_mp = None  # MP path: spectral guard means wavelengths always None here
+                spec_data_mp = None
                 r_vals_mp = None
                 # BSDF dispatch
                 bsdf_name_mp = getattr(mat, 'bsdf_profile_name', '')
                 if bsdf_name_mp and bsdf_cdf_cache_mp.get(bsdf_name_mp) is not None:
                     bsdf_prof_mp = (getattr(project, 'bsdf_profiles', {}) or {}).get(bsdf_name_mp, {})
                     cdfs_mp = bsdf_cdf_cache_mp[bsdf_name_mp]
-                    # Apply spectral or scalar reflectance weight scaling (energy conservation)
-                    if r_vals_mp is not None:
-                        weights[hit_idx] *= r_vals_mp
-                    else:
-                        weights[hit_idx] *= mat.reflectance
                     # Determine R/T probability from BSDF angular distribution
                     theta_in_vals_mp = cdfs_mp['theta_in']
                     refl_total_mp = cdfs_mp['refl_total']
                     trans_total_mp = cdfs_mp['trans_total']
-                    cos_i_mp = np.clip(np.einsum('ij,j->i', -directions[hit_idx], on[0]), 0.0, 1.0)
+                    cos_i_mp = np.clip(np.einsum('ij,ij->i', -directions[hit_idx], on), 0.0, 1.0)
                     theta_i_deg_mp = np.degrees(np.arccos(cos_i_mp))
                     bin_idx_mp = np.clip(
                         np.searchsorted(theta_in_vals_mp, theta_i_deg_mp, side='right') - 1,
@@ -1843,15 +1886,25 @@ def _trace_single_source(project, source_name, base_seed):
                     if refl_bsdf_mp.any():
                         ri = hit_idx[refl_bsdf_mp]
                         on_r = on[refl_bsdf_mp]
-                        surf_n_mp = on_r[0] if len(on_r) > 0 else normal
-                        new_dirs = sample_bsdf(int(refl_bsdf_mp.sum()), directions[ri], surf_n_mp, bsdf_prof_mp, 'reflect', rng, cdfs=cdfs_mp)
+                        flip_r = flip[refl_bsdf_mp]
+                        new_dirs = np.empty_like(directions[ri])
+                        for side_val, side_n in [(False, normal), (True, -normal)]:
+                            sm = flip_r == side_val
+                            if not sm.any():
+                                continue
+                            new_dirs[sm] = sample_bsdf(int(sm.sum()), directions[ri][sm], side_n, bsdf_prof_mp, 'reflect', rng, cdfs=cdfs_mp)
                         origins[ri] = hit_pts[refl_bsdf_mp] + on_r * _EPSILON
                         directions[ri] = new_dirs
                     if trans_bsdf_mp.any():
                         ti2 = hit_idx[trans_bsdf_mp]
                         on_t = on[trans_bsdf_mp]
-                        surf_n_mp = on_t[0] if len(on_t) > 0 else normal
-                        new_dirs = sample_bsdf(int(trans_bsdf_mp.sum()), directions[ti2], surf_n_mp, bsdf_prof_mp, 'transmit', rng, cdfs=cdfs_mp)
+                        flip_t = flip[trans_bsdf_mp]
+                        new_dirs = np.empty_like(directions[ti2])
+                        for side_val, side_n in [(False, normal), (True, -normal)]:
+                            sm = flip_t == side_val
+                            if not sm.any():
+                                continue
+                            new_dirs[sm] = sample_bsdf(int(sm.sum()), directions[ti2][sm], side_n, bsdf_prof_mp, 'transmit', rng, cdfs=cdfs_mp)
                         through_n = -on_t
                         origins[ti2] = hit_pts[trans_bsdf_mp] + through_n * _EPSILON
                         directions[ti2] = new_dirs
@@ -1870,7 +1923,13 @@ def _trace_single_source(project, source_name, base_seed):
                     if transmits.any():
                         ti = hit_idx[transmits]
                         through_n = -on[transmits]
-                        new_d = sample_lambertian(int(transmits.sum()), through_n[0], rng)
+                        flip_t = flip[transmits]
+                        new_d = np.empty((int(transmits.sum()), 3))
+                        for side_val, side_n in [(False, -normal), (True, normal)]:
+                            sm = flip_t == side_val
+                            if not sm.any():
+                                continue
+                            new_d[sm] = sample_lambertian(int(sm.sum()), side_n, rng)
                         origins[ti] = hit_pts[transmits] + through_n * _EPSILON
                         directions[ti] = new_d
                     reflects = ~transmits
@@ -1891,19 +1950,21 @@ def _reflect_batch(dirs, oriented_normals, is_diffuse, rng):
     """Reflect or scatter an array of rays. oriented_normals is (n,3)."""
     n = len(dirs)
     if is_diffuse:
-        # Each ray may have a different oriented normal — handle vectorised
         out = np.empty_like(dirs)
-        # Group by unique normals is complex; for small n just loop
-        if n <= 32:
-            for i in range(n):
-                out[i] = sample_diffuse_reflection(1, oriented_normals[i], rng)[0]
+        # Split by unique normals (flat surfaces have at most 2)
+        ref = oriented_normals[0]
+        same = np.all(oriented_normals == ref, axis=1)
+        if same.all():
+            out = sample_diffuse_reflection(n, ref, rng)
         else:
-            # Use majority normal as approximation for large batches
-            majority = oriented_normals[0]
-            out = sample_diffuse_reflection(n, majority, rng)
+            out[same] = sample_diffuse_reflection(int(same.sum()), ref, rng)
+            other = ~same
+            out[other] = sample_diffuse_reflection(int(other.sum()), oriented_normals[other][0], rng)
         return out
     else:
-        return reflect_specular(dirs, oriented_normals[0])
+        # Per-ray specular reflection: d - 2(d·n)n
+        dot = np.einsum("ij,ij->i", dirs, oriented_normals)
+        return dirs - 2.0 * dot[:, None] * oriented_normals
 
 
 

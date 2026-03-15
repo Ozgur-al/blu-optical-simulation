@@ -197,8 +197,19 @@ def sample_wavelengths(
     np.ndarray of shape (n,) — wavelengths in nm.
     """
     lam, intensity = get_spd_from_project(spd_name, spd_profiles)
-    # Build CDF
-    cdf = np.cumsum(intensity)
+    # Ensure wavelengths are sorted so trapezoidal CDF is monotonic
+    order = np.argsort(lam)
+    lam = lam[order]
+    intensity = intensity[order]
+    intensity = np.maximum(intensity, 0.0)
+    total = intensity.sum()
+    if total <= 0.0:
+        # Uniform fallback for zero/negative SPDs
+        return rng.uniform(lam[0], lam[-1], size=n)
+    # Build CDF using trapezoidal integration (weights by wavelength spacing)
+    mid = 0.5 * (intensity[:-1] + intensity[1:])
+    dlam = np.diff(lam)
+    cdf = np.concatenate(([0.0], np.cumsum(mid * dlam)))
     cdf = cdf / cdf[-1]
     # Invert CDF
     u = rng.uniform(size=n)
@@ -343,7 +354,7 @@ def uv_per_pixel(xyz: np.ndarray) -> np.ndarray:
 # Source: Robertson (1968) as reproduced in Wyszecki & Stiles "Color Science".
 _ROBERTSON_TABLE = np.array([
     # u_i,      v_i,      t_i (10^6/K),  d_i (slope)
-    [0.18006,  0.26352,  -0.24341,   0],   # placeholder sentinel
+    [0.18006,  0.26352,  -0.24341,   0],   # boundary row for interpolation
     [0.18066,  0.26589,  -0.24341,   0],
     [0.18133,  0.26846,  -0.23764,   0],
     [0.18208,  0.27119,  -0.20219,   0],

@@ -190,8 +190,9 @@ class BSDFPanel(QWidget):
             idx = int(np.argmin(np.abs(theta_in - y)))
             self._selected_theta_in_idx = idx
             self._refresh_plots()
-        except Exception:
-            pass
+        except Exception as exc:
+            import warnings
+            warnings.warn(f"BSDF theta_in selection failed: {exc}", stacklevel=2)
 
     def _clear_plots(self):
         self._refl_img.clear()

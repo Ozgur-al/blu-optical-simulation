@@ -760,7 +760,9 @@ class HeatmapPanel(QWidget):
             col = max(0, min(col, nx - 1))
             row = max(0, min(row, ny - 1))
             spectrum = grid_spectral[row, col, :]
-        except Exception:
+        except Exception as exc:
+            import warnings
+            warnings.warn(f"Pixel spectrum extraction failed: {exc}", stacklevel=2)
             return
 
         from backlight_sim.sim.spectral import spectral_bin_centers
@@ -907,8 +909,9 @@ class HeatmapPanel(QWidget):
                         (f"{label_key}_delta_uprime", f"{cdata.get('delta_uprime', 0):.4f}"),
                         (f"{label_key}_delta_vprime", f"{cdata.get('delta_vprime', 0):.4f}"),
                     ]
-            except Exception:
-                pass  # Non-critical — skip color KPIs on error
+            except Exception as exc:
+                import warnings
+                warnings.warn(f"Color KPI CSV export failed: {exc}", stacklevel=2)
 
         with open(path, "w", newline="", encoding="utf-8") as f:
             csv.writer(f).writerows(rows)
