@@ -8,7 +8,7 @@ progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 4
-  completed_plans: 2
+  completed_plans: 3
 ---
 
 # Project State
@@ -23,17 +23,17 @@ See: .planning/PROJECT.md (updated 2026-03-15)
 ## Current Position
 
 Milestone: v2.0-distribution — In Progress
-Phase: 01-distribution-for-admin-locked-work-computer-compatibility-splash-screen-etc — Plan 2 of 4 complete
-Status: Plan 01-02 (Splash Screen & Icon) complete. Plans 03-04 pending.
-Last activity: 2026-03-15 — Plan 01-02 executed: splash.py, app.py updated
+Phase: 01-distribution-for-admin-locked-work-computer-compatibility-splash-screen-etc — Plan 3 of 4 complete
+Status: Plan 01-03 (Update Checker & Dist Assets) complete. Plan 04 pending.
+Last activity: 2026-03-15 — Plan 01-03 executed: update_checker.py, dist_assets/, BluOpticalSim.spec, build_exe.py, app.py updated
 
-Progress: [####------] 50% (2/4 plans)
+Progress: [######----] 75% (3/4 plans)
 
 ## Current Position Detail
 
 Phase: 01-distribution-for-admin-locked-work-computer-compatibility-splash-screen-etc
-Current Plan: 3 of 4
-Stopped at: Completed 01-02-PLAN.md
+Current Plan: 4 of 4
+Stopped at: Completed 01-03-PLAN.md
 
 ## Accumulated Context
 
@@ -45,6 +45,9 @@ Stopped at: Completed 01-02-PLAN.md
 - Icon generated at runtime via QPainter + Pillow; script checked in so icon can be regenerated
 - Splash uses QWidget with Qt.SplashScreen flag instead of QSplashScreen for full QSS/dark theme control
 - Staged loading: 20% theme/icon, 60% after MainWindow import, 90% after construct, 100% on close
+- Status bar notification (15s) used for update available — unobtrusive vs modal dialog
+- http/urllib un-excluded in PyInstaller spec — required by update_checker, minimal size cost
+- Daemon thread for update check — auto-killed if app exits before check completes
 
 ### Roadmap Evolution
 
@@ -64,5 +67,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-03-15
-Stopped at: Completed 01-02-PLAN.md (splash screen and app icon)
+Stopped at: Completed 01-03-PLAN.md (update checker, dist assets, build pipeline)
 Resume file: None
