@@ -1988,3 +1988,140 @@ def test_farfield_sphere_multiprocessing_produces_candela_grid():
     assert sd_result.candela_grid is not None, "candela_grid is None — far-field not computed in MP"
     assert sd_result.candela_grid.sum() > 0, "candela_grid is all zeros"
     assert sd_result.total_hits > 0, "no rays hit the far-field sphere detector"
+
+
+# ------------------------------------------------------------------
+# Phase 06 Plan 01 — Cylinder/Prism multiprocessing wiring
+# ------------------------------------------------------------------
+
+
+def _make_cylinder_mp_scene() -> Project:
+    """Scene with a SolidCylinder between LED and detector; two sources for MP."""
+    from backlight_sim.core.solid_body import SolidCylinder
+    from backlight_sim.core.materials import Material
+
+    materials = {
+        "pmma": Material(name="pmma", surface_type="reflector",
+                         reflectance=0.04, absorption=0.0, refractive_index=1.49),
+        "wall": Material(name="wall", surface_type="reflector",
+                         reflectance=0.9, absorption=0.1),
+    }
+    # Simple open scene: LED below, flat detector above, cylinder in between
+    detectors = [
+        DetectorSurface.axis_aligned("det", [0, 0, 10], (20, 20), 2, 1.0, (20, 20)),
+    ]
+    sources = [
+        PointSource("src1", np.array([0.0, 0.0, 0.0]), flux=1000.0,
+                    direction=np.array([0.0, 0.0, 1.0])),
+        PointSource("src2", np.array([1.0, 0.0, 0.0]), flux=1000.0,
+                    direction=np.array([0.0, 0.0, 1.0])),
+    ]
+    settings = SimulationSettings(
+        rays_per_source=500,
+        max_bounces=20,
+        energy_threshold=0.001,
+        random_seed=42,
+        record_ray_paths=0,
+        use_multiprocessing=True,
+    )
+    proj = Project(name="cyl_mp_test", sources=sources, surfaces=[],
+                   materials=materials, detectors=detectors, settings=settings)
+    # Place a vertical cylinder between LED (z=0) and detector (z=10)
+    cyl = SolidCylinder(
+        name="glass_rod",
+        center=np.array([0.0, 0.0, 5.0]),
+        axis=np.array([0.0, 0.0, 1.0]),
+        radius=3.0,
+        length=8.0,
+        material_name="pmma",
+    )
+    proj.solid_cylinders = [cyl]
+    return proj
+
+
+def _make_prism_mp_scene() -> Project:
+    """Scene with a SolidPrism between LED and detector; two sources for MP."""
+    from backlight_sim.core.solid_body import SolidPrism
+    from backlight_sim.core.materials import Material
+
+    materials = {
+        "pmma": Material(name="pmma", surface_type="reflector",
+                         reflectance=0.04, absorption=0.0, refractive_index=1.49),
+        "wall": Material(name="wall", surface_type="reflector",
+                         reflectance=0.9, absorption=0.1),
+    }
+    detectors = [
+        DetectorSurface.axis_aligned("det", [0, 0, 10], (20, 20), 2, 1.0, (20, 20)),
+    ]
+    sources = [
+        PointSource("src1", np.array([0.0, 0.0, 0.0]), flux=1000.0,
+                    direction=np.array([0.0, 0.0, 1.0])),
+        PointSource("src2", np.array([1.0, 0.0, 0.0]), flux=1000.0,
+                    direction=np.array([0.0, 0.0, 1.0])),
+    ]
+    settings = SimulationSettings(
+        rays_per_source=500,
+        max_bounces=20,
+        energy_threshold=0.001,
+        random_seed=42,
+        record_ray_paths=0,
+        use_multiprocessing=True,
+    )
+    proj = Project(name="prism_mp_test", sources=sources, surfaces=[],
+                   materials=materials, detectors=detectors, settings=settings)
+    prism = SolidPrism(
+        name="glass_prism",
+        center=np.array([0.0, 0.0, 5.0]),
+        axis=np.array([0.0, 0.0, 1.0]),
+        n_sides=6,
+        circumscribed_radius=3.0,
+        length=8.0,
+        material_name="pmma",
+    )
+    proj.solid_prisms = [prism]
+    return proj
+
+
+def test_cylinder_mp_produces_flux():
+    """SolidCylinder between LED and detector produces non-zero flux in MP mode."""
+    proj = _make_cylinder_mp_scene()
+    result = RayTracer(proj).run()
+    det = result.detectors["det"]
+    assert det.total_flux > 0, "No flux reached detector through cylinder in MP mode"
+
+
+def test_prism_mp_produces_flux():
+    """SolidPrism between LED and detector produces non-zero flux in MP mode."""
+    proj = _make_prism_mp_scene()
+    result = RayTracer(proj).run()
+    det = result.detectors["det"]
+    assert det.total_flux > 0, "No flux reached detector through prism in MP mode"
+
+
+def test_cylinder_mp_sb_stats_merged():
+    """sb_stats for SolidCylinder are correctly merged in MP mode."""
+    proj = _make_cylinder_mp_scene()
+    result = RayTracer(proj).run()
+    assert "glass_rod" in result.solid_body_stats, "cylinder missing from solid_body_stats"
+    cyl_stats = result.solid_body_stats["glass_rod"]
+    # At least one face should have entering_flux > 0 (some rays enter cylinder)
+    total_entering = sum(
+        cyl_stats[fid]["entering_flux"]
+        for fid in ("top_cap", "bottom_cap", "side")
+        if fid in cyl_stats
+    )
+    assert total_entering > 0, "No entering flux recorded for cylinder in MP mode"
+
+
+def test_prism_mp_sb_stats_merged():
+    """sb_stats for SolidPrism are correctly merged in MP mode."""
+    proj = _make_prism_mp_scene()
+    result = RayTracer(proj).run()
+    assert "glass_prism" in result.solid_body_stats, "prism missing from solid_body_stats"
+    prism_stats = result.solid_body_stats["glass_prism"]
+    # At least one face should have entering_flux > 0
+    total_entering = sum(
+        face_data["entering_flux"]
+        for face_data in prism_stats.values()
+    )
+    assert total_entering > 0, "No entering flux recorded for prism in MP mode"
