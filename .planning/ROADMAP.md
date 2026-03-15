@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Performance Acceleration** - Numba JIT for inner loops, BVH spatial acceleration, adaptive sampling (completed 2026-03-14)
 - [x] **Phase 4: Advanced Materials and Geometry** - Tabulated BRDF, far-field detector, cylinder and prism solid bodies (completed 2026-03-14)
 - [ ] **Phase 6: Tracer Cross-Phase Wiring** - Fix Cylinder/Prism MP dispatch, SolidBox face_optics, spectral solid body Fresnel, BSDF+spectral exclusion
-- [ ] **Phase 7: UI + Spectral Display Fixes** - Wire duplicate action, tab state persistence, chromaticity scatter update, live preview spectral color
+- [x] **Phase 7: UI + Spectral Display Fixes** - Wire duplicate action, tab state persistence, chromaticity scatter update, live preview spectral color (completed 2026-03-15)
 
 ## Phase Details
 
@@ -146,4 +146,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. Advanced Materials and Geometry | 5/5 | Complete   | 2026-03-14 |
 | 5. UI Revamp | 4/4 | Complete   | 2026-03-14 |
 | 6. Tracer Cross-Phase Wiring | 0/2 | Planned   | — |
-| 7. UI + Spectral Display Fixes | 0/1 | Planned   | — |
+| 7. UI + Spectral Display Fixes | 1/1 | Complete   | 2026-03-15 |

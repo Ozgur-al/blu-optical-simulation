@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-03-14T22:06:08.883Z"
+last_updated: "2026-03-15T10:39:15.834Z"
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 16
-  completed_plans: 16
+  total_phases: 7
+  completed_phases: 6
+  total_plans: 19
+  completed_plans: 17
 ---
 
 ---
@@ -35,12 +35,12 @@ See: .planning/PROJECT.md (updated 2026-03-14)
 
 ## Current Position
 
-Phase: 5 of 5 (UI Revamp) — In Progress
-Plan: 4 of N in current phase — COMPLETE (05-04 SUMMARY created)
-Status: 05-04 complete. Enhanced heatmap with colormap selector, crosshair cursor, collapsible KPI cards, live simulation preview.
-Last activity: 2026-03-15 — Plan 05-04 complete (heatmap_panel.py, tracer.py, main_window.py)
+Phase: 7 of 7 (UI + Spectral Display Fixes) — In Progress
+Plan: 1 of 1 in current phase — COMPLETE (07-01 SUMMARY created, checkpoint awaiting human verify)
+Status: 07-01 complete. Tab persistence fix, chromaticity scatter cloud, live spectral preview, spectral panel wiring.
+Last activity: 2026-03-15 — Plan 07-01 complete (tracer.py, spectral_data_panel.py, main_window.py)
 
-Progress: [█████████░] 94%
+Progress: [██████████] 99%
 
 ## Performance Metrics
 
@@ -76,6 +76,7 @@ Progress: [█████████░] 94%
 | Phase 05-ui-rewamp P02 | 6 | 2 tasks | 6 files |
 | Phase 05-ui-rewamp P03 | 5 | 2 tasks | 4 files |
 | Phase 05-ui-rewamp P04 | 18 | 2 tasks | 3 files |
+| Phase 07-ui-spectral-display-fixes P01 | 8 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -145,6 +146,9 @@ Recent decisions affecting current work:
 - [Phase 05-04]: CollapsibleSection wraps inner QWidget+QGridLayout (not addLayout directly) to preserve existing grid structure
 - [Phase 05-04]: _threshold_color() returns CSS color string; applied via label.setStyleSheet() for green/yellow/red threshold feedback
 - [Phase 04-05]: pyqtgraph 0.14.0 pg.mkPen() requires integer 0-255 color tuples, not float 0.0-1.0 — float values cause silent polar plot curve rendering failure
+- [Phase 07-ui-spectral-display-fixes]: Separate _sim_scatter item from _chroma_scatter so SPD marker and simulation chromaticity cloud coexist independently
+- [Phase 07-ui-spectral-display-fixes]: update_from_result uses first detector with grid_spectral (not aggregating all detectors) — consistent with HeatmapPanel default
+- [Phase 07-ui-spectral-display-fixes]: isinstance(saved_tabs, str) coercion before list check in _restore_layout — Windows QSettings single-item list edge case
 
 ### Roadmap Evolution
 
@@ -164,5 +168,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-15
-Stopped at: Completed 05-04-PLAN.md — Enhanced heatmap, live preview (checkpoint awaiting visual verification)
+Stopped at: Completed 07-01-PLAN.md — Tab persistence, chromaticity scatter, live spectral preview (checkpoint awaiting visual verification)
 Resume file: None
