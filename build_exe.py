@@ -69,6 +69,36 @@ def make_zip():
     print(f"Created {zip_path}  ({size_mb:.1f} MB)")
 
 
+def copy_dist_assets():
+    """Copy README and sample files into the dist folder."""
+    readme_src = ROOT / "dist_assets" / "README.txt"
+    if readme_src.exists():
+        shutil.copy2(readme_src, DIST_DIR / "README.txt")
+        print(f"Copied README.txt to {DIST_DIR}")
+    else:
+        print(f"Warning: {readme_src} not found, skipping README copy")
+
+    # Generate sample project files
+    samples_dir = DIST_DIR / "samples"
+    samples_dir.mkdir(exist_ok=True)
+    generate_script = ROOT / "dist_assets" / "generate_samples.py"
+    if generate_script.exists():
+        try:
+            result = subprocess.run(
+                [sys.executable, str(generate_script), str(samples_dir)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            if result.stdout:
+                print(result.stdout.rstrip())
+            print(f"Generated sample projects in {samples_dir}")
+        except Exception as e:
+            print(f"Warning: Could not generate samples: {e}")
+    else:
+        print(f"Warning: {generate_script} not found, skipping sample generation")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Build BluOpticalSim executable")
     parser.add_argument("--clean", action="store_true", help="Remove previous build artifacts first")
@@ -79,6 +109,7 @@ def main():
         clean()
 
     build()
+    copy_dist_assets()
 
     if args.zip:
         make_zip()

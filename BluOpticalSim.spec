@@ -44,6 +44,10 @@ hidden_imports = [
     # numpy internals sometimes missed
     "numpy.core._methods",
     "numpy.lib.format",
+    # Update checker and app config (small modules, ensure they are bundled)
+    "backlight_sim.update_checker",
+    "backlight_sim.config",
+    "backlight_sim.__version__",
     # Numba JIT acceleration (optional — app works without it)
     # Note: pyinstaller-hooks-contrib >= 2025.1 handles Numba's _RedirectSubpackage
     # modules automatically. Install it alongside PyInstaller when building with Numba.
@@ -62,6 +66,8 @@ hidden_imports = [
 datas = [
     # Built-in angular distribution CSV profiles
     (str(ROOT / "backlight_sim" / "data"), "backlight_sim/data"),
+    # App icon (for runtime access via sys._MEIPASS)
+    (str(ROOT / "assets"), "assets"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -82,10 +88,7 @@ a = Analysis(
         "tkinter",
         "unittest",
         "xmlrpc",
-        "email",
-        "html",
-        "http",
-        "urllib",
+        # Note: http and urllib are NOT excluded — required by update_checker.py
         "scipy",
         "pandas",
         "IPython",
@@ -117,7 +120,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # icon="assets/icon.ico",  # Uncomment and provide an .ico file to set app icon
+    icon=str(ROOT / "assets" / "icon.ico"),
 )
 
 # ---------------------------------------------------------------------------
