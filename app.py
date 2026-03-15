@@ -1,13 +1,15 @@
 """Blu Optical Simulation — application entry point."""
 
 import sys
-import pyqtgraph as pg
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
-from backlight_sim.gui.theme import apply_dark_theme, BG_BASE, TEXT_PRIMARY
+import os
 
 
 def main():
+    # 1. Create QApplication (minimal imports so far)
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QIcon
+
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
@@ -15,15 +17,48 @@ def main():
     app.setApplicationName("Blu Optical Simulation")
     app.setOrganizationName("BluOptical")
 
-    # Apply dark theme BEFORE constructing any widgets — pyqtgraph picks up
-    # the global config options set inside apply_dark_theme().
+    # 2. Set application icon — works in dev mode and PyInstaller frozen mode
+    if getattr(sys, "frozen", False):
+        base_path = sys._MEIPASS  # type: ignore[attr-defined]
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    icon_path = os.path.join(base_path, "assets", "icon.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
+    # 3. Apply dark theme and show splash (theme must come before any pg widget)
+    from backlight_sim.gui.theme import apply_dark_theme, BG_BASE, TEXT_PRIMARY
+    import pyqtgraph as pg
     pg.setConfigOption("background", BG_BASE)
     pg.setConfigOption("foreground", TEXT_PRIMARY)
     apply_dark_theme(app)
 
+    from backlight_sim.gui.splash import SplashScreen
+    splash = SplashScreen()
+    splash.show()
+    app.processEvents()
+
+    # 4. Staged loading with progress updates
+    splash.set_status("Loading modules...")
+    splash.set_progress(20)
+    app.processEvents()
+
     from backlight_sim.gui.main_window import MainWindow
+    splash.set_progress(60)
+    splash.set_status("Initializing GUI...")
+    app.processEvents()
+
     window = MainWindow()
+    splash.set_progress(90)
+    splash.set_status("Ready")
+    app.processEvents()
+
+    # 5. Show main window, close splash
     window.show()
+    splash.set_progress(100)
+    app.processEvents()
+    splash.close()
+
     sys.exit(app.exec())
 
 
