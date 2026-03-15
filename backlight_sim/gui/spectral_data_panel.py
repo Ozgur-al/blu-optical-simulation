@@ -291,6 +291,66 @@ class SpectralDataPanel(QWidget):
         self._chroma_plot.setXRange(0.0, 0.85, padding=0.02)
         self._chroma_plot.setYRange(0.0, 0.92, padding=0.02)
 
+    def update_from_result(self, result) -> None:
+        """Update chromaticity scatter with per-pixel simulation colors.
+
+        Called by MainWindow._on_sim_finished(). Plots all illuminated pixels
+        as (x, y) points on the CIE 1931 diagram.
+        """
+        from backlight_sim.sim.spectral import spectral_grid_to_xyz, spectral_bin_centers, xy_per_pixel
+
+        # Remove previous simulation scatter (keep SPD marker separate)
+        if getattr(self, "_sim_scatter", None) is not None:
+            self._chroma_plot.removeItem(self._sim_scatter)
+            self._sim_scatter = None
+
+        # Find the first detector with spectral data
+        grid_spectral = None
+        for dr in result.detectors.values():
+            if getattr(dr, "grid_spectral", None) is not None:
+                grid_spectral = dr.grid_spectral
+                break
+
+        if grid_spectral is None:
+            return  # Non-spectral simulation — nothing to plot
+
+        try:
+            n_bins = grid_spectral.shape[2]
+            wl = spectral_bin_centers(n_bins)
+            xyz = spectral_grid_to_xyz(grid_spectral, wl)  # (ny, nx, 3)
+            xy = xy_per_pixel(xyz)  # (ny, nx, 2)
+
+            # Filter illuminated pixels only (luminance > threshold)
+            luminance = xyz[..., 1]  # Y channel
+            threshold = luminance.max() * 0.01
+            mask = luminance > threshold
+
+            xs = xy[..., 0][mask]
+            ys = xy[..., 1][mask]
+
+            if len(xs) == 0:
+                return
+
+            # Subsample to avoid scatter overload on high-res detectors
+            if len(xs) > 2000:
+                idx = np.random.choice(len(xs), 2000, replace=False)
+                xs, ys = xs[idx], ys[idx]
+
+            scatter = pg.ScatterPlotItem(
+                x=xs, y=ys,
+                size=5,
+                pen=pg.mkPen(None),
+                brush=pg.mkBrush(80, 200, 120, 120),  # translucent green
+            )
+            self._chroma_plot.addItem(scatter)
+            self._sim_scatter = scatter
+
+            # Restore fixed CIE 1931 view range
+            self._chroma_plot.setXRange(0.0, 0.85, padding=0.02)
+            self._chroma_plot.setYRange(0.0, 0.92, padding=0.02)
+        except Exception:
+            pass  # Non-critical display enhancement
+
     # ------------------------------------------------------------------
     # SPD section
     # ------------------------------------------------------------------

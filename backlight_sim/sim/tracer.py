@@ -951,6 +951,7 @@ class RayTracer:
                             grid=dr.grid.copy(),
                             total_hits=dr.total_hits,
                             total_flux=dr.total_flux,
+                            grid_spectral=dr.grid_spectral.copy() if dr.grid_spectral is not None else None,
                         )
                     partial = SimulationResult(
                         detectors=partial_detectors,
