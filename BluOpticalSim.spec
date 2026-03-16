@@ -66,6 +66,8 @@ hidden_imports = [
 datas = [
     # Built-in angular distribution CSV profiles
     (str(ROOT / "backlight_sim" / "data"), "backlight_sim/data"),
+    # Dark theme QSS stylesheet
+    (str(ROOT / "backlight_sim" / "gui" / "theme"), "backlight_sim/gui/theme"),
     # App icon (for runtime access via sys._MEIPASS)
     (str(ROOT / "assets"), "assets"),
 ]
