@@ -2,8 +2,8 @@
 phase: 2
 slug: converting-main-simulation-loop-to-cpp-for-faster-computation
 status: draft
-nyquist_compliant: false
-wave_0_complete: false
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-04-18
 ---
 
@@ -43,8 +43,8 @@ created: 2026-04-18
 | C++-03 | 02 | 2 | C++-03 | — | N/A | regression | `pytest backlight_sim/tests/test_tracer.py -q` | ✅ exists | ⬜ pending |
 | C++-04 | 01 | 1 | C++-04 | — | N/A | unit | `pytest tests/test_cpp_tracer.py::test_determinism` | Wave 0 (new) | ⬜ pending |
 | C++-05 | 02 | 2 | C++-05 | — | N/A | physics | `pytest tests/test_cpp_tracer.py::test_energy_conservation` | Wave 0 (new) | ⬜ pending |
-| C++-06 | 02 | 2 | C++-06 | — | N/A | regression | `pytest tests/test_cpp_tracer.py::test_statistical_equivalence` | Wave 0 (new) | ⬜ pending |
-| C++-07 | 02 | 2 | C++-07 | — | N/A | perf | `pytest tests/test_cpp_tracer.py::test_speedup -s` | Wave 0 (new) | ⬜ pending |
+| C++-06 | 04 | 4 | C++-06 | — | N/A | regression | `pytest tests/test_cpp_tracer.py::test_statistical_equivalence` | Wave 0 (new) | ⬜ pending |
+| C++-07 | 04 | 4 | C++-07 | — | N/A | perf | `pytest tests/test_cpp_tracer.py::test_speedup -s` | Wave 0 (new) | ⬜ pending |
 | C++-08 | 03 | 3 | C++-08 | — | N/A | regression | `pytest tests/test_cpp_tracer.py::test_no_numba_imports` | Wave 0 (new) | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
@@ -72,11 +72,11 @@ created: 2026-04-18
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 60s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 60s
+- [x] `nyquist_compliant: true` set in frontmatter
 
 **Approval:** pending

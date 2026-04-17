@@ -631,27 +631,31 @@ The C++ extension uses its own `std::mt19937_64` RNG seeded independently from t
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **MSVC Availability on Developer Machine**
    - What we know: Python 3.12 is installed; no MSVC was detected via the bash shell probe.
    - What's unclear: Whether MSVC Build Tools are already installed (vswhere.exe probe failed due to shell path issues).
    - Recommendation: Developer should run `where cl` from a "Developer Command Prompt for VS 2022" before starting Wave 1. If absent, install Build Tools (~6GB download) before implementation begins.
+   - **RESOLVED:** Developer must verify by running `where cl` in a 'Developer Command Prompt for VS 2022' before starting Wave 1. This is documented as a Wave 1 pre-condition in plan 02-01 Task 1. End users do not need MSVC — they receive the pre-compiled .pyd.
 
 2. **Python Version Lock for Pre-Compiled .pyd**
    - What we know: Python 3.12.10 is installed; `.pyd` is ABI-tagged to CPython minor version.
    - What's unclear: Will any end users or CI environments have Python 3.11 or 3.13? If so, the pre-compiled `.pyd` won't work for them.
    - Recommendation: Document Python 3.12 as the supported version in CLAUDE.md. The D-09 crash error message tells users to rebuild from source if needed.
+   - **RESOLVED:** The .pyd filename `blu_tracer.cp312-win_amd64.pyd` encodes Python 3.12. Plan 02-04 updates CLAUDE.md to document that rebuilding requires Python 3.12 + MSVC 2022. D-09 hard crash catches version mismatches at runtime.
 
 3. **BVH Port Complexity**
    - What we know: `accel.py` has a full flat BVH build + traversal (build_bvh_flat, traverse_bvh_batch). It's used only when `n_planes >= 50`.
    - What's unclear: Whether the BVH port should be in Wave 0 (required for correctness on large scenes) or Wave 1 (after brute-force path works).
    - Recommendation: Port BVH in Wave 1 after the brute-force path passes all 20 tests. Use `_BVH_THRESHOLD = 9999` temporarily to disable BVH while testing brute-force.
+   - **RESOLVED:** BVH is deferred from this phase (brute-force only with BVH_THRESHOLD=9999). An explicit deferred decision is noted in plan 02-02. Production scenes with 50+ surfaces will run slower until BVH is ported in a future phase.
 
 4. **Spectral Scenes Path**
    - What we know: When `has_spectral=True`, the tracer must NOT call `trace_source()` and must fall back to the old Python `_run_single`.
    - What's unclear: Whether `_run_single` should be kept indefinitely or deprecated after spectral C++ port in a future phase.
    - Recommendation: Keep `_run_single` for spectral scenes. Add a docstring warning that it is the legacy path. This is clean and matches CONTEXT.md.
+   - **RESOLVED:** When `project_dict['settings']['spectral_mode']` is True, the C++ extension returns early (or the Python orchestrator detects this and routes to the existing Python path). CONTEXT.md explicitly states spectral binning stays Python for this phase.
 
 ---
 
