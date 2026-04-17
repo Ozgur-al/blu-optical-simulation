@@ -66,7 +66,7 @@ Stopped at: Completed 01-03-PLAN.md
 
 - v1.0 shipped with 7 phases (originally 4 planned + Phase 5 UI Revamp + Phases 6-7 gap closure)
 - VTK renderer deferred to v2 (pyqtgraph.opengl sufficient)
-- Spectral+MP guard forces single-thread (future work to lift)
+- Spectral+MP guard lifted (quick task 260417-1gw — spectral now runs in MP mode)
 - Phase 01 added: distribution for admin locked work computer compatibility, splash screen etc.
 - Phase 02 added: converting main simulation loop to C++ for faster computation
 
@@ -78,8 +78,14 @@ None.
 
 None.
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260417-1gw | Fix v1.0 tech debts: BatchForm undo, Spectral+MP guard lifted, BVH cylinder/prism, live heatmap in MP | 2026-04-17 | 60509dc | [260417-1gw-v10-tech-debt](.planning/quick/260417-1gw-v10-tech-debt/) |
+
 ## Session Continuity
 
-Last session: 2026-03-15
-Stopped at: Completed 01-03-PLAN.md (update checker, dist assets, build pipeline)
+Last session: 2026-04-17
+Stopped at: Completed quick task 260417-1gw (v1.0 tech debt fixes: undo, spectral+MP, BVH, heatmap)
 Resume file: None
