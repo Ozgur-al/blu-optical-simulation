@@ -252,6 +252,7 @@ class PropertiesPanel(QStackedWidget):
             self._opticalpropertiesform, self._detectorform, self._spheredetectorform,
             self._settingsform, self._solidboxform, self._faceform,
             self._solidcylinderform, self._solidprismform,
+            self._batchform,
         ]
         for form in forms:
             form._push_command = push_fn
@@ -1932,12 +1933,15 @@ class BatchForm(QWidget):
 
     def _apply_sources(self):
         ws = self._src_widgets
+        push_fn = getattr(self, '_push_command', None)
+
         for src in self._objects:
-            # Enabled
+            changes = []
+
             cb = ws.get("enabled")
             if cb is not None and not cb.isTristate():
-                src.enabled = cb.isChecked()
-            # Position
+                changes.append(('enabled', cb.isChecked()))
+
             px = ws.get("pos_x")
             py = ws.get("pos_y")
             pz = ws.get("pos_z")
@@ -1949,8 +1953,10 @@ class BatchForm(QWidget):
                     pos[1] = py.value()
                 if pz.value() > pz.minimum():
                     pos[2] = pz.value()
-                src.position = np.array(pos)
-            # Scalar fields — skip fields still showing mixed-state placeholder
+                new_pos = np.array(pos)
+                if not np.array_equal(new_pos, src.position):
+                    changes.append(('position', new_pos))
+
             for attr, key in [
                 ("flux", "flux"),
                 ("flux_tolerance", "flux_tolerance"),
@@ -1960,29 +1966,52 @@ class BatchForm(QWidget):
             ]:
                 w = ws.get(key)
                 if w is not None and w.value() > w.minimum():
-                    setattr(src, attr, w.value())
-            # Distribution
+                    changes.append((attr, w.value()))
+
             w = ws.get("distribution")
             if w is not None and w.currentText() != self._PLACEHOLDER:
-                src.distribution = w.currentText()
-            # SPD
+                changes.append(('distribution', w.currentText()))
+
             w = ws.get("spd")
             if w is not None and w.currentText() != self._PLACEHOLDER:
-                src.spd = w.currentText()
-            # Color — skip if any channel is still in mixed-state
+                changes.append(('spd', w.currentText()))
+
             cr = ws.get("color_r")
             cg = ws.get("color_g")
             cb_c = ws.get("color_b")
             if cr is not None and cg is not None and cb_c is not None:
-                if cr.value() > cr.minimum() and cg.value() > cg.minimum() and cb_c.value() > cb_c.minimum():
-                    src.color_rgb = (cr.value(), cg.value(), cb_c.value())
+                if (cr.value() > cr.minimum() and cg.value() > cg.minimum()
+                        and cb_c.value() > cb_c.minimum()):
+                    changes.append(('color_rgb', (cr.value(), cg.value(), cb_c.value())))
+
+            if changes:
+                _push_or_apply_changes(
+                    src, changes,
+                    push_fn,
+                    getattr(self, '_begin_macro', None),
+                    getattr(self, '_end_macro', None),
+                    getattr(self, '_undo_stack', None),
+                    getattr(self, '_undo_refresh', None),
+                    self.changed,
+                )
 
     def _apply_surfaces(self):
-        if self._surf_mat is not None:
-            mat = self._surf_mat.currentText()
-            if mat:
-                for surf in self._objects:
-                    surf.material_name = mat
+        if self._surf_mat is None:
+            return
+        mat = self._surf_mat.currentText()
+        if not mat:
+            return
+        push_fn = getattr(self, '_push_command', None)
+        for surf in self._objects:
+            _push_or_apply_changes(
+                surf, [('material_name', mat)],
+                push_fn,
+                getattr(self, '_begin_macro', None),
+                getattr(self, '_end_macro', None),
+                getattr(self, '_undo_stack', None),
+                getattr(self, '_undo_refresh', None),
+                self.changed,
+            )
 
 
 class SolidBoxForm(QWidget):
