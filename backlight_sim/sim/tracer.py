@@ -458,15 +458,18 @@ class RayTracer:
                 solid_body_stats=sb_stats,
             )
 
-        # ---- BVH setup for plane surfaces (activated when total plane count >= threshold) ----
-        # Only Rectangle surfaces and SolidBox faces are included; cylinder sides (quadratic),
-        # cylinder discs (radial check), and prism caps (polygon check) use different intersection
-        # algorithms and are brute-forced separately in the bounce loop below.
+        # ---- BVH setup for plane surfaces (activated when total geometry count >= threshold) ----
+        # BVH activation threshold: use BVH when total geometry count
+        # (planes + cyl + prism faces) >= _BVH_THRESHOLD
         n_all_planes = len(surfaces) + len(solid_faces)
-        use_bvh = n_all_planes >= _BVH_THRESHOLD
+        n_total_geom = n_all_planes + len(cyl_faces) + len(prism_faces)
+        use_bvh = n_total_geom >= _BVH_THRESHOLD
         bvh_bounds = bvh_meta = bvh_n_nodes = None
         bvh_normals = bvh_centers = bvh_u = bvh_v = bvh_hw = bvh_hh = None
         n_surf_planes = len(surfaces)  # boundary index: idx < n_surf_planes -> surface, else solid face
+        # Pre-computed AABBs for cyl/prism faces (used for broad-phase slab test)
+        cyl_aabbs: np.ndarray | None = None
+        prism_aabbs: np.ndarray | None = None
 
         if use_bvh and n_all_planes > 0:
             # Build flat arrays for all plane objects (surfaces + solid_faces)
@@ -502,6 +505,49 @@ class RayTracer:
             bvh_v       = all_plane_v
             bvh_hw      = all_plane_hw
             bvh_hh      = all_plane_hh
+
+        # Pre-compute conservative AABBs for cylinder/prism faces (for broad-phase slab test)
+        if use_bvh and cyl_faces:
+            cyl_aabb_list = []
+            for cface in cyl_faces:
+                c = np.asarray(cface.center, dtype=np.float64)
+                if isinstance(cface, CylinderCap):
+                    r = float(cface.radius)
+                    cyl_aabb_list.append([c[0]-r, c[0]+r, c[1]-r, c[1]+r, c[2]-r, c[2]+r])
+                else:  # CylinderSide
+                    r = float(cface.radius)
+                    hl = float(cface.length) / 2.0
+                    extent = r + hl  # conservative sphere-bound
+                    cyl_aabb_list.append([c[0]-extent, c[0]+extent,
+                                          c[1]-extent, c[1]+extent,
+                                          c[2]-extent, c[2]+extent])
+            cyl_aabbs = np.array(cyl_aabb_list, dtype=np.float64)
+
+        if use_bvh and prism_faces:
+            prism_aabb_list = []
+            for pface in prism_faces:
+                c = np.asarray(pface.center, dtype=np.float64)
+                if hasattr(pface, 'vertices') and pface.vertices is not None:
+                    verts = np.asarray(pface.vertices, dtype=np.float64)
+                    lo = verts.min(axis=0)
+                    hi = verts.max(axis=0)
+                    prism_aabb_list.append([lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]])
+                elif hasattr(pface, 'circumscribed_radius'):
+                    r = float(pface.circumscribed_radius)
+                    prism_aabb_list.append([c[0]-r, c[0]+r, c[1]-r, c[1]+r, c[2]-r, c[2]+r])
+                else:
+                    # Rectangle side face — use u/v/size for tight AABB
+                    hw_pf = pface.size[0] / 2.0
+                    hh_pf = pface.size[1] / 2.0
+                    corners = np.array([
+                        c + hw_pf * pface.u_axis + hh_pf * pface.v_axis,
+                        c + hw_pf * pface.u_axis - hh_pf * pface.v_axis,
+                        c - hw_pf * pface.u_axis + hh_pf * pface.v_axis,
+                        c - hw_pf * pface.u_axis - hh_pf * pface.v_axis,
+                    ])
+                    lo = corners.min(axis=0); hi = corners.max(axis=0)
+                    prism_aabb_list.append([lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]])
+            prism_aabbs = np.array(prism_aabb_list, dtype=np.float64)
 
         # Pre-compute BSDF CDFs for all profiles in the project
         bsdf_cdf_cache: dict[str, dict] = {}
@@ -652,8 +698,14 @@ class RayTracer:
                             best_type[closer] = 3
                             best_obj[closer] = sfi
 
-                    # SolidCylinder face intersections (type 4)
-                    for cfi, cface in enumerate(cyl_faces):
+                    # SolidCylinder face intersections (type 4) — AABB pre-filter when BVH active
+                    cyl_candidates = (
+                        _aabb_ray_candidates(active_origins, active_dirs, cyl_aabbs)
+                        if use_bvh and cyl_aabbs is not None
+                        else range(len(cyl_faces))
+                    )
+                    for cfi in cyl_candidates:
+                        cface = cyl_faces[cfi]
                         if isinstance(cface, CylinderCap):
                             t = _intersect_rays_disc(
                                 active_origins, active_dirs,
@@ -669,8 +721,14 @@ class RayTracer:
                         best_type[closer] = 4
                         best_obj[closer] = cfi
 
-                    # SolidPrism face intersections (type 5)
-                    for pfi, pface in enumerate(prism_faces):
+                    # SolidPrism face intersections (type 5) — AABB pre-filter when BVH active
+                    prism_candidates = (
+                        _aabb_ray_candidates(active_origins, active_dirs, prism_aabbs)
+                        if use_bvh and prism_aabbs is not None
+                        else range(len(prism_faces))
+                    )
+                    for pfi in prism_candidates:
+                        pface = prism_faces[pfi]
                         if isinstance(pface, PrismCap):
                             t = _intersect_prism_cap(active_origins, active_dirs, pface)
                         else:  # Rectangle side face
@@ -1546,11 +1604,15 @@ def _trace_single_source(project, source_name, base_seed):
         bsdf_cdf_cache_mp[bsdf_nm] = precompute_bsdf_cdfs(bsdf_prof)
 
     # BVH setup for MP path
+    # BVH activation threshold: total geometry (planes + cyl + prism faces) >= _BVH_THRESHOLD
     n_all_planes_mp = len(surfaces) + len(solid_faces)
-    use_bvh_mp = n_all_planes_mp >= _BVH_THRESHOLD
+    n_total_geom_mp = n_all_planes_mp + len(cyl_faces) + len(prism_faces)
+    use_bvh_mp = n_total_geom_mp >= _BVH_THRESHOLD
     bvh_bounds_mp = bvh_meta_mp = bvh_n_nodes_mp = None
     bvh_normals_mp = bvh_centers_mp = bvh_u_mp = bvh_v_mp = bvh_hw_mp = bvh_hh_mp = None
     n_surf_planes_mp = len(surfaces)
+    cyl_aabbs_mp: np.ndarray | None = None
+    prism_aabbs_mp: np.ndarray | None = None
 
     if use_bvh_mp and n_all_planes_mp > 0:
         all_plane_normals_mp = np.empty((n_all_planes_mp, 3), dtype=np.float64)
@@ -1585,6 +1647,47 @@ def _trace_single_source(project, source_name, base_seed):
         bvh_v_mp       = all_plane_v_mp
         bvh_hw_mp      = all_plane_hw_mp
         bvh_hh_mp      = all_plane_hh_mp
+
+    # Pre-compute conservative AABBs for cylinder/prism faces (MP path broad-phase)
+    if use_bvh_mp and cyl_faces:
+        cyl_aabb_list_mp = []
+        for cface in cyl_faces:
+            c = np.asarray(cface.center, dtype=np.float64)
+            if isinstance(cface, CylinderCap):
+                r = float(cface.radius)
+                cyl_aabb_list_mp.append([c[0]-r, c[0]+r, c[1]-r, c[1]+r, c[2]-r, c[2]+r])
+            else:
+                r = float(cface.radius)
+                hl = float(cface.length) / 2.0
+                extent = r + hl
+                cyl_aabb_list_mp.append([c[0]-extent, c[0]+extent,
+                                         c[1]-extent, c[1]+extent,
+                                         c[2]-extent, c[2]+extent])
+        cyl_aabbs_mp = np.array(cyl_aabb_list_mp, dtype=np.float64)
+
+    if use_bvh_mp and prism_faces:
+        prism_aabb_list_mp = []
+        for pface in prism_faces:
+            c = np.asarray(pface.center, dtype=np.float64)
+            if hasattr(pface, 'vertices') and pface.vertices is not None:
+                verts = np.asarray(pface.vertices, dtype=np.float64)
+                lo = verts.min(axis=0); hi = verts.max(axis=0)
+                prism_aabb_list_mp.append([lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]])
+            elif hasattr(pface, 'circumscribed_radius'):
+                r = float(pface.circumscribed_radius)
+                prism_aabb_list_mp.append([c[0]-r, c[0]+r, c[1]-r, c[1]+r, c[2]-r, c[2]+r])
+            else:
+                hw_pf = pface.size[0] / 2.0
+                hh_pf = pface.size[1] / 2.0
+                corners = np.array([
+                    c + hw_pf * pface.u_axis + hh_pf * pface.v_axis,
+                    c + hw_pf * pface.u_axis - hh_pf * pface.v_axis,
+                    c - hw_pf * pface.u_axis + hh_pf * pface.v_axis,
+                    c - hw_pf * pface.u_axis - hh_pf * pface.v_axis,
+                ])
+                lo = corners.min(axis=0); hi = corners.max(axis=0)
+                prism_aabb_list_mp.append([lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]])
+        prism_aabbs_mp = np.array(prism_aabb_list_mp, dtype=np.float64)
 
     for _bounce in range(settings.max_bounces):
         if not alive.any():
@@ -1638,8 +1741,14 @@ def _trace_single_source(project, source_name, base_seed):
                 best_type[closer] = 3
                 best_obj[closer] = sfi
 
-        # SolidCylinder face intersections (type 4)
-        for cfi, cface in enumerate(cyl_faces):
+        # SolidCylinder face intersections (type 4) — AABB pre-filter when BVH active
+        cyl_candidates_mp = (
+            _aabb_ray_candidates(active_origins, active_dirs, cyl_aabbs_mp)
+            if use_bvh_mp and cyl_aabbs_mp is not None
+            else range(len(cyl_faces))
+        )
+        for cfi in cyl_candidates_mp:
+            cface = cyl_faces[cfi]
             if isinstance(cface, CylinderCap):
                 t = _intersect_rays_disc(
                     active_origins, active_dirs,
@@ -1655,8 +1764,14 @@ def _trace_single_source(project, source_name, base_seed):
             best_type[closer] = 4
             best_obj[closer] = cfi
 
-        # SolidPrism face intersections (type 5)
-        for pfi, pface in enumerate(prism_faces):
+        # SolidPrism face intersections (type 5) — AABB pre-filter when BVH active
+        prism_candidates_mp = (
+            _aabb_ray_candidates(active_origins, active_dirs, prism_aabbs_mp)
+            if use_bvh_mp and prism_aabbs_mp is not None
+            else range(len(prism_faces))
+        )
+        for pfi in prism_candidates_mp:
+            pface = prism_faces[pfi]
             if isinstance(pface, PrismCap):
                 t = _intersect_prism_cap(active_origins, active_dirs, pface)
             else:  # Rectangle side face
@@ -2203,6 +2318,37 @@ def _trace_single_source(project, source_name, base_seed):
         "sb_stats": sb_stats,
         "sph_grids": sph_grids,
     }
+
+
+def _aabb_ray_candidates(origins, directions, aabbs):
+    """Return indices of AABBs potentially hit by any ray in the batch (slab test).
+
+    Parameters
+    ----------
+    origins : (N, 3) float64 — ray origins
+    directions : (N, 3) float64 — ray directions (unit vectors)
+    aabbs : (M, 6) float64 — [xmin, xmax, ymin, ymax, zmin, zmax] per AABB
+
+    Returns
+    -------
+    list[int] — indices into aabbs that pass the slab test for at least one ray.
+    """
+    if aabbs is None or len(aabbs) == 0:
+        return []
+    inv_dirs = np.where(np.abs(directions) > 1e-15, 1.0 / directions, np.inf)
+    candidates = []
+    for fi in range(len(aabbs)):
+        lo = aabbs[fi, [0, 2, 4]]  # xmin, ymin, zmin
+        hi = aabbs[fi, [1, 3, 5]]  # xmax, ymax, zmax
+        t0 = (lo - origins) * inv_dirs   # (N, 3)
+        t1 = (hi - origins) * inv_dirs   # (N, 3)
+        tmin = np.maximum.reduce([np.minimum(t0, t1)], axis=0)   # (N, 3)
+        tmax = np.minimum.reduce([np.maximum(t0, t1)], axis=0)   # (N, 3)
+        tenter = tmin.max(axis=1)   # (N,)
+        texit  = tmax.min(axis=1)   # (N,)
+        if np.any((texit >= tenter) & (texit > _EPSILON)):
+            candidates.append(fi)
+    return candidates
 
 
 def _reflect_batch(dirs, oriented_normals, is_diffuse, rng):
