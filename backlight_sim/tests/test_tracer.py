@@ -2572,3 +2572,81 @@ def test_nested_solids_exit_to_outer_medium():
     # The key physics check: inner boundary Fresnel loss should be small
     # because n jumps 1.5→1.3 (not 1.3→1.0)
     assert flux > 0, "Nested solid scene produced zero flux"
+
+
+# ------------------------------------------------------------------
+# Task 2: Spectral + multiprocessing (TDD RED tests)
+# ------------------------------------------------------------------
+
+
+def _make_spectral_mp_scene(rays_per_source=2000) -> Project:
+    """Two-source scene with warm_white SPD and multiprocessing enabled."""
+    materials = {
+        "wall": Material(name="wall", surface_type="reflector", reflectance=0.9,
+                         absorption=0.1),
+    }
+    surfaces = [
+        Rectangle.axis_aligned("floor",      [0, 0, -5], (20, 20), 2, -1.0, "wall"),
+        Rectangle.axis_aligned("wall_left",  [-10, 0, 0], (20, 10), 0, -1.0, "wall"),
+        Rectangle.axis_aligned("wall_right", [10, 0, 0],  (20, 10), 0,  1.0, "wall"),
+        Rectangle.axis_aligned("wall_front", [0, -10, 0], (20, 10), 1, -1.0, "wall"),
+        Rectangle.axis_aligned("wall_back",  [0, 10, 0],  (20, 10), 1,  1.0, "wall"),
+    ]
+    detectors = [
+        DetectorSurface.axis_aligned("top_detector", [0, 0, 5], (20, 20), 2, 1.0, (20, 20)),
+    ]
+    sources = [
+        PointSource("src1", np.array([-2.0, 0.0, 0.0]), flux=500.0, spd="warm_white"),
+        PointSource("src2", np.array([ 2.0, 0.0, 0.0]), flux=500.0, spd="warm_white"),
+    ]
+    settings = SimulationSettings(
+        rays_per_source=rays_per_source, max_bounces=20,
+        energy_threshold=0.001, random_seed=42,
+        record_ray_paths=0, use_multiprocessing=True,
+    )
+    return Project(name="spectral_mp_test", sources=sources, surfaces=surfaces,
+                   materials=materials, detectors=detectors, settings=settings)
+
+
+def test_spectral_mp_produces_nonzero_spectral_grid():
+    """Spectral simulation with MP enabled should produce non-zero grid_spectral."""
+    import warnings
+    proj = _make_spectral_mp_scene(rays_per_source=2000)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = RayTracer(proj).run()
+    det = result.detectors["top_detector"]
+    assert det.grid_spectral is not None, "grid_spectral should not be None in spectral+MP mode"
+    assert det.grid_spectral.sum() > 0, "grid_spectral should accumulate non-zero flux"
+
+
+def test_spectral_mp_grid_spectral_shape():
+    """grid_spectral in MP mode should have shape (ny, nx, N_SPECTRAL_BINS)."""
+    from backlight_sim.sim.spectral import N_SPECTRAL_BINS
+    import warnings
+    proj = _make_spectral_mp_scene(rays_per_source=2000)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        result = RayTracer(proj).run()
+    det = result.detectors["top_detector"]
+    assert det.grid_spectral is not None
+    ny, nx = 20, 20
+    assert det.grid_spectral.shape == (ny, nx, N_SPECTRAL_BINS), (
+        f"Expected shape ({ny}, {nx}, {N_SPECTRAL_BINS}), got {det.grid_spectral.shape}"
+    )
+
+
+def test_spectral_mp_no_guard_warning():
+    """Spectral+MP should NOT emit the single-thread fallback warning anymore."""
+    import warnings
+    proj = _make_spectral_mp_scene(rays_per_source=1000)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        RayTracer(proj).run()
+    guard_warnings = [
+        w for w in caught
+        if "single-thread" in str(w.message).lower() or "spectral" in str(w.message).lower()
+    ]
+    assert len(guard_warnings) == 0, (
+        f"Guard warning should be gone, but got: {[str(w.message) for w in guard_warnings]}"
+    )
