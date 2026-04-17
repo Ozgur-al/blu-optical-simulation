@@ -188,19 +188,8 @@ class RayTracer:
         # Use multiprocessing if enabled and there are multiple sources
         sources = [s for s in self.project.sources if s.enabled]
 
-        # Spectral + MP guard: wavelength-dependent material lookup is not yet
-        # implemented in the MP path (_trace_single_source).  Fall back to
-        # single-thread mode and warn.
         has_spectral = any(s.spd != "white" for s in sources)
-        if has_spectral and settings.use_multiprocessing:
-            import warnings
-            warnings.warn(
-                "Spectral simulation forcing single-thread mode "
-                "(spectral + multiprocessing is not yet optimized)",
-                stacklevel=2,
-            )
-            return self._run_single(sources, progress_callback, convergence_callback,
-                                    partial_result_callback=partial_result_callback)
+        n_spec_bins = N_SPECTRAL_BINS if has_spectral else 0
 
         # Adaptive + MP guard: adaptive per-source convergence checking cannot be
         # coordinated across processes.  Disable adaptive sampling in MP mode.
@@ -215,14 +204,19 @@ class RayTracer:
 
         if (settings.use_multiprocessing and len(sources) > 1
                 and not settings.record_ray_paths):
-            # Live preview not supported in MP mode — do NOT pass partial_result_callback
-            return self._run_multiprocess(sources, progress_callback)
+            return self._run_multiprocess(
+                sources, progress_callback,
+                has_spectral=has_spectral, n_spec_bins=n_spec_bins,
+                partial_result_callback=partial_result_callback,
+            )
 
         return self._run_single(sources, progress_callback, convergence_callback,
                                 _adaptive=_adaptive,
                                 partial_result_callback=partial_result_callback)
 
-    def _run_multiprocess(self, sources, progress_callback):
+    def _run_multiprocess(self, sources, progress_callback,
+                          has_spectral=False, n_spec_bins=0,
+                          partial_result_callback=None):
         """Run each source in a separate process and merge results."""
         settings = self.project.settings
         detectors = self.project.detectors
@@ -231,7 +225,13 @@ class RayTracer:
         det_results: dict[str, DetectorResult] = {}
         for det in detectors:
             grid = np.zeros((det.resolution[1], det.resolution[0]), dtype=float)
-            det_results[det.name] = DetectorResult(detector_name=det.name, grid=grid)
+            grid_spectral = (
+                np.zeros((det.resolution[1], det.resolution[0], n_spec_bins), dtype=float)
+                if has_spectral and n_spec_bins > 0 else None
+            )
+            det_results[det.name] = DetectorResult(
+                detector_name=det.name, grid=grid, grid_spectral=grid_spectral
+            )
 
         # Initialize merged sphere detector results
         sph_results: dict[str, SphereDetectorResult] = {}
@@ -291,6 +291,10 @@ class RayTracer:
                     det_results[det_name].total_hits += grid_data["hits"]
                     det_results[det_name].total_flux += grid_data["flux"]
                 escaped_total += result["escaped"]
+                # Merge spectral grids (new: from _trace_single_source spectral path)
+                for det_name, sg in result.get("spectral_grids", {}).items():
+                    if det_name in det_results and det_results[det_name].grid_spectral is not None:
+                        det_results[det_name].grid_spectral += sg
                 # Merge sphere detector grids
                 for sph_name, sph_data in result.get("sph_grids", {}).items():
                     if sph_name in sph_results:
@@ -306,6 +310,25 @@ class RayTracer:
                 completed += 1
                 if progress_callback:
                     progress_callback(completed / total)
+                # Emit partial result after each source completes (live preview in MP mode)
+                if partial_result_callback is not None:
+                    partial_detectors = {}
+                    for det_name, dr in det_results.items():
+                        partial_detectors[det_name] = DetectorResult(
+                            detector_name=det_name,
+                            grid=dr.grid.copy(),
+                            total_hits=dr.total_hits,
+                            total_flux=dr.total_flux,
+                            grid_spectral=dr.grid_spectral.copy() if dr.grid_spectral is not None else None,
+                        )
+                    partial_result_callback(SimulationResult(
+                        detectors=partial_detectors,
+                        sphere_detectors={},
+                        total_emitted_flux=total_emitted_flux,
+                        escaped_flux=escaped_total,
+                        source_count=completed,
+                        solid_body_stats={},
+                    ))
 
             if errors:
                 import warnings
@@ -1499,6 +1522,24 @@ def _trace_single_source(project, source_name, base_seed):
     n_depth = np.zeros(n, dtype=int)
     escaped_flux = 0.0
 
+    # Sample wavelengths per ray if this source has a non-white SPD (spectral mode)
+    has_spectral_mp = source.spd != "white"
+    n_spec_bins_mp = N_SPECTRAL_BINS if has_spectral_mp else 0
+    if has_spectral_mp:
+        wavelengths_mp = sample_wavelengths(
+            n, source.spd, rng,
+            spd_profiles=getattr(project, "spd_profiles", None) or None,
+        )
+    else:
+        wavelengths_mp = None
+
+    # Add spectral_grid slot to each detector grid dict (None when not spectral)
+    for det in detectors:
+        det_grids[det.name]["spectral_grid"] = (
+            np.zeros((det.resolution[1], det.resolution[0], n_spec_bins_mp), dtype=float)
+            if has_spectral_mp else None
+        )
+
     # Pre-compute BSDF CDFs for all profiles in the project
     bsdf_cdf_cache_mp: dict[str, dict] = {}
     for bsdf_nm, bsdf_prof in (getattr(project, "bsdf_profiles", {}) or {}).items():
@@ -1669,6 +1710,15 @@ def _trace_single_source(project, source_name, base_seed):
             accumulate_grid_jit(det_grids[det.name]["grid"], iy, ix, hw_arr)
             det_grids[det.name]["hits"] += len(hw_arr)
             det_grids[det.name]["flux"] += float(hw_arr.sum())
+            # Spectral grid accumulation for MP path
+            sg = det_grids[det.name].get("spectral_grid")
+            if sg is not None and wavelengths_mp is not None:
+                bin_idx = np.clip(
+                    ((wavelengths_mp[hit_idx] - LAMBDA_MIN) / (LAMBDA_MAX - LAMBDA_MIN)
+                     * n_spec_bins_mp).astype(int),
+                    0, n_spec_bins_mp - 1,
+                )
+                np.add.at(sg, (iy, ix, bin_idx), hw_arr)
             # Pass-through: advance ray past the detector plane
             origins[hit_idx] = hit_pts + directions[hit_idx] * _EPSILON
 
@@ -2141,7 +2191,18 @@ def _trace_single_source(project, source_name, base_seed):
 
         alive[weights < settings.energy_threshold] = False
 
-    return {"grids": det_grids, "escaped": escaped_flux, "sb_stats": sb_stats, "sph_grids": sph_grids}
+    spectral_grids = {
+        det_name: dg["spectral_grid"]
+        for det_name, dg in det_grids.items()
+        if dg.get("spectral_grid") is not None
+    }
+    return {
+        "grids": det_grids,
+        "spectral_grids": spectral_grids,
+        "escaped": escaped_flux,
+        "sb_stats": sb_stats,
+        "sph_grids": sph_grids,
+    }
 
 
 def _reflect_batch(dirs, oriented_normals, is_diffuse, rng):

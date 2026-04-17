@@ -682,13 +682,13 @@ def test_get_spd_from_project_custom_overrides_builtin():
     assert float(intensity[1]) == pytest.approx(1.0)
 
 
-def test_spectral_mp_guard_falls_back_to_single_thread():
-    """Spectral simulation with MP enabled should warn and fall back to single-thread."""
+def test_spectral_mp_runs_without_fallback():
+    """Spectral simulation with MP enabled should run in MP mode without fallback warning."""
     import warnings
     p = _make_spectral_scene(rays_per_source=500, spd="warm_white")
     p.settings.use_multiprocessing = True
     p.settings.record_ray_paths = 0
-    # Add a second source so MP would normally apply
+    # Add a second source so MP applies
     src2 = PointSource("src2", np.array([1.0, 0.0, 0.0]), flux=100.0)
     src2.spd = "warm_white"
     p.sources.append(src2)
@@ -696,13 +696,15 @@ def test_spectral_mp_guard_falls_back_to_single_thread():
         warnings.simplefilter("always")
         result = RayTracer(p).run()
     det = result.detectors["top_detector"]
-    # Should still produce results (single-thread fallback)
+    # Should produce results (MP mode, no fallback)
     assert det.total_hits > 0
-    # Should have issued a warning about spectral+MP
+    # Should NOT issue a spectral/single-thread guard warning
     warning_messages = [str(warning.message) for warning in w]
-    assert any("spectral" in msg.lower() or "single" in msg.lower()
-               for msg in warning_messages), (
-        f"Expected spectral/single-thread warning, got: {warning_messages}"
+    guard_warns = [m for m in warning_messages
+                   if "single-thread" in m.lower() or
+                   ("spectral" in m.lower() and "multiprocessing" in m.lower())]
+    assert len(guard_warns) == 0, (
+        f"Guard warning should be gone, got: {guard_warns}"
     )
 
 
