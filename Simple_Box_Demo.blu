@@ -1,0 +1,233 @@
+{
+  "name": "Simple Box",
+  "settings": {
+    "rays_per_source": 20000,
+    "max_bounces": 50,
+    "energy_threshold": 0.001,
+    "random_seed": 42,
+    "record_ray_paths": 200,
+    "distance_unit": "mm",
+    "flux_unit": "lm",
+    "angle_unit": "deg",
+    "use_multiprocessing": false,
+    "adaptive_sampling": true,
+    "convergence_cv_target": 2.0,
+    "check_interval": 1000
+  },
+  "angular_distributions": {},
+  "spd_profiles": {},
+  "spectral_material_data": {},
+  "materials": [
+    {
+      "name": "white_reflector",
+      "surface_type": "reflector",
+      "reflectance": 0.92,
+      "absorption": 0.08,
+      "transmittance": 0.0,
+      "is_diffuse": true,
+      "haze": 0.0,
+      "refractive_index": 1.0,
+      "bsdf_profile_name": "",
+      "color": [
+        0.55,
+        0.65,
+        1.0
+      ]
+    },
+    {
+      "name": "absorber",
+      "surface_type": "absorber",
+      "reflectance": 0.0,
+      "absorption": 1.0,
+      "transmittance": 0.0,
+      "is_diffuse": true,
+      "haze": 0.0,
+      "refractive_index": 1.0,
+      "bsdf_profile_name": "",
+      "color": [
+        0.9,
+        0.2,
+        0.2
+      ]
+    }
+  ],
+  "optical_properties": [],
+  "sources": [
+    {
+      "name": "LED_1",
+      "position": [
+        0.0,
+        0.0,
+        0.5
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    }
+  ],
+  "surfaces": [
+    {
+      "name": "Floor",
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "u_axis": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "v_axis": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "size": [
+        50.0,
+        50.0
+      ],
+      "material_name": "white_reflector"
+    },
+    {
+      "name": "Wall Right",
+      "center": [
+        25.0,
+        0.0,
+        10.0
+      ],
+      "u_axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "v_axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "size": [
+        50.0,
+        20.0
+      ],
+      "material_name": "white_reflector"
+    },
+    {
+      "name": "Wall Left",
+      "center": [
+        -25.0,
+        0.0,
+        10.0
+      ],
+      "u_axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "v_axis": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "size": [
+        50.0,
+        20.0
+      ],
+      "material_name": "white_reflector"
+    },
+    {
+      "name": "Wall Back",
+      "center": [
+        0.0,
+        25.0,
+        10.0
+      ],
+      "u_axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "v_axis": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "size": [
+        20.0,
+        50.0
+      ],
+      "material_name": "white_reflector"
+    },
+    {
+      "name": "Wall Front",
+      "center": [
+        0.0,
+        -25.0,
+        10.0
+      ],
+      "u_axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "v_axis": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "size": [
+        20.0,
+        50.0
+      ],
+      "material_name": "white_reflector"
+    }
+  ],
+  "detectors": [
+    {
+      "name": "Output Plane",
+      "center": [
+        0.0,
+        0.0,
+        20.0
+      ],
+      "u_axis": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "v_axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "size": [
+        50.0,
+        50.0
+      ],
+      "resolution": [
+        100,
+        100
+      ]
+    }
+  ],
+  "sphere_detectors": [],
+  "solid_bodies": [],
+  "solid_cylinders": [],
+  "solid_prisms": [],
+  "bsdf_profiles": {}
+}

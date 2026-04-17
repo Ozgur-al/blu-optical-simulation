@@ -44,3 +44,9 @@ Plans:
 - [x] 01-01-PLAN.md — Foundation: version constant, app icon, user data config (complete 2026-03-15)
 - [x] 01-02-PLAN.md — Splash screen with progress feedback and icon integration (complete 2026-03-15)
 - [ ] 01-03-PLAN.md — Version check, build pipeline updates, distribution assets
+
+### Phase 2: Converting main simulation loop to C++ for faster computation
+
+**Goal:** Rewrite the core Monte Carlo ray tracing engine in C++ (exposed to Python via pybind11 or ctypes) to achieve significant speedup on CPU-bound simulation workloads while keeping the Python/PySide6 front-end unchanged.
+**Depends on:** Phase 1
+**Plans:** Not planned yet

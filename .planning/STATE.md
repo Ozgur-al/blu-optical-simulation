@@ -68,6 +68,7 @@ Stopped at: Completed 01-03-PLAN.md
 - VTK renderer deferred to v2 (pyqtgraph.opengl sufficient)
 - Spectral+MP guard forces single-thread (future work to lift)
 - Phase 01 added: distribution for admin locked work computer compatibility, splash screen etc.
+- Phase 02 added: converting main simulation loop to C++ for faster computation
 
 ### Pending Todos
 

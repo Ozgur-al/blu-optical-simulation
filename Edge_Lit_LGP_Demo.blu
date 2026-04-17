@@ -1,0 +1,1073 @@
+{
+  "name": "Edge-Lit LGP",
+  "settings": {
+    "rays_per_source": 10000,
+    "max_bounces": 200,
+    "energy_threshold": 0.001,
+    "random_seed": 42,
+    "record_ray_paths": 200,
+    "distance_unit": "mm",
+    "flux_unit": "lm",
+    "angle_unit": "deg",
+    "use_multiprocessing": false,
+    "adaptive_sampling": true,
+    "convergence_cv_target": 2.0,
+    "check_interval": 1000
+  },
+  "angular_distributions": {},
+  "spd_profiles": {},
+  "spectral_material_data": {},
+  "materials": [
+    {
+      "name": "pmma",
+      "surface_type": "reflector",
+      "reflectance": 0.0,
+      "absorption": 0.01,
+      "transmittance": 0.0,
+      "is_diffuse": true,
+      "haze": 0.0,
+      "refractive_index": 1.49,
+      "bsdf_profile_name": "",
+      "color": [
+        0.55,
+        0.65,
+        1.0
+      ]
+    }
+  ],
+  "optical_properties": [
+    {
+      "name": "lgp_bottom_reflector",
+      "surface_type": "reflector",
+      "reflectance": 0.95,
+      "absorption": 0.05,
+      "transmittance": 0.0,
+      "is_diffuse": true,
+      "haze": 0.0,
+      "bsdf_profile_name": "",
+      "color": [
+        0.55,
+        0.65,
+        1.0
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "name": "LED_front_1",
+      "position": [
+        -146.6216216216216,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_2",
+      "position": [
+        -138.24324324324323,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_3",
+      "position": [
+        -129.86486486486487,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_4",
+      "position": [
+        -121.48648648648648,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_5",
+      "position": [
+        -113.1081081081081,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_6",
+      "position": [
+        -104.72972972972973,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_7",
+      "position": [
+        -96.35135135135135,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_8",
+      "position": [
+        -87.97297297297297,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_9",
+      "position": [
+        -79.59459459459458,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_10",
+      "position": [
+        -71.21621621621621,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_11",
+      "position": [
+        -62.83783783783784,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_12",
+      "position": [
+        -54.45945945945945,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_13",
+      "position": [
+        -46.08108108108107,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_14",
+      "position": [
+        -37.702702702702695,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_15",
+      "position": [
+        -29.324324324324323,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_16",
+      "position": [
+        -20.945945945945937,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_17",
+      "position": [
+        -12.56756756756755,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_18",
+      "position": [
+        -4.189189189189165,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_19",
+      "position": [
+        4.189189189189193,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_20",
+      "position": [
+        12.567567567567579,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_21",
+      "position": [
+        20.945945945945965,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_22",
+      "position": [
+        29.324324324324323,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_23",
+      "position": [
+        37.70270270270271,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_24",
+      "position": [
+        46.081081081081095,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_25",
+      "position": [
+        54.45945945945948,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_26",
+      "position": [
+        62.83783783783787,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_27",
+      "position": [
+        71.21621621621622,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_28",
+      "position": [
+        79.59459459459461,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_29",
+      "position": [
+        87.972972972973,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_30",
+      "position": [
+        96.35135135135135,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_31",
+      "position": [
+        104.72972972972974,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_32",
+      "position": [
+        113.10810810810813,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_33",
+      "position": [
+        121.48648648648651,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_34",
+      "position": [
+        129.8648648648649,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_35",
+      "position": [
+        138.24324324324328,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_front_36",
+      "position": [
+        146.62162162162167,
+        -60.5,
+        0.0
+      ],
+      "flux": 100.0,
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    }
+  ],
+  "surfaces": [
+    {
+      "name": "bottom_reflector",
+      "center": [
+        0.0,
+        0.0,
+        -2.0
+      ],
+      "u_axis": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "v_axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "size": [
+        372.0,
+        144.0
+      ],
+      "material_name": "pmma",
+      "optical_properties_name": "lgp_bottom_reflector"
+    }
+  ],
+  "detectors": [
+    {
+      "name": "top_detector",
+      "center": [
+        0.0,
+        0.0,
+        3.0
+      ],
+      "u_axis": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "v_axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "size": [
+        310.0,
+        120.0
+      ],
+      "resolution": [
+        100,
+        100
+      ]
+    }
+  ],
+  "sphere_detectors": [],
+  "solid_bodies": [
+    {
+      "name": "LGP",
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "dimensions": [
+        310.0,
+        120.0,
+        2.0
+      ],
+      "material_name": "pmma",
+      "face_optics": {
+        "bottom": "lgp_bottom_reflector"
+      },
+      "coupling_edges": [
+        "front"
+      ]
+    }
+  ],
+  "solid_cylinders": [],
+  "solid_prisms": [],
+  "bsdf_profiles": {}
+}

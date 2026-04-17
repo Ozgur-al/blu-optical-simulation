@@ -3,7 +3,7 @@ status: complete
 phase: 01-distribution-for-admin-locked-work-computer-compatibility-splash-screen-etc
 source: [01-01-SUMMARY.md, 01-02-SUMMARY.md, 01-03-SUMMARY.md]
 started: 2026-03-16T00:00:00Z
-updated: 2026-04-17T23:50:00Z
+updated: 2026-04-17T23:55:00Z
 ---
 
 ## Current Test
@@ -22,9 +22,8 @@ result: pass
 
 ### 3. App Icon in Title Bar and Taskbar
 expected: The main window title bar and Windows taskbar both show the teal optics-motif icon (LED + rays + lens arc) instead of a generic Python/Qt icon.
-result: issue
-reported: "nope, no icon"
-severity: major
+result: pass
+note: "Fixed in-session — added Windows AppUserModelID via ctypes and explicit MainWindow.setWindowIcon() in app.py"
 
 ### 4. Update Checker — Graceful Offline Behavior
 expected: With no internet or behind a corporate firewall, `python app.py` starts normally without any error, crash, or visible delay. The update check fails silently in the background.
@@ -41,17 +40,20 @@ result: pass
 ## Summary
 
 total: 6
-passed: 5
-issues: 1
+passed: 6
+issues: 0
 pending: 0
 skipped: 0
 
 ## Gaps
 
+[none — all resolved]
+
+## Resolved
+
 - truth: "The main window title bar and Windows taskbar both show the teal optics-motif icon (LED + rays + lens arc) instead of a generic Python/Qt icon."
-  status: failed
-  reason: "User reported: nope, no icon"
+  status: resolved
+  root_cause: "On Windows, python.exe owns the taskbar grouping unless AppUserModelID is set via ctypes before the first window shows. setWindowIcon alone is insufficient."
+  fix: "app.py: added ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('BluOptical.Simulation.2.0') at top of main() on win32; added explicit window.setWindowIcon(app_icon) after MainWindow creation."
   severity: major
   test: 3
-  artifacts: []
-  missing: []

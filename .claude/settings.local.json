@@ -11,7 +11,24 @@
       "Bash(python3:*)",
       "Bash(echo $SHELL)",
       "Bash(bash --version)",
-      "Bash(echo test_heredoc:*)"
+      "Bash(echo test_heredoc:*)",
+      "Bash(grep -in \"wavelength\\\\|spectrum\\\\|spectral\" \"G:/blu-optical-simulation/backlight_sim/sim\"/*.py)",
+      "Bash(node \"$HOME/.claude/get-shit-done/bin/gsd-tools.cjs\" commit \"docs: map existing codebase\" --files .planning/codebase/*.md)",
+      "Bash(git add:*)",
+      "Bash(cd \"G:/blu-optical-simulation\" && node \"$HOME/.claude/get-shit-done/bin/gsd-tools.cjs\" commit \"docs\\(04\\): capture phase context\" --files \".planning/phases/04-advanced-materials-and-geometry/04-CONTEXT.md\")",
+      "Bash(node \"$HOME/.claude/get-shit-done/bin/gsd-tools.cjs\" init execute-phase \"02-spectral-engine\" 2>&1 | head -20)",
+      "Bash(node \"C:/Users/hasan/.claude/get-shit-done/bin/gsd-tools.cjs\" state advance-plan 2>&1)",
+      "Bash(ls /g/blu-optical-simulation/.planning/phases/02-spectral-engine/*-VERIFICATION.md 2>/dev/null && echo \"found\" || echo \"none\")",
+      "Bash(git stash:*)",
+      "Bash(node:*)",
+      "Bash(find:*)",
+      "Bash(for f:*)",
+      "Bash(do)",
+      "Bash(echo \"=== $f ===\")",
+      "Read(//g/blu-optical-simulation/**)",
+      "Bash(done)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }

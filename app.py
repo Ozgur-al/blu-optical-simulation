@@ -10,6 +10,19 @@ def main():
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QIcon
 
+    # On Windows the taskbar groups by process AppUserModelID. Without an
+    # explicit ID, python.exe owns the grouping and the taskbar shows the
+    # generic Python icon regardless of setWindowIcon. Must be set BEFORE
+    # the first window is shown.
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "BluOptical.Simulation.2.0"
+            )
+        except (AttributeError, OSError):
+            pass
+
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
@@ -23,8 +36,9 @@ def main():
     else:
         base_path = os.path.dirname(os.path.abspath(__file__))
     icon_path = os.path.join(base_path, "assets", "icon.ico")
-    if os.path.exists(icon_path):
-        app.setWindowIcon(QIcon(icon_path))
+    app_icon = QIcon(icon_path) if os.path.exists(icon_path) else None
+    if app_icon is not None:
+        app.setWindowIcon(app_icon)
 
     # 3. Apply dark theme and show splash (theme must come before any pg widget)
     from backlight_sim.gui.theme import apply_dark_theme, BG_BASE, TEXT_PRIMARY
@@ -49,6 +63,8 @@ def main():
     app.processEvents()
 
     window = MainWindow()
+    if app_icon is not None:
+        window.setWindowIcon(app_icon)
     splash.set_progress(90)
     splash.set_status("Ready")
     app.processEvents()

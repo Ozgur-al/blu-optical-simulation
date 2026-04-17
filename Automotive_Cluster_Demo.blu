@@ -1,0 +1,399 @@
+{
+  "name": "Automotive Cluster Direct-Lit",
+  "settings": {
+    "rays_per_source": 15000,
+    "max_bounces": 60,
+    "energy_threshold": 0.001,
+    "random_seed": 42,
+    "record_ray_paths": 200,
+    "distance_unit": "mm",
+    "flux_unit": "lm",
+    "angle_unit": "deg",
+    "use_multiprocessing": false,
+    "adaptive_sampling": true,
+    "convergence_cv_target": 2.0,
+    "check_interval": 1000
+  },
+  "angular_distributions": {},
+  "spd_profiles": {},
+  "spectral_material_data": {},
+  "materials": [
+    {
+      "name": "white_reflector",
+      "surface_type": "reflector",
+      "reflectance": 0.92,
+      "absorption": 0.08,
+      "transmittance": 0.0,
+      "is_diffuse": true,
+      "haze": 0.0,
+      "refractive_index": 1.0,
+      "bsdf_profile_name": "",
+      "color": [
+        0.55,
+        0.65,
+        1.0
+      ]
+    }
+  ],
+  "optical_properties": [],
+  "sources": [
+    {
+      "name": "LED_1_1",
+      "position": [
+        -37.5,
+        -10.0,
+        0.5
+      ],
+      "flux": 80.0,
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_1_2",
+      "position": [
+        -37.5,
+        10.0,
+        0.5
+      ],
+      "flux": 80.0,
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_2_1",
+      "position": [
+        -12.5,
+        -10.0,
+        0.5
+      ],
+      "flux": 80.0,
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_2_2",
+      "position": [
+        -12.5,
+        10.0,
+        0.5
+      ],
+      "flux": 80.0,
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_3_1",
+      "position": [
+        12.5,
+        -10.0,
+        0.5
+      ],
+      "flux": 80.0,
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_3_2",
+      "position": [
+        12.5,
+        10.0,
+        0.5
+      ],
+      "flux": 80.0,
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_4_1",
+      "position": [
+        37.5,
+        -10.0,
+        0.5
+      ],
+      "flux": 80.0,
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    },
+    {
+      "name": "LED_4_2",
+      "position": [
+        37.5,
+        10.0,
+        0.5
+      ],
+      "flux": 80.0,
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "distribution": "lambertian",
+      "enabled": true,
+      "flux_tolerance": 0.0,
+      "current_mA": 0.0,
+      "flux_per_mA": 0.0,
+      "thermal_derate": 1.0,
+      "color_rgb": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spd": "white"
+    }
+  ],
+  "surfaces": [
+    {
+      "name": "Floor",
+      "center": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "u_axis": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "v_axis": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "size": [
+        120.0,
+        60.0
+      ],
+      "material_name": "white_reflector"
+    },
+    {
+      "name": "Wall Right",
+      "center": [
+        60.88163490354233,
+        0.0,
+        5.0
+      ],
+      "u_axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "v_axis": [
+        0.17364817766693036,
+        0.0,
+        0.9848077530122081
+      ],
+      "size": [
+        60.0,
+        10.15426611885745
+      ],
+      "material_name": "white_reflector"
+    },
+    {
+      "name": "Wall Left",
+      "center": [
+        -60.88163490354233,
+        0.0,
+        5.0
+      ],
+      "u_axis": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "v_axis": [
+        -0.17364817766693036,
+        0.0,
+        0.9848077530122081
+      ],
+      "size": [
+        60.0,
+        10.15426611885745
+      ],
+      "material_name": "white_reflector"
+    },
+    {
+      "name": "Wall Back",
+      "center": [
+        0.0,
+        30.881634903542324,
+        5.0
+      ],
+      "u_axis": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "v_axis": [
+        0.0,
+        0.17364817766693036,
+        0.9848077530122081
+      ],
+      "size": [
+        120.0,
+        10.15426611885745
+      ],
+      "material_name": "white_reflector"
+    },
+    {
+      "name": "Wall Front",
+      "center": [
+        0.0,
+        -30.881634903542324,
+        5.0
+      ],
+      "u_axis": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "v_axis": [
+        0.0,
+        -0.17364817766693036,
+        0.9848077530122081
+      ],
+      "size": [
+        120.0,
+        10.15426611885745
+      ],
+      "material_name": "white_reflector"
+    }
+  ],
+  "detectors": [
+    {
+      "name": "Output Plane",
+      "center": [
+        0.0,
+        0.0,
+        10.0
+      ],
+      "u_axis": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "v_axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "size": [
+        123.5265396141693,
+        63.5265396141693
+      ],
+      "resolution": [
+        120,
+        60
+      ]
+    }
+  ],
+  "sphere_detectors": [],
+  "solid_bodies": [],
+  "solid_cylinders": [],
+  "solid_prisms": [],
+  "bsdf_profiles": {}
+}
