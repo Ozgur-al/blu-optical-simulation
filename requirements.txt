@@ -3,8 +3,15 @@ pyqtgraph>=0.13
 numpy>=1.24
 PyOpenGL>=3.1
 pytest>=7.0
-# Optional: provides 10-50x JIT acceleration for the Monte Carlo tracer inner loops.
-# App runs correctly without it (graceful NumPy fallback).
-# When building PyInstaller executable with Numba, also install:
-#   pyinstaller-hooks-contrib>=2025.1
-numba>=0.64.0
+
+# C++ Monte Carlo extension (blu_tracer)
+# -------------------------------------------------------------------------
+# The pre-compiled .pyd at backlight_sim/sim/blu_tracer.cp312-win_amd64.pyd
+# ships with the repo and is the mandatory acceleration layer (Phase 02).
+# App will raise RuntimeError at import if the .pyd is missing or ABI-mismatched.
+#
+# Build-time only (not required at runtime — .pyd is pre-compiled):
+#   pip install pybind11>=3.0 scikit-build-core>=0.9 cmake ninja
+#   pip install --no-build-isolation -e backlight_sim/sim/_blu_tracer/
+#
+# Rebuild is required when switching Python versions (ABI tag is cp312).

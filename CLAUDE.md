@@ -75,6 +75,56 @@ python build_exe.py          # basic build
 python build_exe.py --clean --zip  # clean build + zip for distribution
 ```
 
+## C++ Extension (blu_tracer)
+
+The Monte Carlo bounce loop is implemented as a compiled C++ extension (`blu_tracer.pyd`)
+exposed to Python via pybind11. This replaces the former Numba JIT acceleration (Phase 02).
+
+**Runtime requirement:** `backlight_sim/sim/blu_tracer.cp312-win_amd64.pyd` must be present.
+The extension is mandatory — the app will crash at import with a clear `RuntimeError`
+(including rebuild instructions) if it is missing.
+
+**Python version lock:** The pre-compiled `.pyd` targets Python 3.12 (ABI-tagged
+`cp312-win_amd64`). If you use a different Python version, you must rebuild from source
+— the bundled `.pyd` will refuse to load on non-3.12 interpreters.
+
+**Developer build (requires MSVC 2022 Build Tools, x64):**
+```bash
+pip install scikit-build-core pybind11 cmake ninja
+pip install --no-build-isolation -e backlight_sim/sim/_blu_tracer/
+```
+A helper batch script at `C:\Users\hasan\blu_build.bat` wraps the vcvars + rebuild for
+local developer use.
+
+**Source layout:**
+```
+backlight_sim/sim/_blu_tracer/
+├── pyproject.toml         # scikit-build-core configuration
+├── CMakeLists.txt         # CMake build rules (Release, /O2 /fp:fast)
+└── src/
+    ├── blu_tracer.cpp     # pybind11 entry point + trace_source() + bounce loop
+    ├── types.hpp          # RayBatch SoA struct, SceneSurface structs, EPSILON
+    ├── intersect.hpp/cpp  # plane/disc/cylinder/prism cap/sphere intersection
+    ├── sampling.hpp/cpp   # isotropic, Lambertian, angular CDF, haze scatter
+    ├── material.hpp/cpp   # Fresnel, Snell refraction, material dispatch
+    └── bvh.hpp/cpp        # BVH (currently brute-force; BVH disabled via threshold)
+```
+
+**Key constraint:** `sim/accel.py` has been deleted. The C++ extension is the only
+acceleration layer. `sim/tracer.py` imports `blu_tracer` at module load — failure
+raises `RuntimeError` with rebuild instructions (D-09 hard-crash pattern, no silent
+NumPy fallback).
+
+**Dispatch predicate:** `RayTracer.run()` routes to the C++ `trace_source` fast path
+only for non-spectral, plane-only scenes (no solid bodies / cylinders / prisms / sphere
+detectors / non-white SPDs / BSDFs / spectral materials). Spectral and solid-body scenes
+continue using the Python `_run_single` bounce loop. See `_project_uses_cpp_unsupported_features`.
+
+**PyInstaller bundling:** `BluOpticalSim.spec` includes the `.pyd` via the `binaries=`
+list with a glob (`blu_tracer*.pyd` → `backlight_sim/sim`). Only one ABI-tagged `.pyd`
+should be present in `backlight_sim/sim/` at build time — stale artifacts (e.g. a
+previous `cp311` build) must be cleaned up first to avoid the wrong `.pyd` being bundled.
+
 ## Core Data Model
 
 ### `core/geometry.py` — `Rectangle`

@@ -48,16 +48,6 @@ hidden_imports = [
     "backlight_sim.update_checker",
     "backlight_sim.config",
     "backlight_sim.__version__",
-    # Numba JIT acceleration (optional — app works without it)
-    # Note: pyinstaller-hooks-contrib >= 2025.1 handles Numba's _RedirectSubpackage
-    # modules automatically. Install it alongside PyInstaller when building with Numba.
-    "numba",
-    "numba.core",
-    "numba.typed",
-    "numba.np",
-    "numba.np.ufunc",
-    "llvmlite",
-    "llvmlite.binding",
 ]
 
 # ---------------------------------------------------------------------------
@@ -78,7 +68,11 @@ datas = [
 a = Analysis(
     [str(ROOT / "app.py")],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=[
+        # C++ Monte Carlo extension (.pyd is a DLL-type binary, not datas=)
+        # Glob matches the ABI-tagged filename: blu_tracer.cp312-win_amd64.pyd
+        (str(ROOT / "backlight_sim" / "sim" / "blu_tracer*.pyd"), "backlight_sim/sim"),
+    ],
     datas=datas,
     hiddenimports=hidden_imports,
     hookspath=[],
