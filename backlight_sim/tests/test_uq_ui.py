@@ -210,7 +210,9 @@ def test_uq_warning_banner_visible(qapp):
     panel = HeatmapPanel()
     result = _make_uq_result(n_batches=10, warnings=["adaptive sampling + UQ may bias CI"])
     panel.update_results(result)
-    assert panel._uq_warning_label.isVisible()
+    # Without showing the top-level window, isVisible() returns False; rely on
+    # isHidden() (the setVisible state flag directly manipulated by the panel).
+    assert not panel._uq_warning_label.isHidden()
     assert "adaptive" in panel._uq_warning_label.text().lower()
 
 
@@ -235,7 +237,7 @@ def test_uq_warning_banner_hidden(qapp):
     panel = HeatmapPanel()
     result = _make_uq_result(n_batches=10, warnings=[])
     panel.update_results(result)
-    assert not panel._uq_warning_label.isVisible()
+    assert panel._uq_warning_label.isHidden()
 
 
 def test_export_kpi_csv_includes_ci_columns(qapp, tmp_path, monkeypatch):

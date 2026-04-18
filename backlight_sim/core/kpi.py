@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from backlight_sim.core.detectors import SimulationResult
+from backlight_sim.core.detectors import DetectorResult, SimulationResult
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +142,122 @@ def compute_scalar_kpis(result: SimulationResult) -> dict[str, float]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Per-batch source flux (unbiased scaling for rays_per_batch remainder)
+# ---------------------------------------------------------------------------
+
+
+def _per_batch_source_flux(
+    result: SimulationResult,
+    det: DetectorResult,
+) -> np.ndarray | None:
+    """Return ``(n_batches,)`` per-batch source flux using rays_per_batch.
+
+    Formula: ``source_flux_per_batch[k] = total_emitted_flux * rays_per_batch[k] / sum(rays_per_batch)``.
+
+    This is UNBIASED even when ``rays_per_source % K != 0`` — Wave 2 distributes
+    the remainder by giving the first ``R`` batches an extra ray each, so actual
+    per-batch source flux differs by ±1 ray worth.  The naive ``total/K``
+    formula biases the per-batch efficiency values, inflating the CI
+    half-width estimate.  See threat T-04.03-05 in plan 04-03.
+
+    Returns ``None`` when ``rays_per_batch`` is ``None`` or
+    ``total_emitted_flux <= 0`` — caller falls back to legacy aggregate
+    efficiency.
+    """
+    if det.rays_per_batch is None or result.total_emitted_flux <= 0:
+        return None
+    rpb = np.asarray(det.rays_per_batch, dtype=float)
+    rays_total = float(rpb.sum())
+    if rays_total <= 0:
+        return None
+    return result.total_emitted_flux * (rpb / rays_total)
+
+
+# ---------------------------------------------------------------------------
+# Shared CI aggregator — consumed by heatmap_panel, report, batch_export
+# ---------------------------------------------------------------------------
+
+
+def compute_all_kpi_cis(
+    result: SimulationResult,
+    conf_level: float = 0.95,
+):
+    """Return ``dict[str, CIEstimate | None]`` for every scalar KPI.
+
+    Keys covered: ``avg``, ``peak``, ``min``, ``cv``, ``hot``, ``ecr``,
+    ``corner``, ``uni_1_4_min_avg``, ``uni_1_6_min_avg``, ``uni_1_10_min_avg``,
+    ``efficiency_pct``.
+
+    All values are ``None`` when UQ is off (``n_batches < 4`` or
+    ``grid_batches is None``).  Efficiency uses
+    :func:`_per_batch_source_flux` for unbiased per-batch scaling
+    (checker I5 / threat T-04.03-05).
+    """
+    # Delayed import avoids a potential circular reference between
+    # ``backlight_sim.core.uq`` and ``backlight_sim.core.kpi`` — core.uq
+    # never imports core.kpi, so this is safe.
+    from backlight_sim.core.uq import batch_mean_ci, kpi_batches
+
+    keys_default = (
+        "avg", "peak", "min", "cv", "hot", "ecr", "corner",
+        "uni_1_4_min_avg", "uni_1_6_min_avg", "uni_1_10_min_avg",
+        "efficiency_pct",
+    )
+    out: dict = {k: None for k in keys_default}
+    if not result.detectors:
+        return out
+    det = next(iter(result.detectors.values()))
+    gb = det.grid_batches
+    if gb is None or det.n_batches < 4:
+        return out
+
+    def _mean(g: np.ndarray) -> float:
+        return float(g.mean())
+
+    def _max(g: np.ndarray) -> float:
+        return float(g.max())
+
+    def _min(g: np.ndarray) -> float:
+        return float(g.min())
+
+    def _cv(g: np.ndarray) -> float:
+        m = float(g.mean())
+        return float(g.std()) / m * 100.0 if m > 0 else 0.0
+
+    def _hot(g: np.ndarray) -> float:
+        m = float(g.mean())
+        return float(g.max()) / m if m > 0 else 0.0
+
+    out["avg"] = batch_mean_ci(kpi_batches(gb, _mean), conf_level)
+    out["peak"] = batch_mean_ci(kpi_batches(gb, _max), conf_level)
+    out["min"] = batch_mean_ci(kpi_batches(gb, _min), conf_level)
+    out["cv"] = batch_mean_ci(kpi_batches(gb, _cv), conf_level)
+    out["hot"] = batch_mean_ci(kpi_batches(gb, _hot), conf_level)
+    out["ecr"] = batch_mean_ci(kpi_batches(gb, edge_center_ratio), conf_level)
+    out["corner"] = batch_mean_ci(kpi_batches(gb, corner_ratio), conf_level)
+
+    for label, frac in (("1_4", 0.25), ("1_6", 1.0 / 6.0), ("1_10", 0.1)):
+        # Pin `frac` into the lambda default so each iteration binds its own value.
+        vals = kpi_batches(gb, lambda g, f=frac: uniformity_in_center(g, f)[0])
+        out[f"uni_{label}_min_avg"] = batch_mean_ci(vals, conf_level)
+
+    per_batch_src = _per_batch_source_flux(result, det)
+    if per_batch_src is not None and det.flux_batches is not None:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            eff_batches = np.where(
+                per_batch_src > 0,
+                np.asarray(det.flux_batches, dtype=float) / per_batch_src * 100.0,
+                0.0,
+            )
+        out["efficiency_pct"] = batch_mean_ci(eff_batches, conf_level)
+
+    return out
+
+
 __all__ = [
+    "_per_batch_source_flux",
+    "compute_all_kpi_cis",
     "compute_scalar_kpis",
     "corner_ratio",
     "edge_center_ratio",

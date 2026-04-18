@@ -13,12 +13,32 @@ from PySide6.QtWidgets import (
 
 from backlight_sim.core.detectors import DetectorResult, SimulationResult
 from backlight_sim.core.kpi import (
+    _per_batch_source_flux,
+    compute_all_kpi_cis,
     uniformity_in_center as _uniformity_in_center,
     corner_ratio as _corner_ratio,
     edge_center_ratio as _edge_center_ratio,
 )
+from backlight_sim.core.uq import (
+    CIEstimate,
+    batch_mean_ci,
+    kpi_batches,
+    per_bin_stderr,
+)
 from backlight_sim.gui.widgets.collapsible_section import CollapsibleSection
 from backlight_sim.gui.theme import ACCENT, TEXT_MUTED, KPI_GREEN, KPI_ORANGE, KPI_RED
+
+
+# Confidence-level choices for the dropdown.  Default index is 1 (95% CI).
+_CONF_CHOICES: tuple[tuple[str, float], ...] = (
+    ("90% CI", 0.90),
+    ("95% CI", 0.95),
+    ("99% CI", 0.99),
+)
+
+
+# Sentinel for the per-bin relative stderr color-mode entry.
+_NOISE_OVERLAY_LABEL = "Per-bin relative stderr"
 
 # Available colormaps
 COLORMAPS = ['viridis', 'plasma', 'inferno', 'magma', 'CET-L1']
@@ -60,6 +80,15 @@ class HeatmapPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(4)
 
+        # ---- UQ warning banner (hidden until result.uq_warnings is non-empty)
+        self._uq_warning_label = QLabel("")
+        self._uq_warning_label.setWordWrap(True)
+        self._uq_warning_label.setStyleSheet(
+            f"color: {KPI_ORANGE}; font-weight: bold; padding: 4px;"
+        )
+        self._uq_warning_label.setVisible(False)
+        layout.addWidget(self._uq_warning_label)
+
         # ---- detector selector ----
         top = QHBoxLayout()
         top.addWidget(QLabel("Detector:"))
@@ -70,8 +99,13 @@ class HeatmapPanel(QWidget):
         top.addWidget(self._selector)
         self._color_mode = QComboBox()
         self._color_mode.setAccessibleName("Display mode")
-        self._color_mode.setToolTip("Switch between intensity, RGB, or spectral color display")
-        self._color_mode.addItems(["Intensity (mono)", "Color (RGB)", "Spectral Color"])
+        self._color_mode.setToolTip("Switch between intensity, RGB, spectral, or per-bin UQ stderr display")
+        self._color_mode.addItems([
+            "Intensity (mono)",
+            "Color (RGB)",
+            "Spectral Color",
+            _NOISE_OVERLAY_LABEL,
+        ])
         self._color_mode.currentIndexChanged.connect(self._on_color_mode_changed)
         top.addWidget(QLabel("Display:"))
         top.addWidget(self._color_mode)
@@ -148,6 +182,23 @@ class HeatmapPanel(QWidget):
         self._roi_lbl.setStyleSheet(f"font-family: monospace; color: {ACCENT};")
         roi_row.addWidget(self._roi_lbl, 1)
         layout.addLayout(roi_row)
+
+        # ---- confidence-level dropdown (Phase 4 UQ) ----
+        conf_row = QHBoxLayout()
+        conf_row.addWidget(QLabel("CI level:"))
+        self._conf_combo = QComboBox()
+        self._conf_combo.setAccessibleName("Confidence level")
+        self._conf_combo.setToolTip(
+            "Confidence level for the ± bounds on each KPI; recomputes without "
+            "re-running the simulation."
+        )
+        for text, _level in _CONF_CHOICES:
+            self._conf_combo.addItem(text)
+        self._conf_combo.setCurrentIndex(1)  # default 95%
+        self._conf_combo.currentIndexChanged.connect(self._on_conf_changed)
+        conf_row.addWidget(self._conf_combo)
+        conf_row.addStretch()
+        layout.addLayout(conf_row)
 
         # ---- grid statistics (collapsible) ----
         stats_section = CollapsibleSection("Grid Statistics")
@@ -336,6 +387,9 @@ class HeatmapPanel(QWidget):
         # Latest KPIs cached for the weighted score widget
         self._last_eff_pct: float = 0.0
         self._last_u14: float = 0.0
+        # Cached per-batch KPI arrays for UQ rendering (recomputed per result).
+        # Empty dict when UQ is off; keys match `compute_all_kpi_cis()` output.
+        self._cached_kpi_batches: dict[str, np.ndarray] = {}
         self._last_hot: float = 1.0
 
     # ------------------------------------------------------------------
@@ -380,8 +434,112 @@ class HeatmapPanel(QWidget):
         self._sim_result = sim_result
         self._selector.clear()
         self._selector.addItems(list(sim_result.detectors.keys()))
+
+        # Cache per-batch KPI arrays for UQ rendering (feeds confidence-level
+        # dropdown recomputation path without re-running the tracer).
+        self._cached_kpi_batches = self._compute_all_kpi_batches(sim_result)
+
+        # Show UQ warnings (may be zero, one, or two strings).
+        warnings = getattr(sim_result, "uq_warnings", []) or []
+        if warnings:
+            self._uq_warning_label.setText(
+                "\u26a0 " + "  |  ".join(warnings)
+            )
+            self._uq_warning_label.setVisible(True)
+        else:
+            self._uq_warning_label.setText("")
+            self._uq_warning_label.setVisible(False)
+
         if sim_result.detectors:
             self._show_result(sim_result.detectors[next(iter(sim_result.detectors))])
+
+    # ------------------------------------------------------------------
+    # Phase 4 UQ helpers
+    # ------------------------------------------------------------------
+
+    def _current_conf_level(self) -> float:
+        idx = self._conf_combo.currentIndex()
+        if idx < 0 or idx >= len(_CONF_CHOICES):
+            idx = 1
+        return _CONF_CHOICES[idx][1]
+
+    def _on_conf_changed(self, _idx: int):
+        """Re-render KPI labels at the newly selected confidence level."""
+        if self._current_result is not None:
+            self._show_result(self._current_result)
+
+    def _compute_all_kpi_batches(
+        self,
+        result: SimulationResult,
+    ) -> dict[str, np.ndarray]:
+        """Return per-batch KPI arrays for UQ-aware label rendering.
+
+        Empty dict when UQ is off or batches < 4 (dropdown then falls through to
+        legacy point-estimate formatting).  Efficiency uses rays_per_batch for
+        unbiased scaling (checker I5).
+        """
+        out: dict[str, np.ndarray] = {}
+        if not result.detectors:
+            return out
+        det = next(iter(result.detectors.values()))
+        gb = det.grid_batches
+        if gb is None or det.n_batches < 4:
+            return out
+
+        out["avg"] = kpi_batches(gb, lambda g: float(g.mean()))
+        out["peak"] = kpi_batches(gb, lambda g: float(g.max()))
+        out["min"] = kpi_batches(gb, lambda g: float(g.min()))
+        out["cv"] = kpi_batches(
+            gb, lambda g: (float(g.std()) / float(g.mean()) * 100.0) if g.mean() > 0 else 0.0
+        )
+        out["hot"] = kpi_batches(
+            gb, lambda g: (float(g.max()) / float(g.mean())) if g.mean() > 0 else 0.0
+        )
+        out["ecr"] = kpi_batches(gb, _edge_center_ratio)
+        out["corner"] = kpi_batches(gb, _corner_ratio)
+        # RMSE/avg and MAD/avg against uniform reference (std/avg and mean|g-avg|/avg).
+        def _rmse_norm(g: np.ndarray) -> float:
+            m = float(g.mean())
+            return float(g.std()) / m if m > 0 else 0.0
+
+        def _mad_norm(g: np.ndarray) -> float:
+            m = float(g.mean())
+            return float(np.mean(np.abs(g - m))) / m if m > 0 else 0.0
+
+        out["rmse"] = kpi_batches(gb, _rmse_norm)
+        out["mad"] = kpi_batches(gb, _mad_norm)
+
+        for label, frac in _FRACTIONS:
+            key_avg = f"uni_{label}_min_avg"
+            key_max = f"uni_{label}_min_max"
+            out[key_avg] = kpi_batches(
+                gb, lambda g, f=frac: _uniformity_in_center(g, f)[0]
+            )
+            out[key_max] = kpi_batches(
+                gb, lambda g, f=frac: _uniformity_in_center(g, f)[1]
+            )
+
+        # Efficiency (per-batch) — use rays_per_batch for unbiased scaling.
+        per_batch_src = _per_batch_source_flux(result, det)
+        if per_batch_src is not None and det.flux_batches is not None:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                eff = np.where(
+                    per_batch_src > 0,
+                    np.asarray(det.flux_batches, dtype=float) / per_batch_src * 100.0,
+                    0.0,
+                )
+            out["eff"] = eff
+        return out
+
+    def _ci_or_none(self, key: str) -> CIEstimate | None:
+        """Return CIEstimate for the cached KPI batches under *key*, or None."""
+        vals = self._cached_kpi_batches.get(key)
+        if vals is None or len(vals) < 4:
+            return None
+        try:
+            return batch_mean_ci(vals, conf_level=self._current_conf_level())
+        except ValueError:
+            return None
 
     def _on_detector_changed(self, name: str):
         if self._sim_result and name in self._sim_result.detectors:
@@ -399,14 +557,38 @@ class HeatmapPanel(QWidget):
 
         # Choose display mode
         mode_idx = self._color_mode.currentIndex()
+        mode_text = self._color_mode.currentText()
         use_rgb = (mode_idx == 1 and result.grid_rgb is not None)
         use_spectral = (mode_idx == 2 and result.grid_spectral is not None)
+        use_noise_overlay = (mode_text == _NOISE_OVERLAY_LABEL)
 
         # Clear spectral status by default
         self._spectral_status.hide()
 
         _displayed = False
-        if use_spectral:
+        if use_noise_overlay:
+            # Render per-bin relative stderr from grid_batches (Phase 4 UQ).
+            gb = result.grid_batches
+            if gb is not None and result.n_batches >= 2:
+                sig = per_bin_stderr(gb)  # (ny, nx)
+                # Per-batch mean bin value = grid / n_batches
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    mean_bin = grid / max(1, result.n_batches)
+                    rel_stderr = np.where(mean_bin > 0, sig / mean_bin, 0.0)
+                self._apply_colormap(self._colormap_combo.currentText())
+                self._img.setImage(rel_stderr.T)
+                vmin, vmax = float(rel_stderr.min()), float(rel_stderr.max())
+                if vmax > vmin:
+                    self._cbar.setLevels(values=(vmin, vmax))
+                _displayed = True
+            else:
+                self._spectral_status.setText(
+                    "Per-bin relative stderr: UQ data not available "
+                    "(set uq_batches > 0 and re-run)."
+                )
+                self._spectral_status.show()
+
+        if not _displayed and not use_noise_overlay and use_spectral:
             try:
                 from backlight_sim.sim.spectral import spectral_grid_to_rgb, spectral_bin_centers
                 wl = spectral_bin_centers(result.grid_spectral.shape[2])
@@ -428,7 +610,7 @@ class HeatmapPanel(QWidget):
             )
             self._spectral_status.show()
 
-        if not _displayed:
+        if not _displayed and not use_noise_overlay:
             if use_rgb:
                 rgb = result.grid_rgb.copy()
                 mx = rgb.max()
@@ -461,36 +643,62 @@ class HeatmapPanel(QWidget):
         mad_norm   = float(np.mean(np.abs(grid - avg))) / avg if avg > 0 else 0.0
         corner_r   = _corner_ratio(grid)
 
-        self._lbl_avg.setText(f"{avg:.4g}")
-        self._lbl_peak.setText(f"{peak:.4g}")
-        self._lbl_min.setText(f"{mn:.4g}")
+        # --- Phase 4 UQ: render `mean ± half_width unit` when per-batch data is
+        # available; fall back to plain point-estimate labels otherwise.
+        def _set_ci(label, key: str, legacy: str, precision: int = 3, unit: str = ""):
+            ci = self._ci_or_none(key)
+            if ci is not None:
+                label.setText(ci.format(precision=precision, unit=unit))
+            else:
+                label.setText(legacy)
+
+        _set_ci(self._lbl_avg,    "avg",    f"{avg:.4g}")
+        _set_ci(self._lbl_peak,   "peak",   f"{peak:.4g}")
+        _set_ci(self._lbl_min,    "min",    f"{mn:.4g}")
         self._lbl_hits.setText(str(result.total_hits))
         self._lbl_std.setText(f"{std:.4g}")
-        # CV: green <= 0.10, yellow <= 0.20 (lower is better)
-        self._lbl_cv.setText(f"{cv:.3f}")
+
+        # CV label keeps colour threshold; use CI text if available.
+        ci_cv = self._ci_or_none("cv")
+        if ci_cv is not None:
+            self._lbl_cv.setText(ci_cv.format(precision=3, unit="%"))
+        else:
+            self._lbl_cv.setText(f"{cv:.3f}")
         self._lbl_cv.setStyleSheet(
             "font-family: monospace; " + _threshold_color(cv, 0.10, 0.20, higher_is_better=False))
-        # Hotspot: green <= 1.3, yellow <= 1.6 (lower is better)
-        self._lbl_hot.setText(f"{hot:.3f}")
+
+        ci_hot = self._ci_or_none("hot")
+        if ci_hot is not None:
+            self._lbl_hot.setText(ci_hot.format(precision=3))
+        else:
+            self._lbl_hot.setText(f"{hot:.3f}")
         self._lbl_hot.setStyleSheet(
             "font-family: monospace; " + _threshold_color(hot, 1.3, 1.6, higher_is_better=False))
-        # Edge/center ratio: green >= 0.80, yellow >= 0.60 (higher is better, closer to 1.0)
-        self._lbl_ecr.setText(f"{ecr:.3f}")
+
+        ci_ecr = self._ci_or_none("ecr")
+        if ci_ecr is not None:
+            self._lbl_ecr.setText(ci_ecr.format(precision=3))
+        else:
+            self._lbl_ecr.setText(f"{ecr:.3f}")
         self._lbl_ecr.setStyleSheet(
             "font-family: monospace; " + _threshold_color(ecr, 0.80, 0.60, higher_is_better=True))
-        self._lbl_rmse.setText(f"{rmse_norm:.4f}")
-        self._lbl_mad.setText(f"{mad_norm:.4f}")
-        self._lbl_corner.setText(f"{corner_r:.3f}")
+
+        _set_ci(self._lbl_rmse,   "rmse",   f"{rmse_norm:.4f}", precision=4)
+        _set_ci(self._lbl_mad,    "mad",    f"{mad_norm:.4f}", precision=4)
+        _set_ci(self._lbl_corner, "corner", f"{corner_r:.3f}")
 
         u14, _ = _uniformity_in_center(grid, 0.25)
         for label, frac in _FRACTIONS:
             u_avg, u_max = _uniformity_in_center(grid, frac)
             la, lm = self._uni_labels[label]
-            la.setText(f"{u_avg:.3f}")
-            # Uniformity min/avg: green >= 0.80, yellow >= 0.60 (higher is better)
+            key_avg = f"uni_{label}_min_avg"
+            key_max = f"uni_{label}_min_max"
+            ci_u_avg = self._ci_or_none(key_avg)
+            ci_u_max = self._ci_or_none(key_max)
+            la.setText(ci_u_avg.format(precision=3) if ci_u_avg is not None else f"{u_avg:.3f}")
             la.setStyleSheet(
                 "font-family: monospace; " + _threshold_color(u_avg, 0.80, 0.60, higher_is_better=True))
-            lm.setText(f"{u_max:.3f}")
+            lm.setText(ci_u_max.format(precision=3) if ci_u_max is not None else f"{u_max:.3f}")
             lm.setStyleSheet(
                 "font-family: monospace; " + _threshold_color(u_max, 0.80, 0.60, higher_is_better=True))
 
@@ -507,7 +715,11 @@ class HeatmapPanel(QWidget):
             eff_pct  = result.total_flux / emitted * 100.0
             abs_pct  = absorbed / emitted * 100.0
             esc_pct  = escaped  / emitted * 100.0
-            self._lbl_eff.setText(f"{eff_pct:.1f} %")
+            ci_eff = self._ci_or_none("eff")
+            if ci_eff is not None:
+                self._lbl_eff.setText(ci_eff.format(precision=1, unit=" %"))
+            else:
+                self._lbl_eff.setText(f"{eff_pct:.1f} %")
             # Efficiency: green >= 70%, yellow >= 40% (higher is better)
             self._lbl_eff.setStyleSheet(
                 "font-family: monospace; " + _threshold_color(eff_pct, 70.0, 40.0, higher_is_better=True))
@@ -788,26 +1000,67 @@ class HeatmapPanel(QWidget):
         mad_norm   = float(np.mean(np.abs(grid - avg))) / avg if avg > 0 else 0.0
         corner_r   = _corner_ratio(grid)
 
-        rows = [
-            ("Metric", "Value"),
-            ("Detector", r.detector_name),
-            ("Average flux", f"{avg:.6g}"),
-            ("Peak flux", f"{peak:.6g}"),
-            ("Min flux", f"{mn:.6g}"),
-            ("Std Dev", f"{std:.6g}"),
-            ("CV (std/avg)", f"{cv:.4f}"),
-            ("Hotspot ratio (peak/avg)", f"{hot:.4f}"),
-            ("Edge/Center ratio", f"{ecr:.4f}"),
-            ("Corner/avg ratio (10 %)", f"{corner_r:.4f}"),
-            ("RMSE/avg (vs uniform)", f"{rmse_norm:.4f}"),
-            ("MAD/avg (vs uniform)", f"{mad_norm:.4f}"),
+        # --- Phase 4 UQ: add per-KPI CI columns when UQ is on ------------
+        # Column schema:
+        #   metric | value | unit | mean | half_width | std | lower | upper |
+        #   n_batches | conf_level
+        # Legacy entries (no UQ or metric that isn't computed per-batch) write
+        # empty strings in the CI columns — external consumers can filter rows
+        # on `n_batches == ""` or `n_batches == 0`.
+        header = [
+            "metric", "value", "unit",
+            "mean", "half_width", "std", "lower", "upper",
+            "n_batches", "conf_level",
         ]
+        conf = self._current_conf_level()
+        kb = self._cached_kpi_batches
+
+        def _ci_cells(key: str) -> list[str]:
+            vals = kb.get(key)
+            if vals is None or len(vals) < 4:
+                return ["", "", "", "", "", "", ""]
+            try:
+                ci = batch_mean_ci(vals, conf_level=conf)
+            except ValueError:
+                return ["", "", "", "", "", "", ""]
+            return [
+                f"{ci.mean:.6g}",
+                f"{ci.half_width:.6g}",
+                f"{ci.std:.6g}",
+                f"{ci.lower:.6g}",
+                f"{ci.upper:.6g}",
+                str(ci.n_batches),
+                f"{ci.conf_level:.2f}",
+            ]
+
+        def _row(metric: str, value: str, unit: str = "", key: str | None = None) -> list[str]:
+            ci_cells = _ci_cells(key) if key is not None else ["", "", "", "", "", "", ""]
+            return [metric, value, unit] + ci_cells
+
+        rows: list[list[str]] = [header]
+        rows.append(_row("detector", r.detector_name))
+        rows.append(_row("avg_flux", f"{avg:.6g}", "", key="avg"))
+        rows.append(_row("peak_flux", f"{peak:.6g}", "", key="peak"))
+        rows.append(_row("min_flux", f"{mn:.6g}", "", key="min"))
+        rows.append(_row("std_dev", f"{std:.6g}"))
+        rows.append(_row("cv", f"{cv:.4f}", "%", key="cv"))
+        rows.append(_row("hotspot", f"{hot:.4f}", "", key="hot"))
+        rows.append(_row("edge_center_ratio", f"{ecr:.4f}", "", key="ecr"))
+        rows.append(_row("corner_ratio", f"{corner_r:.4f}", "", key="corner"))
+        rows.append(_row("rmse_over_avg", f"{rmse_norm:.4f}", "", key="rmse"))
+        rows.append(_row("mad_over_avg", f"{mad_norm:.4f}", "", key="mad"))
         for label, frac in _FRACTIONS:
             u_avg, u_max = _uniformity_in_center(grid, frac)
-            rows.append((f"Uniformity {label} area min/avg", f"{u_avg:.4f}"))
-            rows.append((f"Uniformity {label} area min/max", f"{u_max:.4f}"))
-        rows.append(("Total hits", str(r.total_hits)))
-        rows.append(("Total flux detected", f"{r.total_flux:.6g}"))
+            rows.append(_row(
+                f"uniformity_{label}_min_avg", f"{u_avg:.4f}", "",
+                key=f"uni_{label}_min_avg",
+            ))
+            rows.append(_row(
+                f"uniformity_{label}_min_max", f"{u_max:.4f}", "",
+                key=f"uni_{label}_min_max",
+            ))
+        rows.append(_row("total_hits", str(r.total_hits)))
+        rows.append(_row("total_flux_detected", f"{r.total_flux:.6g}"))
 
         if self._sim_result and self._sim_result.total_emitted_flux > 0:
             emitted  = self._sim_result.total_emitted_flux
@@ -815,11 +1068,16 @@ class HeatmapPanel(QWidget):
             all_det  = sum(dr.total_flux for dr in self._sim_result.detectors.values())
             absorbed = max(0.0, emitted - all_det - escaped)
             rows += [
-                ("Total emitted flux", f"{emitted:.6g}"),
-                ("Extraction efficiency (%)", f"{r.total_flux / emitted * 100:.2f}"),
-                ("Absorbed (%)", f"{absorbed / emitted * 100:.2f}"),
-                ("Escaped (%)", f"{escaped / emitted * 100:.2f}"),
-                ("LED count", str(self._sim_result.source_count)),
+                _row("total_emitted_flux", f"{emitted:.6g}"),
+                _row(
+                    "efficiency_pct",
+                    f"{r.total_flux / emitted * 100:.2f}",
+                    "%",
+                    key="eff",
+                ),
+                _row("absorbed_pct", f"{absorbed / emitted * 100:.2f}", "%"),
+                _row("escaped_pct", f"{escaped / emitted * 100:.2f}", "%"),
+                _row("led_count", str(self._sim_result.source_count)),
             ]
 
         # Color uniformity KPIs (only when spectral data available)
@@ -830,24 +1088,24 @@ class HeatmapPanel(QWidget):
                 wl = spectral_bin_centers(n_bins)
                 ckpis = compute_color_kpis(r.grid_spectral, wl)
                 rows += [
-                    ("delta_ccx",    f"{ckpis.get('delta_ccx', 0):.4f}"),
-                    ("delta_ccy",    f"{ckpis.get('delta_ccy', 0):.4f}"),
-                    ("delta_uprime", f"{ckpis.get('delta_uprime', 0):.4f}"),
-                    ("delta_vprime", f"{ckpis.get('delta_vprime', 0):.4f}"),
-                    ("cct_avg_K",    f"{ckpis.get('cct_avg', float('nan')):.0f}"),
-                    ("cct_range_K",  f"{ckpis.get('cct_range', 0):.0f}"),
+                    _row("delta_ccx",    f"{ckpis.get('delta_ccx', 0):.4f}"),
+                    _row("delta_ccy",    f"{ckpis.get('delta_ccy', 0):.4f}"),
+                    _row("delta_uprime", f"{ckpis.get('delta_uprime', 0):.4f}"),
+                    _row("delta_vprime", f"{ckpis.get('delta_vprime', 0):.4f}"),
+                    _row("cct_avg_K",    f"{ckpis.get('cct_avg', float('nan')):.0f}"),
+                    _row("cct_range_K",  f"{ckpis.get('cct_range', 0):.0f}"),
                 ]
-                for label_key, row_label in [
+                for label_key, _row_label in [
                     ("center_1_4", "center_1_4"),
                     ("center_1_6", "center_1_6"),
                     ("center_1_10", "center_1_10"),
                 ]:
                     cdata = ckpis.get(label_key, {})
                     rows += [
-                        (f"{label_key}_delta_ccx",    f"{cdata.get('delta_ccx', 0):.4f}"),
-                        (f"{label_key}_delta_ccy",    f"{cdata.get('delta_ccy', 0):.4f}"),
-                        (f"{label_key}_delta_uprime", f"{cdata.get('delta_uprime', 0):.4f}"),
-                        (f"{label_key}_delta_vprime", f"{cdata.get('delta_vprime', 0):.4f}"),
+                        _row(f"{label_key}_delta_ccx",    f"{cdata.get('delta_ccx', 0):.4f}"),
+                        _row(f"{label_key}_delta_ccy",    f"{cdata.get('delta_ccy', 0):.4f}"),
+                        _row(f"{label_key}_delta_uprime", f"{cdata.get('delta_uprime', 0):.4f}"),
+                        _row(f"{label_key}_delta_vprime", f"{cdata.get('delta_vprime', 0):.4f}"),
                     ]
             except Exception as exc:
                 import warnings
