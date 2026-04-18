@@ -1,11 +1,15 @@
 #include "bvh.hpp"
 #include "intersect.hpp"
 
+// BVH is disabled in Wave 2: brute-force intersection is used for correctness
+// validation. Threshold is set to 9999 in the bounce loop so these stubs are
+// never invoked. Full BVH port (accel.py::build_bvh_flat/traverse_bvh_batch)
+// is deferred to a future cleanup phase per CONTEXT.md.
+
 std::vector<BVHNode> build_bvh(
     const std::vector<std::array<double,6>>& surface_aabbs)
 {
     (void)surface_aabbs;
-    // TODO: port from accel.py::build_bvh_flat in Plan 02
     return {};
 }
 
@@ -18,6 +22,5 @@ std::pair<double, int> traverse_bvh(
     (void)ox; (void)oy; (void)oz;
     (void)dx; (void)dy; (void)dz;
     (void)bvh; (void)planes;
-    // TODO: implement in Plan 02
     return {INF, -1};
 }
