@@ -87,6 +87,19 @@ class DetectorResult:
     grid_rgb: np.ndarray | None = None  # (ny, nx, 3) RGB flux grid, or None if mono
     grid_spectral: np.ndarray | None = None  # (ny, nx, n_bins) spectral flux, or None
 
+    # Phase 4 UQ: per-batch snapshots populated by the tracer when
+    # SimulationSettings.uq_batches > 0.  All None / 0 on the legacy path;
+    # consumers must treat a None value as "no UQ data" and fall back to the
+    # point-estimate grid.
+    grid_batches: np.ndarray | None = None           # (K, ny, nx)
+    hits_batches: np.ndarray | None = None           # (K,) int
+    flux_batches: np.ndarray | None = None           # (K,) float
+    grid_spectral_batches: np.ndarray | None = None  # (K, ny, nx, n_bins)
+    # Actual rays emitted per batch (accounts for remainder distribution when
+    # rays_per_source % K != 0); None when UQ is disabled.
+    rays_per_batch: list[int] | None = None          # (K,)
+    n_batches: int = 0                               # K; 0 means "no UQ data"
+
 
 @dataclass
 class SphereDetectorResult:
@@ -115,3 +128,10 @@ class SimulationResult:
     # Per-face flux stats for SolidBox objects.
     # Structure: { box_name: { face_id: { "entering_flux": float, "exiting_flux": float } } }
     solid_body_stats: dict = field(default_factory=dict)
+
+    # Phase 4 UQ: tracer-populated warnings (e.g. per CONTEXT D-01 when adaptive
+    # sampling and UQ are both active, the CI may be biased — the tracer appends
+    # a warning here and the UI renders it as a muted annotation).  Empty list
+    # when no warnings; never None.  Uses field(default_factory=list) to avoid
+    # the shared-mutable-default pitfall.
+    uq_warnings: list[str] = field(default_factory=list)

@@ -24,6 +24,14 @@ class SimulationSettings:
     adaptive_sampling: bool = True
     convergence_cv_target: float = 2.0   # CV% threshold — stop when CV drops below this
     check_interval: int = 1000           # Check convergence every N rays per source
+    # Uncertainty quantification (Phase 4).
+    # K per-source batches for batch-means CI; 0 disables UQ (legacy fast path /
+    # back-compat).  Tracer (Wave 2) clamps to [4, 20] at runtime; DoS mitigation
+    # for T-04.01-02 in the threat register.
+    uq_batches: int = 10
+    # Cache per-batch spectral grids so spectral KPIs can report CIs.  Users on
+    # memory-tight scenes can disable to skip the K×(ny,nx,n_bins) allocation.
+    uq_include_spectral: bool = True
 
 
 @dataclass

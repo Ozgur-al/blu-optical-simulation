@@ -12,6 +12,11 @@ from PySide6.QtWidgets import (
 )
 
 from backlight_sim.core.detectors import DetectorResult, SimulationResult
+from backlight_sim.core.kpi import (
+    uniformity_in_center as _uniformity_in_center,
+    corner_ratio as _corner_ratio,
+    edge_center_ratio as _edge_center_ratio,
+)
 from backlight_sim.gui.widgets.collapsible_section import CollapsibleSection
 from backlight_sim.gui.theme import ACCENT, TEXT_MUTED, KPI_GREEN, KPI_ORANGE, KPI_RED
 
@@ -28,71 +33,6 @@ _COLOR_FRACTIONS = [
     ("Center 1/6", 1 / 6),
     ("Center 1/10", 0.10),
 ]
-
-
-def _uniformity_in_center(grid: np.ndarray, fraction: float) -> tuple[float, float]:
-    """Return (min/avg, min/max) uniformity in the central *fraction* area."""
-    ny, nx = grid.shape
-    f_side = float(np.sqrt(fraction))
-    cy, cx = ny // 2, nx // 2
-    half_y = max(1, int(ny * f_side / 2))
-    half_x = max(1, int(nx * f_side / 2))
-    roi = grid[cy - half_y: cy + half_y, cx - half_x: cx + half_x]
-    if roi.size == 0 or roi.max() == 0:
-        return 0.0, 0.0
-    avg = float(roi.mean())
-    mn  = float(roi.min())
-    mx  = float(roi.max())
-    return (mn / avg if avg > 0 else 0.0, mn / mx if mx > 0 else 0.0)
-
-
-def _corner_ratio(grid: np.ndarray, corner_frac: float = 0.1) -> float:
-    """Average of the four corner patches divided by the full-grid average.
-
-    Each corner patch is *corner_frac* × the grid dimensions (clamped to ≥1 px).
-    Returns 0.0 when the grid average is zero.
-    """
-    ny, nx = grid.shape
-    ch = max(1, int(ny * corner_frac))
-    cw = max(1, int(nx * corner_frac))
-    corners = np.concatenate([
-        grid[:ch,   :cw  ].ravel(),
-        grid[:ch,  -cw:  ].ravel(),
-        grid[-ch:,  :cw  ].ravel(),
-        grid[-ch:, -cw:  ].ravel(),
-    ])
-    full_avg   = float(grid.mean())
-    corner_avg = float(corners.mean())
-    return corner_avg / full_avg if full_avg > 0 else 0.0
-
-
-def _edge_center_ratio(grid: np.ndarray) -> float:
-    """Ratio of outer-edge average to center-region average.
-
-    Center = inner 50 % × 50 % region (25 % of total area).
-    Edge   = outermost 15 % strip on all four sides.
-    Returns edge_avg / center_avg; close to 1.0 is most uniform.
-    """
-    ny, nx = grid.shape
-    cy, cx = ny // 2, nx // 2
-    half_y = max(1, int(ny * 0.25))
-    half_x = max(1, int(nx * 0.25))
-    center = grid[cy - half_y: cy + half_y, cx - half_x: cx + half_x]
-
-    ey = max(1, int(ny * 0.15))
-    ex = max(1, int(nx * 0.15))
-    edge_mask = np.zeros(grid.shape, dtype=bool)
-    edge_mask[:ey, :] = True
-    edge_mask[-ey:, :] = True
-    edge_mask[:, :ex] = True
-    edge_mask[:, -ex:] = True
-    edge = grid[edge_mask]
-
-    center_avg = float(center.mean()) if center.size > 0 else 0.0
-    edge_avg   = float(edge.mean())   if edge.size   > 0 else 0.0
-    if center_avg == 0:
-        return 0.0
-    return edge_avg / center_avg
 
 
 def _threshold_color(value: float, green_thresh: float, yellow_thresh: float,

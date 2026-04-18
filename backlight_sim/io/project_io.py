@@ -201,6 +201,8 @@ def project_to_dict(project: Project) -> dict:
             "adaptive_sampling": s.adaptive_sampling,
             "convergence_cv_target": s.convergence_cv_target,
             "check_interval": s.check_interval,
+            "uq_batches": s.uq_batches,
+            "uq_include_spectral": s.uq_include_spectral,
         },
         "angular_distributions": project.angular_distributions,
         "spd_profiles": project.spd_profiles,
@@ -330,6 +332,8 @@ def load_project(path: str | Path) -> Project:
         adaptive_sampling=s.get("adaptive_sampling", True),
         convergence_cv_target=s.get("convergence_cv_target", 2.0),
         check_interval=s.get("check_interval", 1000),
+        uq_batches=s.get("uq_batches", 10),
+        uq_include_spectral=s.get("uq_include_spectral", True),
     )
     materials = {d["name"]: _dict_to_mat(d) for d in data.get("materials", [])}
     opt_props = {d["name"]: _dict_to_op(d) for d in data.get("optical_properties", [])}

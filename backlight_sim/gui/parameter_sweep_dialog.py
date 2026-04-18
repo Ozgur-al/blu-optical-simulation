@@ -18,8 +18,11 @@ from PySide6.QtGui import QColor, QBrush
 
 from backlight_sim.core.project_model import Project
 from backlight_sim.core.detectors import SimulationResult
+from backlight_sim.core.kpi import (
+    compute_scalar_kpis,
+    uniformity_in_center as _uniformity_in_center,
+)
 from backlight_sim.sim.tracer import RayTracer
-from backlight_sim.gui.heatmap_panel import _uniformity_in_center
 
 # Sweep-able parameters: display_name → (internal_key, default_start, default_end)
 _PARAMS: dict[str, tuple[str, float, float]] = {
@@ -51,22 +54,6 @@ def _apply_param(project: Project, key: str, value: float) -> None:
         project.settings.max_bounces = max(1, int(round(value)))
     elif key == "rays_per_source":
         project.settings.rays_per_source = max(100, int(round(value)))
-
-
-def _kpis(result: SimulationResult) -> tuple[float, float, float]:
-    """Return (efficiency_%, uniformity_1/4_min_avg, hotspot_peak/avg)."""
-    if not result.detectors:
-        return 0.0, 0.0, 0.0
-    grid = next(iter(result.detectors.values())).grid
-    avg = float(grid.mean())
-    if result.total_emitted_flux > 0:
-        det_total = sum(dr.total_flux for dr in result.detectors.values())
-        eff = det_total / result.total_emitted_flux * 100.0
-    else:
-        eff = 0.0
-    u14, _ = _uniformity_in_center(grid, 0.25)
-    hot = float(grid.max()) / avg if avg > 0 else 0.0
-    return eff, u14, hot
 
 
 class _SweepThread(QThread):
@@ -380,7 +367,8 @@ class ParameterSweepDialog(QDialog):
 
     def _on_step_done(self, idx: int, value: float, result: SimulationResult):
         self._progress.setValue(idx + 1)
-        eff, u14, hot = _kpis(result)
+        k = compute_scalar_kpis(result)
+        eff, u14, hot = k["efficiency_pct"], k["uniformity_1_4_min_avg"], k["hotspot_peak_avg"]
         self._sweep_values.append(value)
         self._sweep_kpis.append((eff, u14, hot))
         row = self._table.rowCount()
@@ -418,7 +406,8 @@ class ParameterSweepDialog(QDialog):
 
     def _on_multi_step_done(self, idx: int, v1: float, v2: float, result: SimulationResult):
         self._progress.setValue(idx + 1)
-        eff, u14, hot = _kpis(result)
+        k = compute_scalar_kpis(result)
+        eff, u14, hot = k["efficiency_pct"], k["uniformity_1_4_min_avg"], k["hotspot_peak_avg"]
         self._sweep_values.append(v1)
         self._sweep_values2.append(v2)
         self._sweep_kpis.append((eff, u14, hot))
