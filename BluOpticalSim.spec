@@ -6,6 +6,7 @@
 #           or: pyinstaller BluOpticalSim.spec
 
 import sys
+import importlib.util
 from pathlib import Path
 
 block_cipher = None
@@ -14,6 +15,20 @@ block_cipher = None
 # Source tree root
 # ---------------------------------------------------------------------------
 ROOT = Path(SPECPATH)
+
+# ---------------------------------------------------------------------------
+# Locate the compiled C++ extension (.pyd) — editable scikit-build-core installs
+# place it under site-packages, not the project tree. Resolve dynamically so the
+# spec works for both editable and regular installs.
+# ---------------------------------------------------------------------------
+_blu_tracer_spec = importlib.util.find_spec("backlight_sim.sim.blu_tracer")
+if _blu_tracer_spec is None or _blu_tracer_spec.origin is None:
+    raise RuntimeError(
+        "blu_tracer extension not importable — run\n"
+        "    pip install --no-build-isolation -e backlight_sim/sim/_blu_tracer/\n"
+        "(inside an MSVC-activated shell) before building the PyInstaller bundle."
+    )
+BLU_TRACER_PYD = Path(_blu_tracer_spec.origin)
 
 # ---------------------------------------------------------------------------
 # Hidden imports that PyInstaller cannot auto-detect
@@ -70,8 +85,10 @@ a = Analysis(
     pathex=[str(ROOT)],
     binaries=[
         # C++ Monte Carlo extension (.pyd is a DLL-type binary, not datas=)
-        # Glob matches the ABI-tagged filename: blu_tracer.cp312-win_amd64.pyd
-        (str(ROOT / "backlight_sim" / "sim" / "blu_tracer*.pyd"), "backlight_sim/sim"),
+        # Path resolved dynamically — editable scikit-build-core installs land
+        # the .pyd in site-packages, not the source tree. ABI-tagged filename
+        # (e.g. blu_tracer.cp312-win_amd64.pyd) is preserved in the bundle.
+        (str(BLU_TRACER_PYD), "backlight_sim/sim"),
     ],
     datas=datas,
     hiddenimports=hidden_imports,
