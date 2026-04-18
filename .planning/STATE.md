@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: 2
+current_plan: 3
 status: executing
-stopped_at: Completed 03-01-PLAN.md
-last_updated: "2026-04-18T15:54:45Z"
-last_activity: 2026-04-18 -- Phase 03 Plan 01 (Wave 0 scaffolding + budget probe) complete
+stopped_at: Completed 03-02-PLAN.md
+last_updated: "2026-04-18T16:24:00Z"
+last_activity: 2026-04-18 -- Phase 03 Plan 02 (Wave 1 cheap physics cases) complete
 progress:
   total_phases: 8
   completed_phases: 2
   total_plans: 13
-  completed_plans: 8
-  percent: 62
+  completed_plans: 9
+  percent: 69
 ---
 
 # Project State
@@ -28,17 +28,17 @@ See: .planning/PROJECT.md (updated 2026-03-15)
 
 Milestone: v2.0-distribution — In Progress
 Phase: 03 (golden-reference-validation-suite) — EXECUTING
-Plan: 1 of 4
+Plan: 2 of 4
 Status: Executing Phase 03
-Last activity: 2026-04-18 -- Phase 03 execution started
+Last activity: 2026-04-18 -- Phase 03 Plan 02 (Wave 1 physics) complete
 
-Progress: [██████████] 100% (8/8 plans)
+Progress: [█████████·] 90% (9/10 plans after Phase 03 expansion)
 
 ## Current Position Detail
 
-Phase: 02-converting-main-simulation-loop-to-cpp-for-faster-computation
-Current Plan: 1
-Stopped at: Completed 02-04-PLAN.md
+Phase: 03-golden-reference-validation-suite
+Current Plan: 3
+Stopped at: Completed 03-02-PLAN.md
 
 ## Accumulated Context
 
@@ -76,6 +76,11 @@ Stopped at: Completed 02-04-PLAN.md
 - Phase 03 Plan 01 (Wave 0): `spd="mono_<nm>"` verified to trigger `has_spectral` gate at tracer.py:631 and route to Python via `_project_uses_cpp_unsupported_features` — canonical way to emit monochromatic rays. Closes RESEARCH.md assumption A3.
 - Phase 03 Plan 01 (Wave 0): budget probe measured ~15 ms/1k rays C++ path and ~17 ms/1k rays Python spectral path on 100k/50k ray probes (includes one-shot overhead); downstream plans can use these as upper bounds for 300s phase gate sizing.
 - Phase 03 Plan 01 (Wave 0): RESEARCH.md Case 3 Fresnel table value T(60°, air→glass) = 0.9069 is incorrect; analytical and tracer implementation both return T ≈ 0.9108. Plans 02/03 should derive expected values from `fresnel_transmittance_unpolarized()` call, not the RESEARCH table.
+- Phase 03 Plan 02 (Wave 1): integrating cavity built from 6 Rectangle walls + dummy `spectral_material_data` Python-path forcer instead of a SolidBox — SolidBox faces apply Fresnel by default and would require a per-face `face_optics` override to behave as a Lambertian reflector.
+- Phase 03 Plan 02 (Wave 1): specular mirror source uses a narrow 5° pencil angular distribution, not Lambertian. Lambertian on a finite tilted mirror asymmetrically truncates the emission cone (+y rays hit the mirror only up to |α|<60°; -y has no such limit), biasing the centroid of reflected rays outside the 1° tolerance.
+- Phase 03 Plan 02 (Wave 1): default `energy_threshold` in the golden `_base_project` is 1e-9 (vs 1e-3 default). Otherwise rays die after ~6 bounces at 500k ray counts and the steady-state cavity flux drifts systematically with ray count, breaking Monte Carlo convergence.
+- Phase 03 Plan 02 (Wave 1): sphere-detector peak-finding uses raw `sd.grid`, not `sd.candela_grid`. Candela divides by sin(θ) floored at 1e-6, amplifying pole-bin noise by up to 10^6x and placing argmax at the poles independent of the physics.
+- Phase 03 Plan 02 (Wave 1): added `integrating_sphere_port_irradiance` to references.py — combines direct point-source inverse-square flux + integrating-sphere throughput multiplier M=ρ/[1-ρ(1-f)]. Residual at 500k rays: 0.38% (well under 2% tolerance).
 
 ### Roadmap Evolution
 
@@ -108,5 +113,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-04-18
-Stopped at: Completed 03-01-PLAN.md (Wave 0 scaffolding + budget probe: `backlight_sim/golden/` CLI package with GoldenCase/GoldenResult/ALL_CASES registry; `backlight_sim/tests/golden/` test package with GOLDEN_SEED=42, assert_within_tolerance fixture, 5 scene-builder fixture stubs, analytical references (Fresnel/Snell/Lambert/cavity) — no tracer imports; budget probe emits throughput numbers ~15 ms/1k rays C++ and ~17 ms/1k rays Python spectral; `spd="mono_*"` convention verified to trigger spectral dispatch at tracer.py:631; 128 tests green (124 existing + 4 budget-probe); headless verified — no PySide6/pyqtgraph in sys.modules). Ready for Plan 02 (Wave 1 physics: integrating sphere + Lambertian + specular).
+Stopped at: Completed 03-02-PLAN.md (Wave 1 cheap physics cases — integrating cavity, Lambertian cosine, specular reflection dual C++/Python sub-cases). New `backlight_sim/golden/builders.py` shares 3 scene builders between pytest fixtures and the CLI case registry. Four `GoldenCase` entries appended to `ALL_CASES` (integrating_cavity, lambertian_cosine, specular_reflection_python, specular_reflection_cpp). Residuals at seed 42 / 500k+100k rays: integrating_cavity 0.38% (tol 2%), lambertian_cosine 0.90% RMS (tol 3%), specular_FF 0.33° (tol 0.5°), specular_CPP 0.007° (tol 1°). Both specular sub-cases explicitly assert the dispatch predicate to catch silent Python-fallback routing (Pitfall 2 guard). 132 tests green (124 baseline + 8 golden). Performance test (GOLD-01) 34 s; others <1 s each. Ready for Plan 03 (Wave 2 Fresnel + prism).
 Resume file: None
