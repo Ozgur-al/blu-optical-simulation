@@ -256,9 +256,13 @@ def test_end_to_end_uq_smoke(tmp_path, monkeypatch):
     app = QApplication.instance() or QApplication([])
 
     project = preset_simple_box()
-    project.settings.rays_per_source = 2000
+    project.settings.rays_per_source = 4000
     project.settings.uq_batches = 10
     project.settings.random_seed = 42
+    # Disable adaptive sampling so UQ runs all K batches (else adaptive may
+    # converge at k' < 4 on the Simple Box preset and skip CI population).
+    if hasattr(project.settings, "adaptive_sampling"):
+        project.settings.adaptive_sampling = False
 
     result = RayTracer(project).run()
 
