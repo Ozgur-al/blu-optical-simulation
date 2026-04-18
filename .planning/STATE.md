@@ -2,26 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: unknown
-last_updated: "2026-03-15T22:34:57.384Z"
+current_plan: 2
+status: executing
+stopped_at: Completed 02-01-PLAN.md
+last_updated: "2026-04-18T13:49:27Z"
+last_activity: 2026-04-18 -- Phase 02 Plan 01 complete (C++ blu_tracer scaffold)
 progress:
-  total_phases: 1
+  total_phases: 8
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
----
-
----
-gsd_state_version: 1.0
-milestone: v2.0-distribution
-milestone_name: "Distribution & Splash Screen"
-status: in_progress
-last_updated: "2026-03-15T22:12:35Z"
-progress:
-  total_phases: 1
-  completed_phases: 0
-  total_plans: 4
-  completed_plans: 3
+  total_plans: 8
+  completed_plans: 4
+  percent: 50
 ---
 
 # Project State
@@ -31,27 +22,31 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-15)
 
 **Core value:** Engineers can iterate on both direct-lit and edge-lit BLU designs with physically accurate, wavelength-aware simulation — fast enough for real workloads.
-**Current focus:** Phase 01 — Distribution for admin-locked work computer compatibility, splash screen, branding.
+**Current focus:** Phase 02 — converting-main-simulation-loop-to-cpp-for-faster-computation
 
 ## Current Position
 
 Milestone: v2.0-distribution — In Progress
-Phase: 01-distribution-for-admin-locked-work-computer-compatibility-splash-screen-etc — Plan 3 of 4 complete
-Status: Plan 01-03 (Update Checker & Dist Assets) complete. Plan 04 pending.
-Last activity: 2026-03-15 — Plan 01-03 executed: update_checker.py, dist_assets/, BluOpticalSim.spec, build_exe.py, app.py updated
+Phase: 02 (converting-main-simulation-loop-to-cpp-for-faster-computation) — EXECUTING
+Plan: 2 of 4
+Status: Executing Phase 02
+Last activity: 2026-04-18 -- Phase 02 Plan 01 complete (C++ blu_tracer scaffold)
 
-Progress: [######----] 75% (3/4 plans)
+Progress: [#####-----] 50% (4/8 plans)
 
 ## Current Position Detail
 
-Phase: 01-distribution-for-admin-locked-work-computer-compatibility-splash-screen-etc
-Current Plan: 4 of 4
-Stopped at: Completed 01-03-PLAN.md
+Phase: 02-converting-main-simulation-loop-to-cpp-for-faster-computation
+Current Plan: 2
+Stopped at: Completed 02-01-PLAN.md
 
 ## Accumulated Context
 
 ### Decisions
 
+- C++ port Wave 1: scikit-build-core `wheel.install-dir` unset (not '/') — CMakeLists `DESTINATION backlight_sim/sim` alone installs the .pyd correctly; setting wheel.install-dir to match source path causes doubled-path (backlight_sim/sim/backlight_sim/sim/blu_tracer.pyd) due to scikit-build-core concatenation bug
+- C++ port Wave 1: pybind11 entry point `trace_source(project_dict, source_name, seed)` deserializes Python dict at the boundary — keeps Project/RayTracer class API unchanged while C++ handles per-source trace
+- C++ port Wave 1: all intersect/sampling/material bodies stubbed (INF or no-op) so Wave 2 planners can work against frozen header signatures
 - v2.0.0 chosen as first distributable release version (v1.0 was internal milestone)
 - User data dir uses %LOCALAPPDATA%/BluOpticalSim on Windows — corporate-safe, no admin rights needed
 - config.py strictly no PySide6 — headless-safe for io/ and sim/ layer consumption
@@ -69,6 +64,12 @@ Stopped at: Completed 01-03-PLAN.md
 - Spectral+MP guard lifted (quick task 260417-1gw — spectral now runs in MP mode)
 - Phase 01 added: distribution for admin locked work computer compatibility, splash screen etc.
 - Phase 02 added: converting main simulation loop to C++ for faster computation
+- Phase 03 added (2026-04-18): golden-reference validation suite — analytical known-answer physics tests (integrating sphere, Lambertian, Fresnel, Snell/dispersion); validates tracer before downstream phases build on it. Closes `project_spectral_ri_testing.md` gap.
+- Phase 04 added (2026-04-18): uncertainty quantification — batch-based MC variance → 95% CI on every KPI; convergence plots; grid-level stderr.
+- Phase 05 added (2026-04-18): geometry tolerance Monte Carlo — ensemble sims over parameter tolerances; P5/P50/P95 KPI distributions; sensitivity ranking.
+- Phase 06 added (2026-04-18): inverse design optimizer — CMA-ES / Bayesian optimizer over design variables with Pareto multi-objective; optional robust-design mode using Phase 5.
+- Phase 07 added (2026-04-18): cost/thermal/photometric joint view — design sheet with $/unit, ΔT, lm/W side by side; closes the loop on `PointSource.thermal_derate` via lumped-node thermal model.
+- Phase 08 added (2026-04-18): edge-lit LGP design optimizer — TIR-aware tracing inside light guide plates, extraction-profile targeting via Phase 6 optimizer; biggest engine lift, intentionally last.
 
 ### Pending Todos
 
@@ -86,6 +87,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-17
-Stopped at: Completed quick task 260417-1gw (v1.0 tech debt fixes: undo, spectral+MP, BVH, heatmap)
+Last session: 2026-04-18
+Stopped at: Completed 02-01-PLAN.md (C++ blu_tracer build scaffold + pybind11 entry point + test stubs)
 Resume file: None
