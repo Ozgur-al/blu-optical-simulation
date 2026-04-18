@@ -578,22 +578,22 @@ Not applicable — the physics is textbook (Fresnel equations 1823, Snell's law 
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **SolidCylinder/SolidPrism refraction spectral path: tested by Case 5?**
    - What we know: SolidPrism with spectral_material_data exercises the tracer.py:1384 block (matching SolidBox:1242). Case 5 as designed covers SolidPrism.
    - What's unclear: should we also add a SolidCylinder sub-case? Memory flag says "solid body spectral n(λ) path" which the prism covers for the prism-branch, but not the cylinder-branch.
-   - Recommendation: Defer cylinder to Phase 8 (LGP uses cylinders); document in CODEX that Case 5 covers prism-branch only.
+   - **RESOLVED:** Defer cylinder to Phase 8 (LGP uses cylinders); document in CODEX that Case 5 covers prism-branch only. Phase 3 closes the memory flag via the prism-branch assertion in test_prism_dispersion.py::test_prism_dispersion_is_nonzero; cylinder-branch validation is explicitly Phase 8 scope.
 
 2. **Should Case 4 test both C++ AND Python specular, or just one?**
    - What we know: C++ reflect_specular (material.cpp:74) and Python `_reflect_batch` (tracer.py) should produce identical physics.
    - What's unclear: is duplicate coverage worth the ~30% budget hit?
-   - Recommendation: Test both as a low-cost sub-case split (each 100k rays, ~7 s total) — explicit dual-path coverage is what motivates this phase.
+   - **RESOLVED:** Test both as a low-cost sub-case split (each 100k rays, ~7 s total) — explicit dual-path coverage is what motivates this phase. Plan 02 Task 2 implements the dual-path split (planar detector for C++ eligibility + far-field detector forcing Python).
 
 3. **CI integration scope:** Does the project have CI beyond `pytest`? (No `.github/workflows/` observed in the tree earlier.)
    - What we know: STATE.md says 124 tests green, implies pre-commit discipline via the command in CLAUDE.md.
    - What's unclear: Is there a separate CI layer to wire the `--report` command into?
-   - Recommendation: Wave 0 checks for CI config and scopes the wiring decision accordingly; if none, the pytest integration alone fulfills the requirement.
+   - **RESOLVED:** No separate CI layer exists (confirmed — no `.github/workflows/`). Pytest integration alone fulfills the requirement; Plan 04 Task 3 updates CLAUDE.md to document the golden suite as a pre-commit gate. If GitHub Actions is added later, it can shell out to `python -m backlight_sim.golden --report` directly.
 
 ---
 
