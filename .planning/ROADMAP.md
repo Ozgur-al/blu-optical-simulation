@@ -72,7 +72,13 @@ Plans:
 - **Closes memory flag:** verifies `project_spectral_ri_testing.md` gap — solid-body spectral n(λ) is smoke-tested, not physically verified.
 
 **Depends on:** Phase 1 (distribution only — no blocker; could run in parallel with Phase 2)
-**Plans:** Not planned yet
+**Plans:** 4 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Scaffolding + Wave 0 budget probe (GOLD-00): package layout, references.py, conftest fixtures, GoldenCase/GoldenResult registry, C++ vs Python throughput probe, SPD naming smoke check
+- [ ] 03-02-PLAN.md — Cheap analytical cases (GOLD-01, GOLD-02, GOLD-04): integrating cavity + Lambertian cosine law + specular dual C++/Python sub-cases
+- [ ] 03-03-PLAN.md — Expensive cases + memory-flag closure (GOLD-03, GOLD-05): Fresnel T(θ) at 5 angles with face_optics absorber override (Pitfall 1); prism dispersion at 3 wavelengths with nonzero-dispersion guard (Pitfall 3) — closes project_spectral_ri_testing.md
+- [ ] 03-04-PLAN.md — CLI report + integration test + CLAUDE.md gate (GOLD-06): python -m backlight_sim.golden --report produces HTML (matplotlib Agg, graceful fallback) + markdown; subprocess integration test; documentation
 
 ### Phase 4: Uncertainty quantification (Monte Carlo noise bars on KPIs)
 
