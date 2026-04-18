@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: 2
+current_plan: 3
 status: executing
-stopped_at: Completed 02-01-PLAN.md
-last_updated: "2026-04-18T13:49:27Z"
-last_activity: 2026-04-18 -- Phase 02 Plan 01 complete (C++ blu_tracer scaffold)
+stopped_at: Completed 02-02-PLAN.md
+last_updated: "2026-04-18T14:35:00Z"
+last_activity: 2026-04-18 -- Phase 02 Plan 02 complete (C++ bounce loop + real physics)
 progress:
   total_phases: 8
   completed_phases: 1
   total_plans: 8
-  completed_plans: 4
-  percent: 50
+  completed_plans: 5
+  percent: 63
 ---
 
 # Project State
@@ -28,17 +28,17 @@ See: .planning/PROJECT.md (updated 2026-03-15)
 
 Milestone: v2.0-distribution — In Progress
 Phase: 02 (converting-main-simulation-loop-to-cpp-for-faster-computation) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Executing Phase 02
-Last activity: 2026-04-18 -- Phase 02 Plan 01 complete (C++ blu_tracer scaffold)
+Last activity: 2026-04-18 -- Phase 02 Plan 02 complete (C++ bounce loop + real physics)
 
-Progress: [#####-----] 50% (4/8 plans)
+Progress: [######----] 63% (5/8 plans)
 
 ## Current Position Detail
 
 Phase: 02-converting-main-simulation-loop-to-cpp-for-faster-computation
-Current Plan: 2
-Stopped at: Completed 02-01-PLAN.md
+Current Plan: 3
+Stopped at: Completed 02-02-PLAN.md
 
 ## Accumulated Context
 
@@ -47,6 +47,11 @@ Stopped at: Completed 02-01-PLAN.md
 - C++ port Wave 1: scikit-build-core `wheel.install-dir` unset (not '/') — CMakeLists `DESTINATION backlight_sim/sim` alone installs the .pyd correctly; setting wheel.install-dir to match source path causes doubled-path (backlight_sim/sim/backlight_sim/sim/blu_tracer.pyd) due to scikit-build-core concatenation bug
 - C++ port Wave 1: pybind11 entry point `trace_source(project_dict, source_name, seed)` deserializes Python dict at the boundary — keeps Project/RayTracer class API unchanged while C++ handles per-source trace
 - C++ port Wave 1: all intersect/sampling/material bodies stubbed (INF or no-op) so Wave 2 planners can work against frozen header signatures
+- C++ port Wave 2: detector hits TERMINATE the ray (alive=false) — matches tracer.py::_bounce_detectors semantics; pass-through (as plan text suggested) would double-count flux on multi-detector scenes
+- C++ port Wave 2: rays still alive after `max_bounces` have their residual weight added to `escaped_flux` so energy conservation holds strictly (detector + escaped + absorbed = source) with absorbed = source - accounted
+- C++ port Wave 2: parse_material defensive with per-field `.contains()` fallbacks (surface_type=absorber, reflectance=0, is_diffuse=true, haze=0) — older project JSONs may omit optional fields; strict pybind cast would raise KeyError
+- C++ port Wave 2: BVH stays as no-op stubs (BVH_THRESHOLD=9999 → brute-force always). Full BVH port deferred to a future cleanup phase per CONTEXT.md D-07
+- C++ port Wave 2: solid-body / cylinder-body / prism-body Fresnel dispatch deferred to Wave 3 — requires porting `core/solid_body.py::get_faces()` expansion; no Wave 2 test exercises this surface type
 - v2.0.0 chosen as first distributable release version (v1.0 was internal milestone)
 - User data dir uses %LOCALAPPDATA%/BluOpticalSim on Windows — corporate-safe, no admin rights needed
 - config.py strictly no PySide6 — headless-safe for io/ and sim/ layer consumption
@@ -88,5 +93,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-04-18
-Stopped at: Completed 02-01-PLAN.md (C++ blu_tracer build scaffold + pybind11 entry point + test stubs)
+Stopped at: Completed 02-02-PLAN.md (C++ Monte Carlo engine — real intersection/sampling/material/bounce-loop physics; 5 C++ tests passing, 124 Python tests still green)
 Resume file: None
