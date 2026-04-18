@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import replace as _dataclasses_replace
 from typing import Callable
 
 import numpy as np
@@ -53,6 +55,61 @@ _BVH_THRESHOLD = 10**9
 
 # Maximum nesting depth for per-ray refractive index stack
 _N_STACK_MAX = 8
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 UQ helpers
+# ---------------------------------------------------------------------------
+# Effective K window for batch-means CI:
+#   floor=4  -> below this Student-t critical values diverge (test_uq.py in
+#              core/uq.py rejects K<4 for CI computation).
+#   cap=20   -> above this per-batch sparsity dominates batch-to-batch variance
+#              (noise, not uncertainty).  Wave 1 threat T-04.01-02 (DoS via
+#              very large uq_batches) is mitigated here at runtime.
+
+
+def _effective_uq_batches(settings) -> int:
+    """Return effective ``K`` honoring the [4, 20] dof window when UQ is on.
+
+    Returns 0 when UQ is disabled (uq_batches <= 0 in SimulationSettings).
+    """
+    k_req = int(getattr(settings, "uq_batches", 0))
+    if k_req <= 0:
+        return 0
+    return min(20, max(4, k_req))
+
+
+def _batch_seed(base_seed: int, source_name: str, batch_k: int) -> int:
+    """Deterministic per-batch seed from ``(base_seed, source_name, batch_k)``.
+
+    md5 of the composite string -> 64-bit integer.  Matches the source-level
+    seed derivation pattern so determinism is preserved across UQ batches.
+    """
+    h = hashlib.md5(f"{base_seed}_{source_name}_{batch_k}".encode("utf-8")).hexdigest()
+    return int(h[:16], 16) & 0xFFFFFFFFFFFFFFFF  # 64-bit mask
+
+
+def _partition_rays(rays_total: int, K: int) -> list[int]:
+    """Split ``rays_total`` into ``K`` batches; remainder -> first batches.
+
+    ``sum(result) == rays_total``.  Consumed for rays_per_batch bookkeeping
+    and for the actual per-batch rays_per_source value passed to the tracer.
+    """
+    if K <= 0:
+        return [int(rays_total)]
+    base = int(rays_total) // K
+    rem = int(rays_total) - base * K
+    return [base + (1 if k < rem else 0) for k in range(K)]
+
+
+def _replace_settings(settings, **overrides):
+    """Return a dataclass-copy of ``settings`` with selected attributes overridden.
+
+    Used by the UQ batched runner to patch rays_per_source / random_seed /
+    record_ray_paths / adaptive_sampling per chunk without mutating the
+    user-provided settings dataclass.
+    """
+    return _dataclasses_replace(settings, **overrides)
 
 
 # ---------------------------------------------------------------------------
@@ -412,14 +469,131 @@ def _cpp_trace_single_source(project, source_name: str, base_seed: int) -> dict:
 
     Mirrors _trace_single_source but delegates to _blu_tracer.trace_source().
     Returns the same dict shape as _trace_single_source.
+
+    Phase 4 UQ (Wave 2): when ``settings.uq_batches > 0``, this function issues
+    K sequential calls to the existing C++ ``trace_source`` with per-batch
+    seeded RNG and a sliced rays_per_source.  Per-batch grids/hits/flux are
+    stacked into the return dict under ``grids_batches`` / ``hits_batches`` /
+    ``flux_batches`` / ``rays_per_batch``.  The underlying C++ extension is
+    NOT rebuilt — batching is Python-side only.
     """
-    import hashlib
-    seed_hash = int(
-        hashlib.md5(f"{base_seed}_{source_name}".encode()).hexdigest()[:8],
-        16,
-    )
+    settings = project.settings
+    K = _effective_uq_batches(settings)
     project_dict = _serialize_project(project)
-    return _blu_tracer.trace_source(project_dict, source_name, int(seed_hash))
+
+    if K == 0:
+        # Legacy fast path — single call, no UQ bookkeeping.
+        seed_hash = int(
+            hashlib.md5(f"{base_seed}_{source_name}".encode()).hexdigest()[:8],
+            16,
+        ) & 0x7FFFFFFF
+        result_dict = _blu_tracer.trace_source(project_dict, source_name, int(seed_hash))
+        result_dict["grids_batches"] = None
+        result_dict["hits_batches"] = None
+        result_dict["flux_batches"] = None
+        result_dict["rays_per_batch"] = None
+        result_dict["n_batches"] = 0
+        return result_dict
+
+    # UQ path: K sequential calls, per-batch seed + sliced rays_per_source.
+    rays_total = int(settings.rays_per_source)
+    chunk_sizes = _partition_rays(rays_total, K)
+
+    # Per-detector accumulators
+    grids_agg: dict[str, dict] = {}
+    sph_grids_agg: dict[str, dict] = {}
+    sb_stats_agg: dict = {}
+    escaped_agg = 0.0
+    grids_batches: dict[str, list[np.ndarray]] = {}
+    hits_batches: dict[str, list[int]] = {}
+    flux_batches: dict[str, list[float]] = {}
+    sph_grids_batches: dict[str, list[np.ndarray]] = {}
+    sph_hits_batches: dict[str, list[int]] = {}
+    sph_flux_batches: dict[str, list[float]] = {}
+    actual_rays_per_batch: list[int] = []
+
+    for k in range(K):
+        rays_this_batch = chunk_sizes[k]
+        if rays_this_batch <= 0:
+            continue
+        # Shallow-copy dict and patch rays_per_source + scale source flux so
+        # each chunk contributes effective_flux * (rays_this_batch / rays_total)
+        # to the detector.  Summed over K chunks: effective_flux (unchanged).
+        batch_project_dict = dict(project_dict)
+        batch_project_dict["settings"] = dict(project_dict["settings"])
+        batch_project_dict["settings"]["rays_per_source"] = int(rays_this_batch)
+        # Deep-copy sources list so we can patch effective_flux per-batch
+        scale = rays_this_batch / max(rays_total, 1)
+        batch_project_dict["sources"] = [dict(s) for s in project_dict["sources"]]
+        for src_item in batch_project_dict["sources"]:
+            src_item["effective_flux"] = float(src_item["effective_flux"]) * scale
+        seed_k = _batch_seed(base_seed, source_name, k) & 0x7FFFFFFF
+        batch_res = _blu_tracer.trace_source(batch_project_dict, source_name, int(seed_k))
+
+        # Merge aggregates + stack per-batch
+        for det_name, grid_data in batch_res.get("grids", {}).items():
+            g = np.asarray(grid_data["grid"])
+            if det_name not in grids_agg:
+                grids_agg[det_name] = {
+                    "grid": g.copy(),
+                    "hits": int(grid_data["hits"]),
+                    "flux": float(grid_data["flux"]),
+                }
+            else:
+                grids_agg[det_name]["grid"] += g
+                grids_agg[det_name]["hits"] += int(grid_data["hits"])
+                grids_agg[det_name]["flux"] += float(grid_data["flux"])
+            grids_batches.setdefault(det_name, []).append(g.copy())
+            hits_batches.setdefault(det_name, []).append(int(grid_data["hits"]))
+            flux_batches.setdefault(det_name, []).append(float(grid_data["flux"]))
+        for sph_name, sph_data in batch_res.get("sph_grids", {}).items():
+            g = np.asarray(sph_data["grid"])
+            if sph_name not in sph_grids_agg:
+                sph_grids_agg[sph_name] = {
+                    "grid": g.copy(),
+                    "hits": int(sph_data["hits"]),
+                    "flux": float(sph_data["flux"]),
+                }
+            else:
+                sph_grids_agg[sph_name]["grid"] += g
+                sph_grids_agg[sph_name]["hits"] += int(sph_data["hits"])
+                sph_grids_agg[sph_name]["flux"] += float(sph_data["flux"])
+            sph_grids_batches.setdefault(sph_name, []).append(g.copy())
+            sph_hits_batches.setdefault(sph_name, []).append(int(sph_data["hits"]))
+            sph_flux_batches.setdefault(sph_name, []).append(float(sph_data["flux"]))
+        escaped_agg += float(batch_res.get("escaped", 0.0))
+        for bn, face_map in batch_res.get("sb_stats", {}).items():
+            dst = sb_stats_agg.setdefault(bn, {})
+            for fid, fstats in face_map.items():
+                cur = dst.setdefault(fid, {"entering_flux": 0.0, "exiting_flux": 0.0})
+                cur["entering_flux"] += float(fstats.get("entering_flux", 0.0))
+                cur["exiting_flux"] += float(fstats.get("exiting_flux", 0.0))
+        actual_rays_per_batch.append(int(rays_this_batch))
+
+    # Stack per-batch lists into numpy arrays for downstream consumption
+    grids_batches_stacked = {
+        name: {"grid": np.stack(grids, axis=0)}
+        for name, grids in grids_batches.items()
+    }
+    return {
+        "grids": grids_agg,
+        "spectral_grids": {},
+        "escaped": escaped_agg,
+        "sb_stats": sb_stats_agg,
+        "sph_grids": sph_grids_agg,
+        # Phase 4 UQ payload
+        "grids_batches": grids_batches_stacked,
+        "hits_batches": {k: np.asarray(v, dtype=int) for k, v in hits_batches.items()},
+        "flux_batches": {k: np.asarray(v, dtype=float) for k, v in flux_batches.items()},
+        "sph_grids_batches": {
+            name: {"grid": np.stack(grids, axis=0)}
+            for name, grids in sph_grids_batches.items()
+        },
+        "sph_hits_batches": {k: np.asarray(v, dtype=int) for k, v in sph_hits_batches.items()},
+        "sph_flux_batches": {k: np.asarray(v, dtype=float) for k, v in sph_flux_batches.items()},
+        "rays_per_batch": actual_rays_per_batch,
+        "n_batches": len(actual_rays_per_batch),
+    }
 
 
 class RayTracer:
@@ -457,17 +631,38 @@ class RayTracer:
             )
             _adaptive = False
 
+        # Phase 4 UQ — adaptive+UQ warning (CONTEXT D-01): both allowed
+        # simultaneously with a caveat appended to result.uq_warnings.
+        pending_uq_warnings: list[str] = []
+        if _adaptive and _effective_uq_batches(settings) > 0:
+            pending_uq_warnings.append(
+                "Adaptive sampling and UQ are both enabled. CIs may be biased "
+                "because adaptive sampling terminates early based on "
+                "convergence; Student-t coverage assumes a fixed K. "
+                "Convergence is evaluated at chunk boundaries to minimize "
+                "bias. Disable adaptive_sampling for strict CI coverage "
+                "guarantees."
+            )
+
         if (settings.use_multiprocessing and len(sources) > 1
                 and not settings.record_ray_paths):
-            return self._run_multiprocess(
+            result = self._run_multiprocess(
                 sources, progress_callback,
                 has_spectral=has_spectral, n_spec_bins=n_spec_bins,
                 partial_result_callback=partial_result_callback,
             )
+        else:
+            result = self._run_single(
+                sources, progress_callback, convergence_callback,
+                _adaptive=_adaptive,
+                partial_result_callback=partial_result_callback,
+            )
 
-        return self._run_single(sources, progress_callback, convergence_callback,
-                                _adaptive=_adaptive,
-                                partial_result_callback=partial_result_callback)
+        # Merge pending warnings onto the result (de-duplicated, ordered)
+        for w in pending_uq_warnings:
+            if w not in result.uq_warnings:
+                result.uq_warnings.append(w)
+        return result
 
     def _run_multiprocess(self, sources, progress_callback,
                           has_spectral=False, n_spec_bins=0,
@@ -521,6 +716,19 @@ class RayTracer:
         total = len(sources)
         escaped_total = 0.0
 
+        # Phase 4 UQ — per-batch aggregators for MP mode (uq_batches > 0).
+        # Each worker returns per-batch grids/hits/flux for its single source;
+        # we sum across workers along the batch axis since all workers use
+        # the same K and rays_per_batch.
+        uq_K = _effective_uq_batches(settings)
+        uq_grids_agg: dict[str, np.ndarray] = {}  # det_name -> (K, ny, nx) accumulator
+        uq_hits_agg: dict[str, np.ndarray] = {}  # det_name -> (K,) accumulator
+        uq_flux_agg: dict[str, np.ndarray] = {}  # det_name -> (K,) accumulator
+        uq_sph_grids_agg: dict[str, np.ndarray] = {}
+        uq_sph_hits_agg: dict[str, np.ndarray] = {}
+        uq_sph_flux_agg: dict[str, np.ndarray] = {}
+        uq_rays_per_batch: list[int] | None = None
+
         # Route to C++ fast path when the project uses only C++-supported features;
         # otherwise keep the Python spectral / solid-body worker (per 02-CONTEXT.md
         # deferred items).
@@ -568,6 +776,54 @@ class RayTracer:
                         for fid, flux_data in face_map.items():
                             merged_sb_stats[box_name][fid]["entering_flux"] += flux_data["entering_flux"]
                             merged_sb_stats[box_name][fid]["exiting_flux"] += flux_data["exiting_flux"]
+                # Phase 4 UQ: merge per-batch data from worker (when K>0)
+                if uq_K > 0:
+                    wb_grids = result.get("grids_batches") or {}
+                    for det_name, gbatch in wb_grids.items():
+                        arr = np.asarray(gbatch["grid"])  # (K, ny, nx)
+                        if det_name in uq_grids_agg:
+                            uq_grids_agg[det_name] += arr
+                        else:
+                            uq_grids_agg[det_name] = arr.copy()
+                    wb_hits = result.get("hits_batches") or {}
+                    for det_name, hb in wb_hits.items():
+                        arr = np.asarray(hb, dtype=int)
+                        if det_name in uq_hits_agg:
+                            uq_hits_agg[det_name] += arr
+                        else:
+                            uq_hits_agg[det_name] = arr.copy()
+                    wb_flux = result.get("flux_batches") or {}
+                    for det_name, fb in wb_flux.items():
+                        arr = np.asarray(fb, dtype=float)
+                        if det_name in uq_flux_agg:
+                            uq_flux_agg[det_name] += arr
+                        else:
+                            uq_flux_agg[det_name] = arr.copy()
+                    wb_sph_grids = result.get("sph_grids_batches") or {}
+                    for name, gb in wb_sph_grids.items():
+                        arr = np.asarray(gb["grid"])
+                        if name in uq_sph_grids_agg:
+                            uq_sph_grids_agg[name] += arr
+                        else:
+                            uq_sph_grids_agg[name] = arr.copy()
+                    wb_sph_hits = result.get("sph_hits_batches") or {}
+                    for name, hb in wb_sph_hits.items():
+                        arr = np.asarray(hb, dtype=int)
+                        if name in uq_sph_hits_agg:
+                            uq_sph_hits_agg[name] += arr
+                        else:
+                            uq_sph_hits_agg[name] = arr.copy()
+                    wb_sph_flux = result.get("sph_flux_batches") or {}
+                    for name, fb in wb_sph_flux.items():
+                        arr = np.asarray(fb, dtype=float)
+                        if name in uq_sph_flux_agg:
+                            uq_sph_flux_agg[name] += arr
+                        else:
+                            uq_sph_flux_agg[name] = arr.copy()
+                    if uq_rays_per_batch is None:
+                        rpb = result.get("rays_per_batch")
+                        if rpb is not None:
+                            uq_rays_per_batch = list(rpb)
                 completed += 1
                 if progress_callback:
                     progress_callback(completed / total)
@@ -602,6 +858,35 @@ class RayTracer:
             if sd.mode == "far_field":
                 compute_farfield_candela(sd, sph_results[sd.name])
 
+        # Phase 4 UQ: populate DetectorResult batch fields from MP aggregates
+        if uq_K > 0:
+            for det_name, dr in det_results.items():
+                if det_name in uq_grids_agg:
+                    dr.grid_batches = uq_grids_agg[det_name]
+                    dr.hits_batches = uq_hits_agg.get(
+                        det_name, np.zeros(uq_K, dtype=int)
+                    )
+                    dr.flux_batches = uq_flux_agg.get(
+                        det_name, np.zeros(uq_K, dtype=float)
+                    )
+                    dr.rays_per_batch = (
+                        list(uq_rays_per_batch) if uq_rays_per_batch is not None
+                        else _partition_rays(int(settings.rays_per_source), uq_K)
+                    )
+                    dr.n_batches = int(dr.grid_batches.shape[0])
+            for name, sr in sph_results.items():
+                if name in uq_sph_grids_agg:
+                    setattr(sr, "grid_batches", uq_sph_grids_agg[name])
+                    setattr(sr, "hits_batches", uq_sph_hits_agg.get(
+                        name, np.zeros(uq_K, dtype=int)))
+                    setattr(sr, "flux_batches", uq_sph_flux_agg.get(
+                        name, np.zeros(uq_K, dtype=float)))
+                    setattr(sr, "rays_per_batch", (
+                        list(uq_rays_per_batch) if uq_rays_per_batch is not None
+                        else _partition_rays(int(settings.rays_per_source), uq_K)
+                    ))
+                    setattr(sr, "n_batches", int(uq_sph_grids_agg[name].shape[0]))
+
         return SimulationResult(
             detectors=det_results,
             sphere_detectors=sph_results,
@@ -612,8 +897,33 @@ class RayTracer:
         )
 
     def _run_single(self, sources, progress_callback, convergence_callback=None,
-                    _adaptive=None, partial_result_callback=None):
+                    _adaptive=None, partial_result_callback=None,
+                    _uq_in_chunk: bool = False):
+        """Single-thread trace path.
+
+        Phase 4 UQ integration (Wave 2)
+        --------------------------------
+        When ``settings.uq_batches > 0`` and we are *not* already re-entered
+        as a UQ chunk (``_uq_in_chunk=False``), dispatches to
+        :meth:`_run_uq_batched` which slices rays_per_source into K chunks,
+        calls this method once per chunk with ``_uq_in_chunk=True`` and
+        stacks per-batch detector grids onto the final result.  Each inner
+        call has ``adaptive_sampling=False`` in its patched settings so
+        convergence is evaluated only at chunk boundaries (CONTEXT D-01).
+
+        When ``settings.uq_batches == 0`` the legacy code path below is
+        executed unchanged — bit-identical determinism anchor verified by
+        ``test_uq_off_matches_legacy``.
+        """
         settings = self.project.settings
+        # Phase 4 UQ dispatch — top-level entry only (recursion guarded by
+        # _uq_in_chunk flag).
+        if not _uq_in_chunk and _effective_uq_batches(settings) > 0:
+            return self._run_uq_batched(
+                sources, progress_callback, convergence_callback,
+                _adaptive=_adaptive,
+                partial_result_callback=partial_result_callback,
+            )
         # _adaptive defaults to settings.adaptive_sampling unless overridden by caller
         if _adaptive is None:
             _adaptive = settings.adaptive_sampling
@@ -852,12 +1162,14 @@ class RayTracer:
                     if src_item["name"] == source.name:
                         src_item["effective_flux"] = float(eff_flux_src)
                         break
+                # Mask to signed int32 range — C++ extension takes `int seed`
+                # and large unsigned md5 hashes would raise TypeError otherwise.
                 seed_hash = int(
                     hashlib.md5(
                         f"{settings.random_seed}_{source.name}".encode()
                     ).hexdigest()[:8],
                     16,
-                )
+                ) & 0x7FFFFFFF
                 result_dict = _blu_tracer.trace_source(
                     project_dict, source.name, int(seed_hash)
                 )
@@ -1632,6 +1944,276 @@ class RayTracer:
         )
 
     # ------------------------------------------------------------------
+
+    def _run_uq_batched(
+        self, sources, progress_callback, convergence_callback=None,
+        _adaptive=None, partial_result_callback=None,
+    ) -> SimulationResult:
+        """Execute the single-thread trace K times with per-batch seeded RNG.
+
+        Phase 4 UQ (Wave 2) — outer K-loop wrapper.  Each chunk runs the full
+        single-source bounce loop with an adjusted ``rays_per_source`` (from
+        :func:`_partition_rays`) and a deterministic per-batch seed derived
+        from ``(random_seed, "__aggregate__", k)``.  Per-batch snapshots of
+        the detector grids / hits / flux / spectral grids are accumulated and
+        stacked onto the final :class:`DetectorResult`.
+
+        Adaptive sampling convergence is evaluated only at chunk boundaries
+        (CONTEXT D-01 / W1): each inner ``_run_single`` call runs to
+        completion for its chunk (``_adaptive=False``) and the predicate is
+        tested between chunks.  If the predicate reports "converged" at
+        ``k'<K``, the outer loop short-circuits and ``n_batches=k'`` is
+        reported on the result.
+        """
+        original_settings = self.project.settings
+        K_requested = _effective_uq_batches(original_settings)
+        rays_total = int(original_settings.rays_per_source)
+        chunk_sizes = _partition_rays(rays_total, K_requested)
+        base_seed = int(original_settings.random_seed)
+        record_ray_paths_total = int(original_settings.record_ray_paths)
+        include_spectral = bool(getattr(original_settings, "uq_include_spectral", True))
+
+        uq_adaptive_enabled = bool(
+            _adaptive if _adaptive is not None
+            else original_settings.adaptive_sampling
+        )
+
+        # Per-batch accumulators keyed by detector name
+        per_batch_grids: dict[str, list[np.ndarray]] = {}
+        per_batch_hits: dict[str, list[int]] = {}
+        per_batch_flux: dict[str, list[float]] = {}
+        per_batch_spectral: dict[str, list[np.ndarray]] = {}
+        per_batch_sph_grids: dict[str, list[np.ndarray]] = {}
+        per_batch_sph_hits: dict[str, list[int]] = {}
+        per_batch_sph_flux: dict[str, list[float]] = {}
+        rays_per_batch_list: list[int] = []
+
+        cum_result: SimulationResult | None = None
+        last_grid_totals: dict[str, np.ndarray] = {}
+        last_grid_spectral_totals: dict[str, np.ndarray | None] = {}
+        last_hits_totals: dict[str, int] = {}
+        last_flux_totals: dict[str, float] = {}
+        last_sph_grid_totals: dict[str, np.ndarray] = {}
+        last_sph_hits_totals: dict[str, int] = {}
+        last_sph_flux_totals: dict[str, float] = {}
+
+        n_batches_effective = 0
+        batch_total_fluxes: list[float] = []
+
+        for k in range(K_requested):
+            if self._cancelled:
+                break
+            rays_this_batch = int(chunk_sizes[k])
+            if rays_this_batch <= 0:
+                continue
+
+            chunk_settings_backup = self.project.settings
+            patched = _replace_settings(
+                original_settings,
+                rays_per_source=rays_this_batch,
+                random_seed=_batch_seed(base_seed, "__aggregate__", k) & 0x7FFFFFFF,
+                record_ray_paths=record_ray_paths_total if k == 0 else 0,
+                adaptive_sampling=False,  # chunk-boundary eval only
+            )
+            self.project.settings = patched
+            self.rng = np.random.default_rng(patched.random_seed)
+
+            # Scale each source's `flux` by (rays_this_batch / rays_total) so
+            # that per-ray weight (= eff_flux / rays_per_source) accumulates
+            # to the correct per-source total across all K chunks.
+            # Weight-per-ray in chunk = (flux * scale) / rays_this_batch;
+            #   chunk sum                 = flux * scale;
+            #   sum over K chunks         = flux * (sum scale) = flux.
+            scale = rays_this_batch / max(rays_total, 1)
+            original_fluxes = [src.flux for src in sources]
+            for src in sources:
+                src.flux = src.flux * scale
+
+            try:
+                chunk_result = self._run_single(
+                    sources, progress_callback, convergence_callback,
+                    _adaptive=False,
+                    partial_result_callback=None,
+                    _uq_in_chunk=True,
+                )
+            finally:
+                self.project.settings = chunk_settings_backup
+                # Restore original source flux values
+                for src, orig in zip(sources, original_fluxes):
+                    src.flux = orig
+
+            if cum_result is None:
+                cum_result = SimulationResult(
+                    detectors={
+                        name: DetectorResult(
+                            detector_name=name,
+                            grid=dr.grid.copy(),
+                            total_hits=dr.total_hits,
+                            total_flux=dr.total_flux,
+                            grid_rgb=dr.grid_rgb.copy() if dr.grid_rgb is not None else None,
+                            grid_spectral=dr.grid_spectral.copy() if dr.grid_spectral is not None else None,
+                        )
+                        for name, dr in chunk_result.detectors.items()
+                    },
+                    sphere_detectors={
+                        name: SphereDetectorResult(
+                            detector_name=name,
+                            grid=sr.grid.copy(),
+                            total_hits=sr.total_hits,
+                            total_flux=sr.total_flux,
+                            candela_grid=(
+                                sr.candela_grid.copy()
+                                if sr.candela_grid is not None else None
+                            ),
+                        )
+                        for name, sr in chunk_result.sphere_detectors.items()
+                    },
+                    ray_paths=list(chunk_result.ray_paths),
+                    total_emitted_flux=chunk_result.total_emitted_flux,
+                    escaped_flux=chunk_result.escaped_flux,
+                    source_count=chunk_result.source_count,
+                    solid_body_stats={
+                        bn: {fid: dict(fstats) for fid, fstats in face_map.items()}
+                        for bn, face_map in chunk_result.solid_body_stats.items()
+                    },
+                )
+                for name, dr in chunk_result.detectors.items():
+                    per_batch_grids.setdefault(name, []).append(dr.grid.copy())
+                    per_batch_hits.setdefault(name, []).append(int(dr.total_hits))
+                    per_batch_flux.setdefault(name, []).append(float(dr.total_flux))
+                    if include_spectral and dr.grid_spectral is not None:
+                        per_batch_spectral.setdefault(name, []).append(dr.grid_spectral.copy())
+                    last_grid_totals[name] = dr.grid.copy()
+                    last_grid_spectral_totals[name] = (
+                        dr.grid_spectral.copy() if dr.grid_spectral is not None else None
+                    )
+                    last_hits_totals[name] = int(dr.total_hits)
+                    last_flux_totals[name] = float(dr.total_flux)
+                for name, sr in chunk_result.sphere_detectors.items():
+                    per_batch_sph_grids.setdefault(name, []).append(sr.grid.copy())
+                    per_batch_sph_hits.setdefault(name, []).append(int(sr.total_hits))
+                    per_batch_sph_flux.setdefault(name, []).append(float(sr.total_flux))
+                    last_sph_grid_totals[name] = sr.grid.copy()
+                    last_sph_hits_totals[name] = int(sr.total_hits)
+                    last_sph_flux_totals[name] = float(sr.total_flux)
+            else:
+                # chunk_result holds only THIS chunk's contribution (not cumulative).
+                # Per-batch = chunk_result directly; cum_result is the running sum.
+                for name, dr in chunk_result.detectors.items():
+                    cur = cum_result.detectors[name]
+                    per_batch_grids[name].append(dr.grid.copy())
+                    per_batch_hits[name].append(int(dr.total_hits))
+                    per_batch_flux[name].append(float(dr.total_flux))
+                    if include_spectral and dr.grid_spectral is not None:
+                        per_batch_spectral.setdefault(name, []).append(dr.grid_spectral.copy())
+                    cur.grid = cur.grid + dr.grid
+                    cur.total_hits = int(cur.total_hits) + int(dr.total_hits)
+                    cur.total_flux = float(cur.total_flux) + float(dr.total_flux)
+                    if dr.grid_spectral is not None:
+                        if cur.grid_spectral is not None:
+                            cur.grid_spectral = cur.grid_spectral + dr.grid_spectral
+                        else:
+                            cur.grid_spectral = dr.grid_spectral.copy()
+                for name, sr in chunk_result.sphere_detectors.items():
+                    cur_s = cum_result.sphere_detectors[name]
+                    per_batch_sph_grids[name].append(sr.grid.copy())
+                    per_batch_sph_hits[name].append(int(sr.total_hits))
+                    per_batch_sph_flux[name].append(float(sr.total_flux))
+                    cur_s.grid = cur_s.grid + sr.grid
+                    cur_s.total_hits = int(cur_s.total_hits) + int(sr.total_hits)
+                    cur_s.total_flux = float(cur_s.total_flux) + float(sr.total_flux)
+                    if sr.candela_grid is not None:
+                        # candela is computed on grid totals, not summed; take latest chunk's
+                        cur_s.candela_grid = sr.candela_grid.copy()
+                cum_result.escaped_flux = cum_result.escaped_flux + chunk_result.escaped_flux
+                for bn, face_map in chunk_result.solid_body_stats.items():
+                    dst = cum_result.solid_body_stats.setdefault(bn, {})
+                    for fid, fstats in face_map.items():
+                        cur_f = dst.setdefault(
+                            fid, {"entering_flux": 0.0, "exiting_flux": 0.0}
+                        )
+                        cur_f["entering_flux"] += float(fstats.get("entering_flux", 0.0))
+                        cur_f["exiting_flux"] += float(fstats.get("exiting_flux", 0.0))
+                cum_result.source_count = chunk_result.source_count
+
+            rays_per_batch_list.append(rays_this_batch)
+            n_batches_effective += 1
+
+            # Chunk-boundary: notify convergence_callback and evaluate adaptive
+            total_flux_now = sum(dr.total_flux for dr in cum_result.detectors.values())
+            batch_total_fluxes.append(total_flux_now)
+
+            # Compute cv_pct for both callback and early-exit check
+            if len(batch_total_fluxes) >= 2:
+                diffs = [
+                    batch_total_fluxes[i] - batch_total_fluxes[i - 1]
+                    for i in range(1, len(batch_total_fluxes))
+                ]
+                mean_diff = sum(diffs) / len(diffs) if diffs else 0.0
+                var_diff = (
+                    sum((d - mean_diff) ** 2 for d in diffs) / len(diffs)
+                    if diffs else 0.0
+                )
+                std_diff = float(var_diff ** 0.5)
+                ci = 1.96 * std_diff / max(float(len(diffs) ** 0.5), 1e-12)
+                cv_pct = ci / max(abs(mean_diff), 1e-12) * 100.0
+            else:
+                cv_pct = 100.0
+
+            if convergence_callback is not None and uq_adaptive_enabled:
+                # Only emit convergence callbacks when adaptive mode is enabled,
+                # to mirror legacy _run_single behavior (no callbacks on
+                # non-adaptive runs — see test_adaptive_sampling_disabled_traces_full).
+                convergence_callback(0, sum(chunk_sizes[:k + 1]), cv_pct)
+
+            if (
+                uq_adaptive_enabled
+                and len(batch_total_fluxes) >= 2
+                and cv_pct <= original_settings.convergence_cv_target
+                and (k + 1) < K_requested
+            ):
+                break
+
+        if cum_result is None:
+            return SimulationResult(total_emitted_flux=0.0, source_count=len(sources))
+
+        for name, dr in cum_result.detectors.items():
+            grids = per_batch_grids.get(name, [])
+            if grids:
+                dr.grid_batches = np.stack(grids, axis=0)
+                dr.hits_batches = np.asarray(per_batch_hits[name], dtype=int)
+                dr.flux_batches = np.asarray(per_batch_flux[name], dtype=float)
+                dr.rays_per_batch = list(rays_per_batch_list)
+                dr.n_batches = int(dr.grid_batches.shape[0])
+                specs = per_batch_spectral.get(name, [])
+                if include_spectral and specs:
+                    dr.grid_spectral_batches = np.stack(specs, axis=0)
+                else:
+                    dr.grid_spectral_batches = None
+        for name, sr in cum_result.sphere_detectors.items():
+            sph_grids = per_batch_sph_grids.get(name, [])
+            if sph_grids:
+                # Sphere UQ: attach via attributes (Wave 3 UI picks them up).
+                setattr(sr, "grid_batches", np.stack(sph_grids, axis=0))
+                setattr(sr, "hits_batches", np.asarray(per_batch_sph_hits[name], dtype=int))
+                setattr(sr, "flux_batches", np.asarray(per_batch_sph_flux[name], dtype=float))
+                setattr(sr, "rays_per_batch", list(rays_per_batch_list))
+                setattr(sr, "n_batches", int(len(sph_grids)))
+
+        if 0 < n_batches_effective < 4:
+            cum_result.uq_warnings.append(
+                f"UQ CI undefined: only {n_batches_effective} batches completed "
+                "before adaptive convergence; need >=4 for Student-t. Skip CI "
+                "computation for affected detectors."
+            )
+
+        if partial_result_callback is not None:
+            try:
+                partial_result_callback(cum_result)
+            except Exception:
+                pass
+
+        return cum_result
 
     def _resolve_optics(self, surf):
         """Resolve optical behavior for a surface.

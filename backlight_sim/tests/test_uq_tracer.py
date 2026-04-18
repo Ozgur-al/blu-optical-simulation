@@ -209,22 +209,38 @@ def test_batches_have_uncorrelated_structure():
 
 
 def test_stderr_shrinks_sqrt_n():
-    """CI half-width ~ 1/sqrt(rays); doubling rays_per_source -> ~sqrt(2) narrower CI."""
-    from backlight_sim.core.uq import batch_mean_ci
+    """CI half-width ~ 1/sqrt(rays); doubling rays_per_source -> ~sqrt(2) narrower CI.
 
-    # Use a larger ray count to make the statistical test robust.
+    We use a spatially-varying KPI (center-bin flux) rather than total flux,
+    because total flux is conservation-bounded (~= effective source flux) and
+    does not show sqrt(N) behavior on its own: every ray of known weight lands
+    somewhere in the scene, so the batch-sum is near-deterministic for the
+    Simple Box.  A per-bin measurement exposes the Monte Carlo noise floor.
+    """
+    from backlight_sim.core.uq import batch_mean_ci, kpi_batches
+
+    # Use large ray counts so the statistical test is robust.
     r_small = RayTracer(_simple_box(rays=4000, k=10)).run()
-    r_big = RayTracer(_simple_box(rays=16000, k=10)).run()
+    r_big = RayTracer(_simple_box(rays=32000, k=10)).run()
     d_small = list(r_small.detectors.values())[0]
     d_big = list(r_big.detectors.values())[0]
-    flux_s = d_small.flux_batches
-    flux_b = d_big.flux_batches
-    ci_s = batch_mean_ci(flux_s)
-    ci_b = batch_mean_ci(flux_b)
-    ratio = ci_s.half_width / max(ci_b.half_width, 1e-12)
-    # Expected ratio = sqrt(16000/4000) = 2.0; accept 30% tolerance for MC noise.
-    # In pathological cases the ratio can invert — demand it be at least 1.2.
-    assert ratio > 1.2, f"CI did not shrink as expected: ratio={ratio}"
+
+    # KPI: mean flux over the central 10x10 region of the 100x100 detector
+    def _center_mean(grid: np.ndarray) -> float:
+        ny, nx = grid.shape
+        return float(grid[ny // 2 - 5: ny // 2 + 5, nx // 2 - 5: nx // 2 + 5].mean())
+
+    ks = kpi_batches(d_small.grid_batches, _center_mean)
+    kb = kpi_batches(d_big.grid_batches, _center_mean)
+    ci_s = batch_mean_ci(ks)
+    ci_b = batch_mean_ci(kb)
+    # half-width relative to mean — scale-invariant
+    rel_s = ci_s.half_width / max(abs(ci_s.mean), 1e-12)
+    rel_b = ci_b.half_width / max(abs(ci_b.mean), 1e-12)
+    ratio = rel_s / max(rel_b, 1e-12)
+    # Expected ratio = sqrt(32000/4000) = sqrt(8) ~ 2.83; accept 2.0 floor.
+    # MC noise in a small-sample test (K=10) is itself noisy — demand at least 1.5x.
+    assert ratio > 1.5, f"CI did not shrink as expected: ratio={ratio}"
 
 
 def test_path_recording_first_batch_only():
