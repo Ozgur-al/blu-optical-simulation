@@ -5,8 +5,8 @@ milestone_name: milestone
 current_plan: 1
 status: ready
 stopped_at: Completed 04-03-PLAN.md
-last_updated: "2026-04-18T22:10:00Z"
-last_activity: 2026-04-18 -- Phase 04 Plan 03 (UI CI rendering + HTML/CSV exports + end-to-end smoke) complete; Phase 04 closed
+last_updated: "2026-04-19T00:00:00Z"
+last_activity: 2026-04-19 -- Phase 04 human UAT approved (7/7 items); uq_batches + uq_include_spectral exposed in Simulation Settings with tooltips; golden suite 13/13 green
 progress:
   total_phases: 8
   completed_phases: 4
@@ -30,7 +30,7 @@ Milestone: v2.0-distribution — In Progress
 Phase: 04 (uncertainty-quantification) — COMPLETE (all 3 plans shipped)
 Plan: 3 of 3 (complete)
 Status: Phase 04 closed; ready for Phase 05 (tolerance MC) planning
-Last activity: 2026-04-18 -- Phase 04 Plan 03 (UI CI rendering + HTML/CSV exports + end-to-end smoke) complete
+Last activity: 2026-04-19 -- Phase 04 human UAT approved (7/7 items); UQ settings exposed in UI; golden suite 13/13 green
 
 Progress: [███████████████] 100% (14/14 plans)
 
