@@ -268,3 +268,228 @@ ALL_CASES.append(GoldenCase(
     default_rays=100_000,
     expected_runtime_s=3.0,
 ))
+
+
+# ---------------------------------------------------------------------------
+# Case registrations — Wave 2 (Plan 03-03)
+# ---------------------------------------------------------------------------
+# GOLD-03 (Fresnel glass) and GOLD-05 (prism dispersion) exercise the Python
+# physics path (SolidBox + SolidPrism Fresnel/TIR + spectral_material_data).
+# Both suites are intentionally registered as separate GoldenCase entries
+# per parametrized input so the CLI report shows one line per measurement.
+
+
+def _build_fresnel(theta_deg: float):
+    def _build(rays_override):
+        from backlight_sim.golden.builders import build_fresnel_glass_project
+        rays = rays_override if rays_override is not None else 200_000
+        return build_fresnel_glass_project(
+            theta_deg=theta_deg, rays=rays, n_glass=1.5,
+        )
+    return _build
+
+
+def _measure_fresnel(project, result) -> GoldenResult:
+    import numpy as _np
+    from backlight_sim.tests.golden.references import (
+        fresnel_transmittance_unpolarized,
+    )
+    det = result.detectors["reflected"]
+    source_flux = float(project.sources[0].flux)
+    T_measured = 1.0 - float(det.total_flux) / source_flux
+    # Extract theta from the project name (e.g., "fresnel_theta30.0")
+    try:
+        theta_deg = float(project.name.split("theta")[-1])
+    except ValueError:
+        theta_deg = 0.0
+    T_expected = float(
+        fresnel_transmittance_unpolarized(_np.radians(theta_deg), 1.0, 1.5)
+    )
+    return GoldenResult(
+        name=f"fresnel_T_theta={int(theta_deg)}",
+        expected=T_expected,
+        measured=T_measured,
+        residual=abs(T_measured - T_expected),
+        tolerance=0.02,
+        rays=int(project.settings.rays_per_source),
+        notes=(
+            f"air->glass n=1.5, reflected-flux topology, single interface "
+            f"(face_optics bottom=absorber)"
+        ),
+    )
+
+
+for _fresnel_theta in (0, 30, 45, 60, 80):
+    ALL_CASES.append(GoldenCase(
+        name=f"fresnel_T_theta={_fresnel_theta}",
+        description=(
+            f"Fresnel transmittance T(theta={_fresnel_theta} deg) at an "
+            f"air->glass (n=1.5) interface. SolidBox with bottom-face "
+            f"absorber override; reflected-flux topology (Pitfall 1 guard)."
+        ),
+        build_project=_build_fresnel(_fresnel_theta),
+        measure=_measure_fresnel,
+        default_rays=200_000,
+        expected_runtime_s=2.0,
+    ))
+
+
+def _build_prism(wavelength_nm: int):
+    def _build(rays_override):
+        from backlight_sim.golden.builders import build_prism_dispersion_project
+        rays = rays_override if rays_override is not None else 500_000
+        return build_prism_dispersion_project(
+            wavelength_nm=wavelength_nm, rays=rays,
+        )
+    return _build
+
+
+# Hardcoded n(lambda) used by the measurement callable; kept local so
+# the CLI does not pull the builder's private constants into its namespace.
+_PRISM_N_EXPECTED = {450: 1.5252, 550: 1.5187, 650: 1.5145}
+
+
+def _peak_direction_from_sphere(sph_result) -> np.ndarray:
+    """Return a unit-direction vector corresponding to the peak bin of a
+    far-field SphereDetectorResult.
+
+    Uses the raw flux grid (not ``candela_grid``) — see the specular
+    test's measure function for why: candela is divided by sin(theta)
+    which amplifies pole-bin noise.
+    """
+    grid = sph_result.grid
+    peak = np.unravel_index(int(np.argmax(grid)), grid.shape)
+    n_theta, n_phi = grid.shape
+    theta_peak = (peak[0] + 0.5) * np.pi / n_theta
+    phi_peak = (peak[1] + 0.5) * 2.0 * np.pi / n_phi
+    # Far-field records -direction, so the exit direction is the negation
+    # of the unit vector at (theta_peak, phi_peak).
+    v = np.array([
+        np.sin(theta_peak) * np.cos(phi_peak),
+        np.sin(theta_peak) * np.sin(phi_peak),
+        np.cos(theta_peak),
+    ])
+    return -v / np.linalg.norm(v)
+
+
+def _measure_prism(project, result) -> GoldenResult:
+    """Measure the *total deviation* angle between the source direction and
+    the exit direction from the prism, and compare to the analytical Snell
+    prediction ``D(lambda) = theta_in + theta_out - apex``.
+
+    Deviation (angle between two unit vectors) is rotation-invariant,
+    which avoids having to solve the exact world-frame exit direction
+    from the prism geometry.
+    """
+    from backlight_sim.golden.builders import PRISM_APEX_DEG, PRISM_THETA_IN_DEG
+    from backlight_sim.tests.golden.references import snell_exit_angle
+
+    sd = result.sphere_detectors["farfield"]
+    d_exit = _peak_direction_from_sphere(sd)
+    d_source = project.sources[0].direction / np.linalg.norm(project.sources[0].direction)
+    cos_dev = float(np.clip(np.dot(d_source, d_exit), -1.0, 1.0))
+    dev_measured_deg = float(np.degrees(np.arccos(cos_dev)))
+
+    try:
+        wl = int(project.name.split("lambda")[-1])
+    except ValueError:
+        wl = 550
+    n_expected = _PRISM_N_EXPECTED.get(wl, 1.5187)
+    theta_in = float(np.radians(PRISM_THETA_IN_DEG))
+    apex = float(np.radians(PRISM_APEX_DEG))
+    theta_out = snell_exit_angle(theta_in, n_expected, apex)
+    dev_expected_deg = (
+        float(np.degrees(theta_in + theta_out - apex))
+        if not np.isnan(theta_out)
+        else float("nan")
+    )
+
+    return GoldenResult(
+        name=f"prism_theta_lambda={wl}",
+        expected=dev_expected_deg,
+        measured=dev_measured_deg,
+        residual=abs(dev_measured_deg - dev_expected_deg),
+        tolerance=0.25,
+        rays=int(project.settings.rays_per_source),
+        notes=(
+            f"lambda={wl} nm, n={n_expected}, apex={PRISM_APEX_DEG} deg, "
+            f"theta_in={PRISM_THETA_IN_DEG} deg; total deviation metric"
+        ),
+    )
+
+
+for _wl in (450, 550, 650):
+    ALL_CASES.append(GoldenCase(
+        name=f"prism_theta_lambda={_wl}",
+        description=(
+            f"Prism exit deviation at lambda={_wl} nm through an equilateral "
+            f"BK7 prism (apex=60 deg, theta_in=40 deg) with spectral n(lambda) "
+            f"data. Exercises the SolidPrism + spectral_material_data dispatch."
+        ),
+        build_project=_build_prism(_wl),
+        measure=_measure_prism,
+        default_rays=500_000,
+        expected_runtime_s=12.0,
+    ))
+
+
+def _build_prism_dispersion_guard(rays_override):
+    # Dispersion guard builds the 450 nm variant; the test iterates both
+    # 450 and 650 and is wired through the pytest fixture. For the CLI
+    # registry we report the 450 nm measurement alongside its analytical
+    # expected deviation so it appears as a regression row.
+    from backlight_sim.golden.builders import build_prism_dispersion_project
+    rays = rays_override if rays_override is not None else 500_000
+    return build_prism_dispersion_project(wavelength_nm=450, rays=rays)
+
+
+def _measure_prism_dispersion_guard(project, result) -> GoldenResult:
+    """Dispersion-guard CLI row.
+
+    The actual memory-flag closure assertion (``dispersion_deg > 0.1``)
+    runs inside ``test_prism_dispersion.py`` — that test spins up both the
+    450 and 650 nm builds to measure the dispersion. For the CLI report we
+    surface the 450 nm deviation so the dispersion case appears as its
+    own entry in ``run_case`` output.
+    """
+    from backlight_sim.golden.builders import PRISM_APEX_DEG, PRISM_THETA_IN_DEG
+    from backlight_sim.tests.golden.references import snell_exit_angle
+
+    sd = result.sphere_detectors["farfield"]
+    d_exit = _peak_direction_from_sphere(sd)
+    d_source = project.sources[0].direction / np.linalg.norm(project.sources[0].direction)
+    cos_dev = float(np.clip(np.dot(d_source, d_exit), -1.0, 1.0))
+    dev_measured_deg = float(np.degrees(np.arccos(cos_dev)))
+
+    n_450 = _PRISM_N_EXPECTED[450]
+    theta_in = float(np.radians(PRISM_THETA_IN_DEG))
+    apex = float(np.radians(PRISM_APEX_DEG))
+    theta_out = snell_exit_angle(theta_in, n_450, apex)
+    dev_expected_deg = float(np.degrees(theta_in + theta_out - apex))
+
+    return GoldenResult(
+        name="prism_dispersion_guard",
+        expected=dev_expected_deg,
+        measured=dev_measured_deg,
+        residual=abs(dev_measured_deg - dev_expected_deg),
+        tolerance=0.25,
+        rays=int(project.settings.rays_per_source),
+        notes=(
+            "MEMORY FLAG CLOSURE proxy (450 nm leg) - "
+            "project_spectral_ri_testing.md"
+        ),
+    )
+
+
+ALL_CASES.append(GoldenCase(
+    name="prism_dispersion_guard",
+    description=(
+        "Memory-flag closure proxy for ``project_spectral_ri_testing.md``: "
+        "reports the 450 nm deviation through the BK7 prism; the actual "
+        "dispersion>0.1 deg guard lives in test_prism_dispersion.py."
+    ),
+    build_project=_build_prism_dispersion_guard,
+    measure=_measure_prism_dispersion_guard,
+    default_rays=500_000,
+    expected_runtime_s=12.0,
+))

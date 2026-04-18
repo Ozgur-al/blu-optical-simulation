@@ -32,8 +32,9 @@ import numpy as np
 
 from backlight_sim.core.detectors import DetectorSurface, SphereDetector
 from backlight_sim.core.geometry import Rectangle
-from backlight_sim.core.materials import Material
+from backlight_sim.core.materials import Material, OpticalProperties
 from backlight_sim.core.project_model import Project, SimulationSettings
+from backlight_sim.core.solid_body import SolidBox, SolidPrism
 from backlight_sim.core.sources import PointSource
 
 
@@ -343,4 +344,257 @@ def build_specular_mirror_project(
             size=(40.0, 40.0),
             resolution=(80, 80),
         ))
+    return project
+
+
+# ---------------------------------------------------------------------------
+# GOLD-03 — Fresnel transmittance (air -> glass)
+# ---------------------------------------------------------------------------
+
+
+def build_fresnel_glass_project(
+    theta_deg: float = 0.0,
+    rays: int = 200_000,
+    n_glass: float = 1.5,
+) -> Project:
+    """Single glass slab (SolidBox) illuminated by a pencil beam at
+    incidence angle ``theta_deg`` on the top face.
+
+    Measurement topology
+    --------------------
+    The slab's BOTTOM face carries ``face_optics={"bottom": "absorber"}``
+    (Pitfall-1 guard from RESEARCH §Case 3): a ray that refracts through
+    the top face and reaches the bottom is killed there, so the second
+    glass->air interface can never contribute to the measured reflected
+    flux. A single ``DetectorSurface "reflected"`` is placed along the
+    mirror-reflected direction of the source beam. The test computes
+
+        T_measured = 1.0 - reflected_flux / source_flux
+
+    so the measurement depends on a single unambiguous quantity.
+
+    Source is a pencil beam (2-point CDF ``theta_deg=[0, 1]``,
+    ``intensity=[1, 0]``) aimed at the slab origin — see the pencil-beam
+    smoke probe in the accompanying test for the sampler-collapse guard.
+    """
+    project = _base_project(
+        f"fresnel_theta{theta_deg}",
+        rays,
+        max_bounces=4,
+    )
+    # Materials — ``glass`` only needs a refractive_index for the SolidBox
+    # Fresnel dispatch at tracer.py:1242.
+    project.materials["glass"] = Material(
+        name="glass",
+        surface_type="reflector",
+        reflectance=0.0,
+        absorption=0.0,
+        transmittance=0.0,
+        is_diffuse=False,
+        refractive_index=float(n_glass),
+    )
+    # Optical-properties entry named "absorber" — face_optics values are
+    # keys into project.optical_properties (NOT project.materials), see
+    # tracer.py:1163-1166.
+    project.optical_properties["absorber"] = OpticalProperties(
+        name="absorber",
+        surface_type="absorber",
+        reflectance=0.0,
+        absorption=1.0,
+        transmittance=0.0,
+    )
+
+    # Glass slab centered at origin. Top face at z=+1, bottom at z=-1.
+    # The bottom face is overridden to be an absorber so only the top
+    # air->glass interface can contribute to the reflected detector.
+    project.solid_bodies.append(SolidBox(
+        name="slab",
+        center=np.array([0.0, 0.0, 0.0]),
+        dimensions=(50.0, 50.0, 2.0),
+        material_name="glass",
+        face_optics={"bottom": "absorber"},
+    ))
+
+    # Source geometry. Top face of the slab is at z=+1. Let the incoming
+    # beam hit the top face at the origin of that face (0, 0, 1). We put
+    # the source a distance L_src BEFORE this hit point along -src_dir so
+    # pencil-cone rays all strike near the same point, and the reflected
+    # detector a distance L_det AFTER the hit point along +refl_dir. With
+    # L_src != L_det the source and detector are never colocated — critical
+    # at theta=0 where both points sit on the +z axis.
+    theta = float(np.radians(theta_deg))
+    src_dir = np.array([0.0, np.sin(theta), -np.cos(theta)])
+    src_dir = src_dir / np.linalg.norm(src_dir)
+    refl_dir = np.array([0.0, np.sin(theta), np.cos(theta)])
+
+    top_hit = np.array([0.0, 0.0, 1.0])
+    L_src = 10.0
+    L_det = 20.0
+    src_pos = top_hit - L_src * src_dir
+    det_pos = top_hit + L_det * refl_dir
+
+    project.angular_distributions["pencil"] = {
+        "theta_deg": [0.0, 1.0],
+        "intensity": [1.0, 0.0],
+    }
+    project.sources.append(PointSource(
+        name="src",
+        position=src_pos,
+        flux=1000.0,
+        direction=src_dir,
+        distribution="pencil",
+        flux_tolerance=0.0,
+    ))
+
+    # Detector plane perpendicular to refl_dir. Use x as one in-plane axis
+    # since refl_dir lies in the y-z plane.
+    u_axis = np.array([1.0, 0.0, 0.0])
+    v_axis = np.cross(refl_dir, u_axis)
+    _vn = np.linalg.norm(v_axis)
+    if _vn > 0:
+        v_axis = v_axis / _vn
+    project.detectors.append(DetectorSurface(
+        name="reflected",
+        center=det_pos,
+        u_axis=u_axis,
+        v_axis=v_axis,
+        size=(100.0, 100.0),
+        resolution=(10, 10),
+    ))
+    return project
+
+
+# ---------------------------------------------------------------------------
+# GOLD-05 — prism dispersion
+# ---------------------------------------------------------------------------
+
+
+# Hardcoded geometry constants so the test file, builder, and CLI all
+# reference the same numbers. The apex is fixed at 60 (equilateral) because
+# SolidPrism(n_sides=3) is always equilateral — see RESEARCH §Case 5 and the
+# Rule-4 deviation note in the 03-03 SUMMARY.
+PRISM_APEX_DEG = 60.0
+PRISM_THETA_IN_DEG = 40.0  # near min-deviation at apex=60 for BK7 (Rule 4 deviation)
+
+# BK7-like n(lambda) sampled at the 3 test wavelengths.
+_BK7_WAVELENGTHS_NM = [450.0, 550.0, 650.0]
+_BK7_REFRACTIVE_INDEX = [1.5252, 1.5187, 1.5145]
+
+
+def build_prism_dispersion_project(
+    wavelength_nm: int = 550,
+    apex_deg: float = PRISM_APEX_DEG,
+    theta_in_deg: float = PRISM_THETA_IN_DEG,
+    rays: int = 500_000,
+) -> Project:
+    """Equilateral triangular prism (SolidPrism, n_sides=3) illuminated by
+    a monochromatic pencil beam at ``theta_in_deg`` from the incidence-face
+    normal.
+
+    The prism axis is along +y so the triangular cross-section lies in the
+    x-z plane (natural optics orientation). The ``_perpendicular_basis``
+    helper at ``solid_body.py:102`` returns ``u_local=(0, 0, -1)`` and
+    ``v_local=(-1, 0, 0)`` for axis=(0,1,0); the three polygon vertices land
+    at world points ``(0, 0, -10)``, ``(-8.66, 0, 5)``, ``(+8.66, 0, 5)``,
+    so ``side_0`` (edge v0->v1) has outward normal
+    ``(-0.866, 0, -0.5)`` and ``side_2`` (edge v2->v0) has
+    ``(+0.866, 0, -0.5)`` — the two incidence faces meeting at the apex edge
+    ``x=0, z=-10``. Apex interior angle between them is 60 (equilateral).
+
+    Source geometry
+    ---------------
+    For theta_in_deg=40 we aim a pencil beam at the center of side_0 from
+    outside the prism. Inward normal of side_0 = (+0.866, 0, +0.5) points
+    into the glass. The source direction is the unit vector that makes
+    angle theta_in with this inward normal, in the x-z plane, tilted toward
+    the exit side: ``d = (cos(theta_n - theta_in), 0, sin(theta_n - theta_in))``
+    where ``theta_n = 30 deg`` is the angle of the inward normal off +x.
+
+    spd='mono_<nm>' + spectral_material_data['bk7'] are the two preconditions
+    for the n(lambda) dispatch at tracer.py:1495. Without BOTH the tracer
+    silently falls back to the scalar ``material.refractive_index`` and
+    dispersion collapses to zero (Pitfall 3).
+    """
+    # Enforce the plan's Rule-4 deviation constants loudly.
+    if abs(apex_deg - 60.0) > 1e-9:
+        raise ValueError(
+            "build_prism_dispersion_project: apex_deg must be 60.0. "
+            "SolidPrism(n_sides=3) is fixed-equilateral (60 degree apex); "
+            "see 03-03 SUMMARY Rule-4 deviation note."
+        )
+
+    project = _base_project(
+        f"prism_lambda{wavelength_nm}",
+        rays,
+        max_bounces=10,
+    )
+    project.materials["bk7"] = Material(
+        name="bk7",
+        surface_type="reflector",
+        reflectance=0.0,
+        absorption=0.0,
+        transmittance=0.0,
+        is_diffuse=False,
+        refractive_index=1.5187,
+    )
+    # Spectral n(lambda) data — keyed by the material_name exactly
+    # (tracer.py:1495 does .get(prism.material_name)). Without this entry,
+    # the dispatch falls back to scalar refractive_index and dispersion = 0.
+    project.spectral_material_data["bk7"] = {
+        "wavelength_nm": list(_BK7_WAVELENGTHS_NM),
+        "refractive_index": list(_BK7_REFRACTIVE_INDEX),
+    }
+
+    # Prism geometry — axis +y, center at origin.
+    project.solid_prisms.append(SolidPrism(
+        name="prism",
+        center=np.array([0.0, 0.0, 0.0]),
+        axis=np.array([0.0, 1.0, 0.0]),
+        n_sides=3,
+        circumscribed_radius=10.0,
+        length=20.0,
+        material_name="bk7",
+    ))
+
+    # Source: pencil beam at theta_in from the inward normal of side_0.
+    theta_in = float(np.radians(theta_in_deg))
+    # Inward normal of side_0 in world = (+sin60, 0, +cos60) = (0.866, 0, 0.5)
+    # Angle of inward normal off +x = +30 (rotating about y toward +z).
+    theta_n = float(np.radians(30.0))
+    # Ray direction makes angle theta_in with inward normal, in the x-z
+    # plane, tilted toward the exit side (rotated in the -z direction from
+    # the inward normal). This yields the symmetric-like configuration where
+    # the refracted ray inside the glass is roughly parallel to +x.
+    phi = theta_n - theta_in
+    src_dir = np.array([np.cos(phi), 0.0, np.sin(phi)])
+    src_dir = src_dir / np.linalg.norm(src_dir)
+
+    # Side_0 face center in world = (-4.33, 0, -2.5). Place source 30 mm
+    # back along -src_dir from that center so the pencil hits the middle
+    # of the face.
+    face_center_side_0 = np.array([-4.33, 0.0, -2.5])
+    src_pos = face_center_side_0 - 30.0 * src_dir
+
+    project.angular_distributions["pencil"] = {
+        "theta_deg": [0.0, 0.5],
+        "intensity": [1.0, 0.0],
+    }
+    project.sources.append(PointSource(
+        name="src",
+        position=src_pos,
+        flux=1000.0,
+        direction=src_dir,
+        distribution="pencil",
+        flux_tolerance=0.0,
+        spd=f"mono_{int(wavelength_nm)}",
+    ))
+
+    # Far-field sphere detector for angular readout (0.5 polar bins).
+    project.sphere_detectors.append(SphereDetector(
+        name="farfield",
+        center=np.array([0.0, 0.0, 0.0]),
+        radius=1000.0,
+        resolution=(720, 360),
+        mode="far_field",
+    ))
     return project

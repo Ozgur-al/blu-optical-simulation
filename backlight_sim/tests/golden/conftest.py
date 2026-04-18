@@ -64,14 +64,9 @@ def make_lambertian_emitter_scene():
 def make_fresnel_scene():
     def _build(theta_deg: float = 0.0, rays: int = 200_000,
                n_glass: float = 1.5) -> Project:
-        project = _base_project(f"fresnel_theta{theta_deg}", rays)
-        project.sources.append(
-            PointSource("src", np.array([0.0, 0.0, 10.0]), flux=1000.0,
-                        direction=np.array([0.0, 0.0, -1.0]))
+        return _builders.build_fresnel_glass_project(
+            theta_deg=theta_deg, rays=rays, n_glass=n_glass,
         )
-        # Plan 03 fills in: SolidBox(glass, face_optics={"bottom": "absorber"})
-        # + transmitted/reflected DetectorSurfaces. Pitfall 1 guard REQUIRED.
-        return project
     return _build
 
 
@@ -87,21 +82,14 @@ def make_specular_mirror_scene():
 
 @pytest.fixture
 def make_prism_scene():
-    def _build(wavelength_nm: int = 550, apex_deg: float = 45.0,
-               theta_in_deg: float = 20.0, rays: int = 500_000) -> Project:
-        project = _base_project(f"prism_lambda{wavelength_nm}", rays)
-        project.sources.append(
-            PointSource(
-                "src", np.array([0.0, 0.0, 10.0]), flux=1000.0,
-                direction=np.array([0.0, 0.0, -1.0]),
-                spd=f"mono_{wavelength_nm}",  # MANDATORY — triggers has_spectral
-            )
+    def _build(wavelength_nm: int = 550,
+               apex_deg: float = _builders.PRISM_APEX_DEG,
+               theta_in_deg: float = _builders.PRISM_THETA_IN_DEG,
+               rays: int = 500_000) -> Project:
+        return _builders.build_prism_dispersion_project(
+            wavelength_nm=wavelength_nm,
+            apex_deg=apex_deg,
+            theta_in_deg=theta_in_deg,
+            rays=rays,
         )
-        # Plan 03 fills in:
-        #   - project.spectral_material_data["bk7"] = {
-        #         "wavelength_nm":[450,550,650],
-        #         "refractive_index":[1.5252,1.5187,1.5145]}
-        #   - SolidPrism(n_sides=3, material_name="bk7", ...)
-        #   - SphereDetector(mode="far_field") on exit side
-        return project
     return _build
