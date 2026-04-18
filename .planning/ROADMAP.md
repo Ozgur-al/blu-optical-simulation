@@ -33,7 +33,8 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 6. Tracer Cross-Phase Wiring | v1.0 | 2/2 | Complete | 2026-03-15 |
 | 7. UI + Spectral Display Fixes | v1.0 | 1/1 | Complete | 2026-03-15 |
 | 02. Converting main simulation loop to C++ | v2.0 | 4/4 | Complete    | 2026-04-18 |
-| 04. Uncertainty quantification | v2.0 | 2/3 | In Progress | — |
+| 03. Golden-reference validation suite | v2.0 | 4/4 | Complete    | 2026-04-18 |
+| 04. Uncertainty quantification | v2.0 | 3/3 | Complete    | 2026-04-18 |
 
 ### Phase 1: distribution for admin locked work computer compatibility, splash screen etc.
 
@@ -76,10 +77,10 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 03-01-PLAN.md — Scaffolding + Wave 0 budget probe (GOLD-00): package layout, references.py, conftest fixtures, GoldenCase/GoldenResult registry, C++ vs Python throughput probe, SPD naming smoke check
-- [ ] 03-02-PLAN.md — Cheap analytical cases (GOLD-01, GOLD-02, GOLD-04): integrating cavity + Lambertian cosine law + specular dual C++/Python sub-cases
-- [ ] 03-03-PLAN.md — Expensive cases + memory-flag closure (GOLD-03, GOLD-05): Fresnel T(θ) at 5 angles with face_optics absorber override (Pitfall 1); prism dispersion at 3 wavelengths with nonzero-dispersion guard (Pitfall 3) — closes project_spectral_ri_testing.md
-- [ ] 03-04-PLAN.md — CLI report + integration test + CLAUDE.md gate (GOLD-06): python -m backlight_sim.golden --report produces HTML (matplotlib Agg, graceful fallback) + markdown; subprocess integration test; documentation
+- [x] 03-01-PLAN.md — Scaffolding + Wave 0 budget probe (GOLD-00): package layout, references.py, conftest fixtures, GoldenCase/GoldenResult registry, C++ vs Python throughput probe, SPD naming smoke check (complete 2026-04-18)
+- [x] 03-02-PLAN.md — Cheap analytical cases (GOLD-01, GOLD-02, GOLD-04): integrating cavity + Lambertian cosine law + specular dual C++/Python sub-cases (complete 2026-04-18)
+- [x] 03-03-PLAN.md — Expensive cases + memory-flag closure (GOLD-03, GOLD-05): Fresnel T(θ) at 5 angles with face_optics absorber override; prism dispersion at 3 wavelengths — closes project_spectral_ri_testing.md (complete 2026-04-18)
+- [x] 03-04-PLAN.md — CLI report + integration test + CLAUDE.md gate (GOLD-06): python -m backlight_sim.golden --report HTML + markdown; subprocess integration test; documentation (complete 2026-04-18)
 
 ### Phase 4: Uncertainty quantification (Monte Carlo noise bars on KPIs)
 
@@ -100,7 +101,7 @@ Plans:
 Plans:
 - [x] 04-01-PLAN.md — Data model + core/uq.py + core/kpi.py lift-and-shift + unit tests (complete 2026-04-18)
 - [x] 04-02-PLAN.md — Tracer batch loop (C++ fast path + Python fallback + MP merge) with per-batch seeding (complete 2026-04-18)
-- [ ] 04-03-PLAN.md — UI CI rendering (heatmap, convergence tab, sweep) + HTML/CSV exports + end-to-end smoke
+- [x] 04-03-PLAN.md — UI CI rendering (heatmap, convergence tab, sweep) + HTML/CSV exports + end-to-end smoke (complete 2026-04-18)
 
 ### Phase 5: Geometry tolerance Monte Carlo
 

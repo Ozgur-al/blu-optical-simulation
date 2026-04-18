@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
-current_plan: 3
-status: executing
-stopped_at: Completed 04-02-PLAN.md
-last_updated: "2026-04-18T20:40:00Z"
-last_activity: 2026-04-18 -- Phase 04 Plan 02 (tracer K-batch UQ loop on C++/Python/MP paths) complete
+current_plan: 1
+status: ready
+stopped_at: Completed 04-03-PLAN.md
+last_updated: "2026-04-18T22:10:00Z"
+last_activity: 2026-04-18 -- Phase 04 Plan 03 (UI CI rendering + HTML/CSV exports + end-to-end smoke) complete; Phase 04 closed
 progress:
   total_phases: 8
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 14
-  completed_plans: 13
-  percent: 93
+  completed_plans: 14
+  percent: 100
 ---
 
 # Project State
@@ -27,18 +27,18 @@ See: .planning/PROJECT.md (updated 2026-03-15)
 ## Current Position
 
 Milestone: v2.0-distribution — In Progress
-Phase: 04 (uncertainty-quantification) — EXECUTING (Plan 03 active)
-Plan: 3 of 3
-Status: Executing Phase 04 (Plan 02 complete; Plan 03 UI rendering next)
-Last activity: 2026-04-18 -- Phase 04 Plan 02 (tracer K-batch UQ loop) complete
+Phase: 04 (uncertainty-quantification) — COMPLETE (all 3 plans shipped)
+Plan: 3 of 3 (complete)
+Status: Phase 04 closed; ready for Phase 05 (tolerance MC) planning
+Last activity: 2026-04-18 -- Phase 04 Plan 03 (UI CI rendering + HTML/CSV exports + end-to-end smoke) complete
 
-Progress: [██████████████] 93% (13/14 plans)
+Progress: [███████████████] 100% (14/14 plans)
 
 ## Current Position Detail
 
-Phase: 04-uncertainty-quantification
-Current Plan: 3
-Stopped at: Completed 04-02-PLAN.md
+Phase: 04-uncertainty-quantification (complete)
+Current Plan: — (Phase 04 finished; Phase 05 not planned yet)
+Stopped at: Completed 04-03-PLAN.md
 
 ## Accumulated Context
 
@@ -107,6 +107,16 @@ Stopped at: Completed 04-02-PLAN.md
 - Phase 04 Plan 02 (Wave 2): Python MP worker (`_trace_single_source`) UQ batching deferred. Used only for MP+spectral+solid-body scenes. Aggregator handles missing UQ payload gracefully via `.get(..., None)`. Not covered by tests; graceful degradation (DetectorResult.grid_batches=None) rather than failure.
 - Phase 04 Plan 02 (Wave 2): Sphere detector UQ attached via `setattr` (not dataclass fields). Wave 1 did not extend `SphereDetectorResult` with UQ fields; this Wave 2 hand-off uses attributes. Wave 3 UI reads via `getattr(sr, "grid_batches", None)`.
 - Phase 04 Plan 02 (Wave 2): stderr shrinkage test (`test_stderr_shrinks_sqrt_n`) uses center-bin mean flux KPI rather than total flux. Total flux in the reflective Simple Box is conservation-bounded (every ray lands somewhere), so batch-to-batch variance is near-zero and does not show 1/sqrt(N) behavior. Center-bin mean exposes the Monte Carlo spatial noise correctly.
+- Phase 04 Plan 03 (Wave 3): shared `core.kpi.compute_all_kpi_cis(result, conf_level)` aggregator is the single source of CI strings for heatmap_panel, io/report, and io/batch_export. Previously-planned duplicate KPI→CI dispatch across three call sites collapsed to one — eliminates the risk of per-surface CI drift and guarantees consistent column layout across the KPI CSV and the ZIP kpi.csv.
+- Phase 04 Plan 03 (Wave 3): `core.kpi._per_batch_source_flux(result, det)` is the single source of truth for per-batch source flux. Consumed by heatmap_panel._compute_all_kpi_batches, parameter_sweep_dialog._per_step_kpi_cis, convergence_tab._per_batch_values_up_to_k, and compute_all_kpi_cis itself. Rays_per_batch-aware scaling guarantees unbiased per-batch efficiency even when `rays_per_source % K != 0` (checker I5 / threat T-04.03-05). Verified by three dedicated tests (test_efficiency_ci_uses_rays_per_batch_not_naive_division, test_sweep_efficiency_uses_rays_per_batch, test_compute_all_kpi_cis_uses_rays_per_batch).
+- Phase 04 Plan 03 (Wave 3): MainWindow carries TWO "Convergence" tabs — the existing `self._conv_plot` (live CV%-per-source plot updated during simulation, kept for backward-compat) and the new ConvergenceTab ("Convergence (UQ)" — cumulative-KPI + FillBetweenItem CI band populated after sim). Keeping them separate avoids breaking the live-feedback flow users rely on.
+- Phase 04 Plan 03 (Wave 3): confidence-level dropdown in heatmap panel recomputes CI labels from cached per-batch arrays (populated once in update_results) without touching the tracer. Dropdown switch 95%→99% re-renders labels via `batch_mean_ci(cached_vals, conf_level=new)` only — verified by test_confidence_combo_recomputes_without_rerun.
+- Phase 04 Plan 03 (Wave 3): Per-bin relative stderr overlay added as 4th item in the existing color-mode combo (rather than a separate widget). Renders `per_bin_stderr(grid_batches) / (grid / n_batches)` with `np.where(mean_bin > 0, ..., 0.0)` to mask division-by-zero at bins where no rays landed. Gracefully shows an informational label when UQ is off.
+- Phase 04 Plan 03 (Wave 3): sweep dialog CI column headers chosen as concise `eff ± Δ / u14 ± Δ / hot ± Δ` (3 columns, ~8 chars each). Per-step CI cells show the full CIEstimate.format() string. Per-step CI uses the SAME rays_per_batch-aware scaling as the heatmap/report path — no inline divergence.
+- Phase 04 Plan 03 (Wave 3): HTML report embeds the matplotlib errorbar chart via a SECOND `<img src="data:image/png;base64,...">` tag, mirroring the existing heatmap PNG pattern. Graceful matplotlib-missing: `_errorbar_chart_base64` returns `""` inside an `except ImportError` and the caller's `if errorbar_png:` guard produces no `<img>` tag rather than crashing. Tested via monkeypatched `builtins.__import__` blocking `matplotlib*`.
+- Phase 04 Plan 03 (Wave 3): CSV schema gained 7 CI columns (`mean,half_width,std,lower,upper,n_batches,conf_level`) AFTER the legacy `metric,value,unit` triple. Position-based parsers of the first three columns still work. Legacy (UQ-off) rows write empty strings for the CI columns — consumers filter on `n_batches == 0` or empty to identify UQ-off entries.
+- Phase 04 Plan 03 (Wave 3): headless Qt test pattern adopted — `QT_QPA_PLATFORM=offscreen` set at test module import, single `QApplication.instance() or QApplication([])` fixture at module scope. `isHidden()` used instead of `isVisible()` because the latter returns False until a top-level window is explicitly shown. Applied consistently across test_uq_ui.py and test_uq_exports.py.
+- Phase 04 Plan 03 (Wave 3): end-to-end smoke test (`test_end_to_end_uq_smoke`) disables `adaptive_sampling` because the Simple Box preset with `rays_per_source=2000` + K=10 converges at k'=2 (below the 4-batch CI floor). Documented as a user-facing interaction: if you want full K-batch CI fidelity at low ray counts, turn adaptive off.
 
 ### Roadmap Evolution
 
@@ -139,5 +149,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-04-18
-Stopped at: Completed 04-02-PLAN.md (Phase 04 Wave 2 — tracer K-batch UQ loop on all three execution paths). `backlight_sim/sim/tracer.py` gains 4 new module-level helpers (`_effective_uq_batches`, `_batch_seed`, `_partition_rays`, `_replace_settings`), a new `_run_uq_batched` method (~210 lines) that wraps `_run_single` with K chunks + per-batch seeded RNG + source flux scaling for energy conservation + chunk-boundary adaptive convergence, extends `_cpp_trace_single_source` with a K-loop (~120 lines, up from ~15) for the multiprocess C++ worker path, and augments `_run_multiprocess` with per-batch worker aggregate merging. `RayTracer.run` now emits the "adaptive+UQ" warning onto `SimulationResult.uq_warnings` (CONTEXT D-01). Each of 3 md5-derived C++ seed derivation sites masks to signed int32 (`& 0x7FFFFFFF`) to avoid pybind11 TypeError on hashes > INT_MAX — pre-existing dormant bug flagged as Rule 1 auto-fix. Per-chunk energy conservation via source flux scaling `(rays_this_batch / rays_total)` caught by golden suite as Rule 2 auto-fix. New `backlight_sim/tests/test_uq_tracer.py` (390 lines, 25 tests) covers helpers, remainder distribution, deterministic seeding, stderr shrinkage on center-bin KPI, first-batch-only path recording, adaptive+UQ warning attachment, chunk-boundary convergence instrumentation, spectral toggle, clamp policy, MP parity. 3 new integration tests appended to `test_tracer.py` (bit-identical legacy determinism anchor, C++ batch-sum vs single-run KS test scipy-gated, Python spectral batch-sum vs single-run). C++ extension `_blu_tracer/src/*` untouched — batching is entirely Python-side. Full suite: **212 passed, 6 warnings in 89.92 s**. Phase 04 Plan 02 CLOSED; Plan 03 (UI CI rendering — heatmap, convergence tab, sweep, HTML/CSV exports) is next and final wave.
+Stopped at: Completed 04-03-PLAN.md (Phase 04 Wave 3 — UI CI rendering + HTML/CSV exports + end-to-end smoke). New `backlight_sim/gui/convergence_tab.py` (199 lines) introduces `ConvergenceTab(QWidget)` with a pyqtgraph PlotWidget + FillBetweenItem CI band and a KPI selector (uniformity 1/4 / efficiency / hotspot). MainWindow wires it as "Convergence (UQ)" tab next to the Plots tab (distinct from the existing live CV%-per-source "Convergence" tab). `backlight_sim/core/kpi.py` gains `_per_batch_source_flux(result, det)` (single source of truth for rays_per_batch-aware per-batch source flux — closes checker I5 / threat T-04.03-05) and `compute_all_kpi_cis(result, conf_level)` (shared CI aggregator consumed by heatmap_panel, io/report, io/batch_export). `backlight_sim/gui/heatmap_panel.py` gains a confidence-level dropdown (90/95/99%, default 95%) that recomputes CI labels WITHOUT re-running the tracer, a "Per-bin relative stderr" entry in the color-mode combo that renders `sigma_bin / mean_bin` from `grid_batches`, a UQ warnings banner (orange label for all `result.uq_warnings` strings), and a CI-aware KPI CSV exporter with the 10-column schema `metric,value,unit,mean,half_width,std,lower,upper,n_batches,conf_level`. `backlight_sim/gui/parameter_sweep_dialog.py` gains 3 CI columns (`eff ± Δ / u14 ± Δ / hot ± Δ`) on both single and multi-parameter sweep tables, a `pg.ErrorBarItem` overlay on the KPI trace with per-step half-widths, and a `_per_step_kpi_cis` helper using `_per_batch_source_flux` for unbiased efficiency scaling. `backlight_sim/io/report.py` HTML report renders `value ± half_width unit` on KPI rows and embeds a second `<img>` matplotlib errorbar chart (graceful fallback when matplotlib is missing); `backlight_sim/io/batch_export.py` ships the same 10-column CI schema in the ZIP kpi.csv. New `backlight_sim/tests/test_uq_ui.py` (430 lines, 17 headless-Qt tests via `QT_QPA_PLATFORM=offscreen`) covers heatmap labels (CI / legacy / sub-floor), confidence dropdown, noise overlay, warning banner multi-line + hidden state, CSV schema, ConvergenceTab construction/populate/noop, sweep ErrorBarItem + CI columns, rays_per_batch efficiency scaling. New `backlight_sim/tests/test_uq_exports.py` (298 lines, 8 tests) covers HTML CI strings / legacy no-CI / errorbar image / matplotlib-missing graceful; batch zip CI header (UQ-on + legacy); compute_all_kpi_cis rays_per_batch correctness; end-to-end Simple-Box smoke (4k rays, K=10, adaptive disabled) through csv + html + zip. Full suite: **237 passed, 7 warnings in 91.76 s**. Phase 04 CLOSED — every reported KPI ships with a 95% CI end-to-end, rays_per_batch-aware scaling eliminates remainder-distribution bias across all surfaces. Phase 05 (tolerance MC) and Phase 06 (optimizer) can now consume `compute_all_kpi_cis` for noise-aware objectives.
 Resume file: None
