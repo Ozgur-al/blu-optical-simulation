@@ -1,18 +1,18 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
+milestone: v2.0
 milestone_name: milestone
-current_plan: 3
+current_plan: 2
 status: executing
-stopped_at: Completed 03-02-PLAN.md
-last_updated: "2026-04-18T16:24:00Z"
-last_activity: 2026-04-18 -- Phase 03 Plan 02 (Wave 1 cheap physics cases) complete
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-04-18T19:55:00Z"
+last_activity: 2026-04-18 -- Phase 04 Plan 01 (UQ data model + core/uq + core/kpi lift) complete
 progress:
   total_phases: 8
   completed_phases: 2
-  total_plans: 13
-  completed_plans: 9
-  percent: 69
+  total_plans: 14
+  completed_plans: 11
+  percent: 79
 ---
 
 # Project State
@@ -28,17 +28,17 @@ See: .planning/PROJECT.md (updated 2026-03-15)
 
 Milestone: v2.0-distribution — In Progress
 Phase: 03 (golden-reference-validation-suite) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Executing Phase 03
-Last activity: 2026-04-18 -- Phase 03 Plan 02 (Wave 1 physics) complete
+Last activity: 2026-04-18 -- Phase 03 Plan 03 (Wave 2 Fresnel + prism dispersion) complete — memory flag closed
 
-Progress: [█████████·] 90% (9/10 plans after Phase 03 expansion)
+Progress: [███████████] 100% of pre-04 scope (10/13 plans)
 
 ## Current Position Detail
 
 Phase: 03-golden-reference-validation-suite
-Current Plan: 3
-Stopped at: Completed 03-02-PLAN.md
+Current Plan: 4
+Stopped at: Completed 03-03-PLAN.md
 
 ## Accumulated Context
 
@@ -81,6 +81,11 @@ Stopped at: Completed 03-02-PLAN.md
 - Phase 03 Plan 02 (Wave 1): default `energy_threshold` in the golden `_base_project` is 1e-9 (vs 1e-3 default). Otherwise rays die after ~6 bounces at 500k ray counts and the steady-state cavity flux drifts systematically with ray count, breaking Monte Carlo convergence.
 - Phase 03 Plan 02 (Wave 1): sphere-detector peak-finding uses raw `sd.grid`, not `sd.candela_grid`. Candela divides by sin(θ) floored at 1e-6, amplifying pole-bin noise by up to 10^6x and placing argmax at the poles independent of the physics.
 - Phase 03 Plan 02 (Wave 1): added `integrating_sphere_port_irradiance` to references.py — combines direct point-source inverse-square flux + integrating-sphere throughput multiplier M=ρ/[1-ρ(1-f)]. Residual at 500k rays: 0.38% (well under 2% tolerance).
+- Phase 03 Plan 03 (Wave 2): `SolidPrism(n_sides=3)` is fixed-equilateral (apex=60° enforced in builder). RESEARCH.md's apex=45° suggestion not applicable. Prism dispersion test uses θ_in=40° (near min-deviation) — Rule 4 deviation authorized because 20° causes TIR at all 3 BK7 wavelengths per analytical `snell_exit_angle`. At 40° the analytical dispersion is 1.19° (12× above the 0.1° memory-flag guard); measured dispersion at seed=42 is 1.00° (16% relative residual).
+- Phase 03 Plan 03 (Wave 2): Fresnel scene uses asymmetric source/detector placement (L_src=10, L_det=20 along incidence/reflection rays from top-face hit point) so source pencil-beam cone and reflected detector never coincide at θ=0 (both would otherwise sit on the +z axis and the detector would catch downgoing source rays, giving T_measured=-0.04).
+- Phase 03 Plan 03 (Wave 2): `face_optics` values resolve against `project.optical_properties` (not `project.materials`) per `tracer.py:1163-1166`. The Fresnel absorber override is added as an `OpticalProperties` dataclass entry, not a `Material`.
+- Phase 03 Plan 03 (Wave 2): prism total-deviation metric (D = θ_in + θ_out − apex, = angle between source dir and far-field peak dir) is rotation-invariant and sidesteps world-frame exit-geometry math that the SolidPrism._perpendicular_basis default axes introduce. Suitable for any prism orientation.
+- Phase 03 Plan 03 (Wave 2): MEMORY FLAG `project_spectral_ri_testing.md` CLOSED by passing `test_prism_dispersion_is_nonzero` (dispersion_deg = 1.0° > 0.1° guard; 10× safety margin). The solid-body spectral n(λ) refraction path is now physically verified, not just smoke-tested.
 
 ### Roadmap Evolution
 
