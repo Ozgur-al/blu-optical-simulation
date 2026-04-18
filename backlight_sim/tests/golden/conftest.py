@@ -2,6 +2,10 @@
 
 Imports GoldenResult from backlight_sim.golden.cases (single source of truth).
 Every fixture returns a fresh Project dataclass seeded with GOLDEN_SEED.
+
+Scene-building logic lives in backlight_sim.golden.builders so the CLI case
+registry can reuse the exact same builders without pulling the test package
+onto its import path.
 """
 from __future__ import annotations
 
@@ -11,9 +15,15 @@ import pytest
 from backlight_sim.core.project_model import Project, SimulationSettings
 from backlight_sim.core.sources import PointSource
 from backlight_sim.golden.cases import GoldenResult
+from backlight_sim.golden import builders as _builders
 
 
-GOLDEN_SEED = 42
+GOLDEN_SEED = _builders.GOLDEN_SEED
+
+
+# Re-exported for backwards compatibility with Wave 0 tests that imported it
+# directly from conftest. Prefer the builders module going forward.
+_base_project = _builders._base_project
 
 
 @pytest.fixture
@@ -28,52 +38,25 @@ def assert_within_tolerance():
     return _check
 
 
-# --- Scene-builder fixture STUBS -------------------------------------------
-# Wave 0 provides signatures + minimal bodies that return a valid Project
-# (so pytest --collect-only passes). Plans 02/03 replace bodies with real
-# geometry. DO NOT change the signatures in downstream waves — they are the
-# contract consumed by the test_*.py files.
-
-
-def _base_project(name: str, rays: int, max_bounces: int = 50) -> Project:
-    """Minimal Project with GOLDEN_SEED — downstream fixtures extend this."""
-    project = Project(name=name)
-    project.settings = SimulationSettings(
-        rays_per_source=rays,
-        max_bounces=max_bounces,
-        energy_threshold=0.001,
-        random_seed=GOLDEN_SEED,
-        record_ray_paths=0,
-        distance_unit="mm",
-    )
-    return project
+# --- Scene-builder fixture wrappers ----------------------------------------
+# Each fixture returns a callable that forwards to the shared builder in
+# backlight_sim.golden.builders. Waves 2/3 will fill in make_fresnel_scene and
+# make_prism_scene the same way.
 
 
 @pytest.fixture
 def make_integrating_cavity_scene():
     def _build(radius: float = 50.0, rho: float = 0.9, rays: int = 500_000) -> Project:
-        # Plan 02 fills in: SolidBox cavity + interior Lambertian reflector +
-        # small detector patch far from corners. For Wave 0, returns a
-        # trivially valid project — downstream plans replace body.
-        project = _base_project(f"integrating_cavity_rho{rho}", rays)
-        project.sources.append(PointSource("src", np.array([0.0, 0.0, 0.0]), flux=1000.0))
-        return project
+        return _builders.build_integrating_cavity_project(
+            radius=radius, rho=rho, rays=rays,
+        )
     return _build
 
 
 @pytest.fixture
 def make_lambertian_emitter_scene():
     def _build(rays: int = 500_000) -> Project:
-        project = _base_project("lambertian_emitter", rays)
-        project.sources.append(
-            PointSource(
-                "src", np.array([0.0, 0.0, 0.0]), flux=1000.0,
-                distribution="lambertian",
-                direction=np.array([0.0, 0.0, 1.0]),
-            )
-        )
-        # SphereDetector(mode="far_field") added in Plan 02.
-        return project
+        return _builders.build_lambertian_emitter_project(rays=rays)
     return _build
 
 
@@ -96,14 +79,9 @@ def make_fresnel_scene():
 def make_specular_mirror_scene():
     def _build(theta_deg: float = 30.0, rays: int = 100_000,
                use_farfield: bool = False) -> Project:
-        project = _base_project(f"specular_theta{theta_deg}_ff{use_farfield}", rays)
-        project.sources.append(
-            PointSource("src", np.array([0.0, 0.0, 10.0]), flux=1000.0,
-                        direction=np.array([0.0, 0.0, -1.0]))
+        return _builders.build_specular_mirror_project(
+            theta_deg=theta_deg, rays=rays, use_farfield=use_farfield,
         )
-        # Plan 02 fills in: tilted Rectangle reflector + planar detector (C++)
-        # or SphereDetector(mode="far_field") (Python) based on use_farfield.
-        return project
     return _build
 
 
