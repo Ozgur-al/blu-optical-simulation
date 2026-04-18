@@ -22,23 +22,23 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-15)
 
 **Core value:** Engineers can iterate on both direct-lit and edge-lit BLU designs with physically accurate, wavelength-aware simulation — fast enough for real workloads.
-**Current focus:** Phase 03 — golden-reference-validation-suite
+**Current focus:** Phase 04 — uncertainty-quantification
 
 ## Current Position
 
 Milestone: v2.0-distribution — In Progress
-Phase: 03 (golden-reference-validation-suite) — EXECUTING
-Plan: 3 of 4
-Status: Executing Phase 03
-Last activity: 2026-04-18 -- Phase 03 Plan 03 (Wave 2 Fresnel + prism dispersion) complete — memory flag closed
+Phase: 04 (uncertainty-quantification) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 04
+Last activity: 2026-04-18 -- Phase 04 Plan 01 (UQ data model + core/uq + core/kpi lift) complete
 
-Progress: [███████████] 100% of pre-04 scope (10/13 plans)
+Progress: [████████████] 79% (11/14 plans)
 
 ## Current Position Detail
 
-Phase: 03-golden-reference-validation-suite
-Current Plan: 4
-Stopped at: Completed 03-03-PLAN.md
+Phase: 04-uncertainty-quantification
+Current Plan: 2
+Stopped at: Completed 04-01-PLAN.md
 
 ## Accumulated Context
 
@@ -86,6 +86,13 @@ Stopped at: Completed 03-03-PLAN.md
 - Phase 03 Plan 03 (Wave 2): `face_optics` values resolve against `project.optical_properties` (not `project.materials`) per `tracer.py:1163-1166`. The Fresnel absorber override is added as an `OpticalProperties` dataclass entry, not a `Material`.
 - Phase 03 Plan 03 (Wave 2): prism total-deviation metric (D = θ_in + θ_out − apex, = angle between source dir and far-field peak dir) is rotation-invariant and sidesteps world-frame exit-geometry math that the SolidPrism._perpendicular_basis default axes introduce. Suitable for any prism orientation.
 - Phase 03 Plan 03 (Wave 2): MEMORY FLAG `project_spectral_ri_testing.md` CLOSED by passing `test_prism_dispersion_is_nonzero` (dispersion_deg = 1.0° > 0.1° guard; 10× safety margin). The solid-body spectral n(λ) refraction path is now physically verified, not just smoke-tested.
+- Phase 04 Plan 01 (Wave 1): hard-coded Student-t critical-value table (51 entries; dof in {3..19} × conf in {0.90, 0.95, 0.99}) chosen over scipy dependency. Matches `scipy.stats.t.ppf` within 1e-3; keeps PyInstaller bundle lean. Clamps dof to 19 for K>20 (conservative tail asymptote); rejects K<4.
+- Phase 04 Plan 01 (Wave 1): `CIEstimate.format()` aligns mean precision to 2 sig figs of the half_width (standard scientific-paper convention: "87.3 ± 1.2%", not "87.324 ± 1.2%"). Legacy results with n_batches=0 render plain mean without ± token.
+- Phase 04 Plan 01 (Wave 1): KPI helper bodies lifted verbatim from `gui/heatmap_panel.py` into `core/kpi.py` — parity asserted bitwise on 10 fixed-seed random grids across 5 shapes. `_kpis` removed from `gui/parameter_sweep_dialog.py` outright (not kept as shim); call sites unpack `compute_scalar_kpis(result)` dict directly.
+- Phase 04 Plan 01 (Wave 1): `SimulationResult.uq_warnings` uses `field(default_factory=list)` to avoid the shared-mutable-default pitfall. Dedicated test constructs two instances, mutates one, asserts the other untouched.
+- Phase 04 Plan 01 (Wave 1): `DetectorResult.rays_per_batch` is `list[int] | None` (not np.ndarray) — records actual rays per batch to handle the `rays_per_source % K != 0` remainder when the tracer populates it in Wave 2.
+- Phase 04 Plan 01 (Wave 1): Rule 2 deviation — `io/project_io.py` persists `uq_batches` and `uq_include_spectral` in both `save_project` and `load_project`. Plan only specified load-side; save-side added because otherwise the user's K selection silently resets to default on every reload (a correctness defect disguised as a plan omission).
+- Phase 04 Plan 01 (Wave 1): DoS mitigation for threat T-04.01-02 deferred to Wave 2 tracer — will clamp `uq_batches` to `min(20, max(4, rays_per_source // 1000))` at runtime. Wave 1 data model accepts any int; persistence is not a runtime vector.
 
 ### Roadmap Evolution
 
@@ -118,5 +125,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-04-18
-Stopped at: Completed 03-02-PLAN.md (Wave 1 cheap physics cases — integrating cavity, Lambertian cosine, specular reflection dual C++/Python sub-cases). New `backlight_sim/golden/builders.py` shares 3 scene builders between pytest fixtures and the CLI case registry. Four `GoldenCase` entries appended to `ALL_CASES` (integrating_cavity, lambertian_cosine, specular_reflection_python, specular_reflection_cpp). Residuals at seed 42 / 500k+100k rays: integrating_cavity 0.38% (tol 2%), lambertian_cosine 0.90% RMS (tol 3%), specular_FF 0.33° (tol 0.5°), specular_CPP 0.007° (tol 1°). Both specular sub-cases explicitly assert the dispatch predicate to catch silent Python-fallback routing (Pitfall 2 guard). 132 tests green (124 baseline + 8 golden). Performance test (GOLD-01) 34 s; others <1 s each. Ready for Plan 03 (Wave 2 Fresnel + prism).
+Stopped at: Completed 04-01-PLAN.md (Wave 1 data-model + pure-numpy compute foundation for Phase 04 UQ). New `backlight_sim/core/uq.py` (287 lines) ships `CIEstimate` (frozen dataclass), `batch_mean_ci`, `per_bin_stderr`, `kpi_batches`, `student_t_critical`, and a 51-entry hard-coded Student-t table (matches scipy within 1e-3; keeps scipy out of runtime deps). New `backlight_sim/core/kpi.py` (150 lines) lifts `uniformity_in_center`, `corner_ratio`, `edge_center_ratio` from `gui/heatmap_panel.py` verbatim and adds `compute_scalar_kpis(result) -> dict`. `SimulationSettings` grew `uq_batches: int = 10` and `uq_include_spectral: bool = True`; `DetectorResult` grew 6 optional UQ fields (grid_batches, hits_batches, flux_batches, grid_spectral_batches, rays_per_batch, n_batches); `SimulationResult` grew `uq_warnings: list[str]` with factory default. `io/project_io.py` persists / restores the two new settings fields. GUI rewired: `gui/heatmap_panel.py` imports KPI helpers from core.kpi (module-level dupes deleted); `gui/parameter_sweep_dialog.py` drops `_kpis`, callsites unpack `compute_scalar_kpis` dict. Zero behavior change to the running app. 180 tests green (132 baseline + 9 Phase 03 golden + 21 test_uq + 18 test_kpi) in 40.18 s. Ready for Plan 02 (tracer batch loop: C++ fast path + Python fallback + MP merge with per-batch seeding).
 Resume file: None
