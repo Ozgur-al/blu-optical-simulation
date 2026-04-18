@@ -4,15 +4,15 @@ milestone: v2.0
 milestone_name: milestone
 current_plan: 2
 status: executing
-stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-04-18T19:55:00Z"
-last_activity: 2026-04-18 -- Phase 04 Plan 01 (UQ data model + core/uq + core/kpi lift) complete
+stopped_at: Completed 03-04-PLAN.md (Phase 03 complete)
+last_updated: "2026-04-18T20:10:00Z"
+last_activity: 2026-04-18 -- Phase 03 Plan 04 (CLI + report + CLAUDE.md) complete; Phase 03 closed
 progress:
   total_phases: 8
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 14
-  completed_plans: 11
-  percent: 79
+  completed_plans: 12
+  percent: 86
 ---
 
 # Project State
@@ -27,18 +27,18 @@ See: .planning/PROJECT.md (updated 2026-03-15)
 ## Current Position
 
 Milestone: v2.0-distribution — In Progress
-Phase: 04 (uncertainty-quantification) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 04
-Last activity: 2026-04-18 -- Phase 04 Plan 01 (UQ data model + core/uq + core/kpi lift) complete
+Phase: 04 (uncertainty-quantification) — EXECUTING (Plan 02 active)
+Plan: 2 of 3
+Status: Phase 03 closed; executing Phase 04 Plan 02
+Last activity: 2026-04-18 -- Phase 03 Plan 04 (CLI + HTML/markdown report + CLAUDE.md) complete; Phase 03 CLOSED
 
-Progress: [████████████] 79% (11/14 plans)
+Progress: [█████████████] 86% (12/14 plans)
 
 ## Current Position Detail
 
 Phase: 04-uncertainty-quantification
 Current Plan: 2
-Stopped at: Completed 04-01-PLAN.md
+Stopped at: Completed 03-04-PLAN.md (Phase 03 finished; concurrent agent advancing 04-02)
 
 ## Accumulated Context
 
@@ -86,6 +86,11 @@ Stopped at: Completed 04-01-PLAN.md
 - Phase 03 Plan 03 (Wave 2): `face_optics` values resolve against `project.optical_properties` (not `project.materials`) per `tracer.py:1163-1166`. The Fresnel absorber override is added as an `OpticalProperties` dataclass entry, not a `Material`.
 - Phase 03 Plan 03 (Wave 2): prism total-deviation metric (D = θ_in + θ_out − apex, = angle between source dir and far-field peak dir) is rotation-invariant and sidesteps world-frame exit-geometry math that the SolidPrism._perpendicular_basis default axes introduce. Suitable for any prism orientation.
 - Phase 03 Plan 03 (Wave 2): MEMORY FLAG `project_spectral_ri_testing.md` CLOSED by passing `test_prism_dispersion_is_nonzero` (dispersion_deg = 1.0° > 0.1° guard; 10× safety margin). The solid-body spectral n(λ) refraction path is now physically verified, not just smoke-tested.
+- Phase 03 Plan 04 (Wave 3): `backlight_sim/golden/report.py` mirrors `io/report.py` matplotlib Agg + base64 PNG pattern verbatim; HTML degrades to `<em>(matplotlib not available)</em>` placeholder when matplotlib is absent. Markdown writer has no matplotlib dependency and always succeeds — this is the primary pre-commit regression surface when working in a minimal-deps env.
+- Phase 03 Plan 04 (Wave 3): CLI `python -m backlight_sim.golden` uses stdlib argparse (mirrors `build_exe.py`); exit codes 0 (all-pass) / 1 (any-fail, CI gate) / 2 (usage error). `--rays N` override lets CI run at 5k rays for smoke coverage; `--cases LIST` filters to a comma-separated subset.
+- Phase 03 Plan 04 (Wave 3): integration tests use pytest `tmp_path` fixture (Windows-aware, no hardcoded `/tmp/...`). `test_golden_suite_runtime_under_budget` enforces VALIDATION.md 300s budget via literal `timeout=300` in subprocess.run — grep-verifiable; on TimeoutExpired raises AssertionError with partial stdout/stderr for diagnosability. Measured: 112.62 s on clean tracer (2.7× margin).
+- Phase 03 Plan 04 (Wave 3): HTML report embeds matplotlib PNGs via base64 data URIs (single self-contained file). Reproducibility footer uses `importlib.util.find_spec("backlight_sim.sim.blu_tracer").origin` to print the C++ .pyd path in both HTML and markdown reports — defends against ambiguity about which blu_tracer extension was loaded during the run.
+- Phase 03 Plan 04 (Wave 3): concurrent Phase 04 Plan 02 tracer WIP (`_run_uq_batched` in-progress implementation) actively breaks the golden suite during our session (21/21 green when stashed → 14/21 when the WIP is applied, due to `candela_grid=None` in merged `SphereDetectorResult`). Logged to `.planning/phases/03-golden-reference-validation-suite/deferred-items.md`. Not a Plan 03-04 regression; owned by Phase 04 Plan 02.
 - Phase 04 Plan 01 (Wave 1): hard-coded Student-t critical-value table (51 entries; dof in {3..19} × conf in {0.90, 0.95, 0.99}) chosen over scipy dependency. Matches `scipy.stats.t.ppf` within 1e-3; keeps PyInstaller bundle lean. Clamps dof to 19 for K>20 (conservative tail asymptote); rejects K<4.
 - Phase 04 Plan 01 (Wave 1): `CIEstimate.format()` aligns mean precision to 2 sig figs of the half_width (standard scientific-paper convention: "87.3 ± 1.2%", not "87.324 ± 1.2%"). Legacy results with n_batches=0 render plain mean without ± token.
 - Phase 04 Plan 01 (Wave 1): KPI helper bodies lifted verbatim from `gui/heatmap_panel.py` into `core/kpi.py` — parity asserted bitwise on 10 fixed-seed random grids across 5 shapes. `_kpis` removed from `gui/parameter_sweep_dialog.py` outright (not kept as shim); call sites unpack `compute_scalar_kpis(result)` dict directly.
@@ -125,5 +130,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-04-18
-Stopped at: Completed 04-01-PLAN.md (Wave 1 data-model + pure-numpy compute foundation for Phase 04 UQ). New `backlight_sim/core/uq.py` (287 lines) ships `CIEstimate` (frozen dataclass), `batch_mean_ci`, `per_bin_stderr`, `kpi_batches`, `student_t_critical`, and a 51-entry hard-coded Student-t table (matches scipy within 1e-3; keeps scipy out of runtime deps). New `backlight_sim/core/kpi.py` (150 lines) lifts `uniformity_in_center`, `corner_ratio`, `edge_center_ratio` from `gui/heatmap_panel.py` verbatim and adds `compute_scalar_kpis(result) -> dict`. `SimulationSettings` grew `uq_batches: int = 10` and `uq_include_spectral: bool = True`; `DetectorResult` grew 6 optional UQ fields (grid_batches, hits_batches, flux_batches, grid_spectral_batches, rays_per_batch, n_batches); `SimulationResult` grew `uq_warnings: list[str]` with factory default. `io/project_io.py` persists / restores the two new settings fields. GUI rewired: `gui/heatmap_panel.py` imports KPI helpers from core.kpi (module-level dupes deleted); `gui/parameter_sweep_dialog.py` drops `_kpis`, callsites unpack `compute_scalar_kpis` dict. Zero behavior change to the running app. 180 tests green (132 baseline + 9 Phase 03 golden + 21 test_uq + 18 test_kpi) in 40.18 s. Ready for Plan 02 (tracer batch loop: C++ fast path + Python fallback + MP merge with per-batch seeding).
+Stopped at: Completed 03-04-PLAN.md (Phase 03 Wave 3 — CLI + HTML/markdown report + CLAUDE.md pre-merge gate). New `backlight_sim/golden/report.py` (283 lines) ships `write_html_report` and `write_markdown_report` mirroring the `io/report.py` matplotlib Agg + base64 PNG pattern; degrades to `<em>(matplotlib not available)</em>` placeholder when matplotlib is absent. Markdown is always produced (no matplotlib needed). New `backlight_sim/golden/__main__.py` (114 lines) implements `python -m backlight_sim.golden [--report] [--out DIR] [--rays N] [--cases LIST] [-v]` via stdlib argparse (mirrors `build_exe.py`), with exit 0 / 1 / 2 semantics for CI gate. New `backlight_sim/tests/golden/test_cli_report.py` (146 lines) adds 4 subprocess integration tests including `test_golden_suite_runtime_under_budget` with literal `timeout=300` (VALIDATION.md GOLD-08 enforcer). CLAUDE.md gains a Commands block for the golden suite and 3 Development Conventions bullets documenting the pre-merge gate and memory-flag closure. `ALL_CASES` length: 13 (≥ 11 target). Golden-suite runtime (clean tracer): 112.62 s (2.7× margin under 300 s budget); CLI full-ray exit-code test: 33.56 s. 4 CLI integration tests all pass. Pre-existing Phase 04 Plan 02 tracer WIP (concurrent agent) is actively breaking `_run_uq_batched` path — logged in `.planning/phases/03-golden-reference-validation-suite/deferred-items.md`; not a Plan 03-04 regression. Phase 03 CLOSED; `project_spectral_ri_testing.md` memory flag closed at Plan 03-03 by `test_prism_dispersion_is_nonzero`.
 Resume file: None
