@@ -286,7 +286,6 @@ def test_speedup():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="Enable after Plan 02-03 removes Numba - accel.py deleted")
 def test_no_numba_imports():
     """C++-08: No module in backlight_sim.sim imports numba after Numba removal."""
     import pkgutil
