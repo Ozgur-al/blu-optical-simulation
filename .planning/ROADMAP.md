@@ -33,7 +33,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 6. Tracer Cross-Phase Wiring | v1.0 | 2/2 | Complete | 2026-03-15 |
 | 7. UI + Spectral Display Fixes | v1.0 | 1/1 | Complete | 2026-03-15 |
 | 02. Converting main simulation loop to C++ | v2.0 | 4/4 | Complete    | 2026-04-18 |
-| 04. Uncertainty quantification | v2.0 | 1/3 | In Progress | — |
+| 04. Uncertainty quantification | v2.0 | 2/3 | In Progress | — |
 
 ### Phase 1: distribution for admin locked work computer compatibility, splash screen etc.
 
@@ -99,7 +99,7 @@ Plans:
 
 Plans:
 - [x] 04-01-PLAN.md — Data model + core/uq.py + core/kpi.py lift-and-shift + unit tests (complete 2026-04-18)
-- [ ] 04-02-PLAN.md — Tracer batch loop (C++ fast path + Python fallback + MP merge) with per-batch seeding
+- [x] 04-02-PLAN.md — Tracer batch loop (C++ fast path + Python fallback + MP merge) with per-batch seeding (complete 2026-04-18)
 - [ ] 04-03-PLAN.md — UI CI rendering (heatmap, convergence tab, sweep) + HTML/CSV exports + end-to-end smoke
 
 ### Phase 5: Geometry tolerance Monte Carlo

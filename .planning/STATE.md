@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
-current_plan: 2
+current_plan: 3
 status: executing
-stopped_at: Completed 03-04-PLAN.md (Phase 03 complete)
-last_updated: "2026-04-18T20:10:00Z"
-last_activity: 2026-04-18 -- Phase 03 Plan 04 (CLI + report + CLAUDE.md) complete; Phase 03 closed
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-04-18T20:40:00Z"
+last_activity: 2026-04-18 -- Phase 04 Plan 02 (tracer K-batch UQ loop on C++/Python/MP paths) complete
 progress:
   total_phases: 8
   completed_phases: 3
   total_plans: 14
-  completed_plans: 12
-  percent: 86
+  completed_plans: 13
+  percent: 93
 ---
 
 # Project State
@@ -27,18 +27,18 @@ See: .planning/PROJECT.md (updated 2026-03-15)
 ## Current Position
 
 Milestone: v2.0-distribution — In Progress
-Phase: 04 (uncertainty-quantification) — EXECUTING (Plan 02 active)
-Plan: 2 of 3
-Status: Phase 03 closed; executing Phase 04 Plan 02
-Last activity: 2026-04-18 -- Phase 03 Plan 04 (CLI + HTML/markdown report + CLAUDE.md) complete; Phase 03 CLOSED
+Phase: 04 (uncertainty-quantification) — EXECUTING (Plan 03 active)
+Plan: 3 of 3
+Status: Executing Phase 04 (Plan 02 complete; Plan 03 UI rendering next)
+Last activity: 2026-04-18 -- Phase 04 Plan 02 (tracer K-batch UQ loop) complete
 
-Progress: [█████████████] 86% (12/14 plans)
+Progress: [██████████████] 93% (13/14 plans)
 
 ## Current Position Detail
 
 Phase: 04-uncertainty-quantification
-Current Plan: 2
-Stopped at: Completed 03-04-PLAN.md (Phase 03 finished; concurrent agent advancing 04-02)
+Current Plan: 3
+Stopped at: Completed 04-02-PLAN.md
 
 ## Accumulated Context
 
@@ -98,6 +98,15 @@ Stopped at: Completed 03-04-PLAN.md (Phase 03 finished; concurrent agent advanci
 - Phase 04 Plan 01 (Wave 1): `DetectorResult.rays_per_batch` is `list[int] | None` (not np.ndarray) — records actual rays per batch to handle the `rays_per_source % K != 0` remainder when the tracer populates it in Wave 2.
 - Phase 04 Plan 01 (Wave 1): Rule 2 deviation — `io/project_io.py` persists `uq_batches` and `uq_include_spectral` in both `save_project` and `load_project`. Plan only specified load-side; save-side added because otherwise the user's K selection silently resets to default on every reload (a correctness defect disguised as a plan omission).
 - Phase 04 Plan 01 (Wave 1): DoS mitigation for threat T-04.01-02 deferred to Wave 2 tracer — will clamp `uq_batches` to `min(20, max(4, rays_per_source // 1000))` at runtime. Wave 1 data model accepts any int; persistence is not a runtime vector.
+- Phase 04 Plan 02 (Wave 2): `_run_uq_batched` is an outer K-loop wrapper that calls the existing `_run_single` K times with patched settings, rather than restructuring the ~1000-line inner bounce loop. Preserves K=0 legacy path unchanged (dispatch guard via `_uq_in_chunk` flag) and isolates UQ logic to a new 210-line method.
+- Phase 04 Plan 02 (Wave 2): Energy conservation across K chunks — per-chunk source `flux` is scaled by `(rays_this_batch / rays_total)` so per-ray weight = `(flux × scale) / rays_this_batch = flux / rays_total` (identical to legacy). Summed over K chunks: `flux × sum(scale) = flux`. Golden suite caught the missing scaling as 10x flux overshoot on integrating cavity; Rule 2 auto-fix.
+- Phase 04 Plan 02 (Wave 2): `uq_batches` clamp policy is `min(20, max(4, k))` — below-4 CLAMPS UP to 4 (does not raise). Matches Wave 1 `core/uq.py::batch_mean_ci` which rejects K<4 for CI. User setting K=2 still gets 4 valid batches.
+- Phase 04 Plan 02 (Wave 2): Signed-int32 seed mask (`& 0x7FFFFFFF`) at every C++ trace_source boundary. pybind11's `int seed` parameter is 32-bit signed on x64 Windows; unmasked md5-derived seeds can exceed INT_MAX and raise TypeError. Pre-existing dormant bug surfaced by UQ chunk-level random_seed distribution; Rule 1 auto-fix in 3 call sites.
+- Phase 04 Plan 02 (Wave 2): Adaptive convergence is evaluated ONLY at chunk boundaries when UQ is on (CONTEXT D-01 / W1 guard). Each inner `_run_single` chunk runs with `adaptive_sampling=False` (runs to completion); the outer `_run_uq_batched` tests the predicate between chunks and short-circuits when CV drops below target. Second "UQ CI undefined" warning appended when early convergence leaves k' < 4 completed chunks.
+- Phase 04 Plan 02 (Wave 2): Per-batch grids are direct chunk contributions (not cumulative deltas). Each `_run_single` call creates fresh `det_results` accumulators — `chunk_result.grid` is this chunk's contribution only. `cum_result` is the running sum used for progress tracking; `per_batch_grids` is the list of direct chunk grids.
+- Phase 04 Plan 02 (Wave 2): Python MP worker (`_trace_single_source`) UQ batching deferred. Used only for MP+spectral+solid-body scenes. Aggregator handles missing UQ payload gracefully via `.get(..., None)`. Not covered by tests; graceful degradation (DetectorResult.grid_batches=None) rather than failure.
+- Phase 04 Plan 02 (Wave 2): Sphere detector UQ attached via `setattr` (not dataclass fields). Wave 1 did not extend `SphereDetectorResult` with UQ fields; this Wave 2 hand-off uses attributes. Wave 3 UI reads via `getattr(sr, "grid_batches", None)`.
+- Phase 04 Plan 02 (Wave 2): stderr shrinkage test (`test_stderr_shrinks_sqrt_n`) uses center-bin mean flux KPI rather than total flux. Total flux in the reflective Simple Box is conservation-bounded (every ray lands somewhere), so batch-to-batch variance is near-zero and does not show 1/sqrt(N) behavior. Center-bin mean exposes the Monte Carlo spatial noise correctly.
 
 ### Roadmap Evolution
 
@@ -130,5 +139,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-04-18
-Stopped at: Completed 03-04-PLAN.md (Phase 03 Wave 3 — CLI + HTML/markdown report + CLAUDE.md pre-merge gate). New `backlight_sim/golden/report.py` (283 lines) ships `write_html_report` and `write_markdown_report` mirroring the `io/report.py` matplotlib Agg + base64 PNG pattern; degrades to `<em>(matplotlib not available)</em>` placeholder when matplotlib is absent. Markdown is always produced (no matplotlib needed). New `backlight_sim/golden/__main__.py` (114 lines) implements `python -m backlight_sim.golden [--report] [--out DIR] [--rays N] [--cases LIST] [-v]` via stdlib argparse (mirrors `build_exe.py`), with exit 0 / 1 / 2 semantics for CI gate. New `backlight_sim/tests/golden/test_cli_report.py` (146 lines) adds 4 subprocess integration tests including `test_golden_suite_runtime_under_budget` with literal `timeout=300` (VALIDATION.md GOLD-08 enforcer). CLAUDE.md gains a Commands block for the golden suite and 3 Development Conventions bullets documenting the pre-merge gate and memory-flag closure. `ALL_CASES` length: 13 (≥ 11 target). Golden-suite runtime (clean tracer): 112.62 s (2.7× margin under 300 s budget); CLI full-ray exit-code test: 33.56 s. 4 CLI integration tests all pass. Pre-existing Phase 04 Plan 02 tracer WIP (concurrent agent) is actively breaking `_run_uq_batched` path — logged in `.planning/phases/03-golden-reference-validation-suite/deferred-items.md`; not a Plan 03-04 regression. Phase 03 CLOSED; `project_spectral_ri_testing.md` memory flag closed at Plan 03-03 by `test_prism_dispersion_is_nonzero`.
+Stopped at: Completed 04-02-PLAN.md (Phase 04 Wave 2 — tracer K-batch UQ loop on all three execution paths). `backlight_sim/sim/tracer.py` gains 4 new module-level helpers (`_effective_uq_batches`, `_batch_seed`, `_partition_rays`, `_replace_settings`), a new `_run_uq_batched` method (~210 lines) that wraps `_run_single` with K chunks + per-batch seeded RNG + source flux scaling for energy conservation + chunk-boundary adaptive convergence, extends `_cpp_trace_single_source` with a K-loop (~120 lines, up from ~15) for the multiprocess C++ worker path, and augments `_run_multiprocess` with per-batch worker aggregate merging. `RayTracer.run` now emits the "adaptive+UQ" warning onto `SimulationResult.uq_warnings` (CONTEXT D-01). Each of 3 md5-derived C++ seed derivation sites masks to signed int32 (`& 0x7FFFFFFF`) to avoid pybind11 TypeError on hashes > INT_MAX — pre-existing dormant bug flagged as Rule 1 auto-fix. Per-chunk energy conservation via source flux scaling `(rays_this_batch / rays_total)` caught by golden suite as Rule 2 auto-fix. New `backlight_sim/tests/test_uq_tracer.py` (390 lines, 25 tests) covers helpers, remainder distribution, deterministic seeding, stderr shrinkage on center-bin KPI, first-batch-only path recording, adaptive+UQ warning attachment, chunk-boundary convergence instrumentation, spectral toggle, clamp policy, MP parity. 3 new integration tests appended to `test_tracer.py` (bit-identical legacy determinism anchor, C++ batch-sum vs single-run KS test scipy-gated, Python spectral batch-sum vs single-run). C++ extension `_blu_tracer/src/*` untouched — batching is entirely Python-side. Full suite: **212 passed, 6 warnings in 89.92 s**. Phase 04 Plan 02 CLOSED; Plan 03 (UI CI rendering — heatmap, convergence tab, sweep, HTML/CSV exports) is next and final wave.
 Resume file: None
