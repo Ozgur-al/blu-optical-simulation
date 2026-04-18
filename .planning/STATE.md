@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: Not started
-status: verifying
-stopped_at: Completed 02-04-PLAN.md
-last_updated: "2026-04-18T14:39:13.096Z"
-last_activity: 2026-04-18
+current_plan: 2
+status: executing
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-04-18T15:54:45Z"
+last_activity: 2026-04-18 -- Phase 03 Plan 01 (Wave 0 scaffolding + budget probe) complete
 progress:
   total_phases: 8
   completed_phases: 2
-  total_plans: 7
-  completed_plans: 7
-  percent: 100
+  total_plans: 13
+  completed_plans: 8
+  percent: 62
 ---
 
 # Project State
@@ -22,22 +22,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-15)
 
 **Core value:** Engineers can iterate on both direct-lit and edge-lit BLU designs with physically accurate, wavelength-aware simulation — fast enough for real workloads.
-**Current focus:** Phase 02 — converting-main-simulation-loop-to-cpp-for-faster-computation
+**Current focus:** Phase 03 — golden-reference-validation-suite
 
 ## Current Position
 
 Milestone: v2.0-distribution — In Progress
-Phase: 03
-Plan: 4 of 4 — COMPLETE
-Status: All plans complete; awaiting phase-level verifier
-Last activity: 2026-04-18
+Phase: 03 (golden-reference-validation-suite) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 03
+Last activity: 2026-04-18 -- Phase 03 execution started
 
 Progress: [██████████] 100% (8/8 plans)
 
 ## Current Position Detail
 
 Phase: 02-converting-main-simulation-loop-to-cpp-for-faster-computation
-Current Plan: Not started
+Current Plan: 1
 Stopped at: Completed 02-04-PLAN.md
 
 ## Accumulated Context
@@ -72,6 +72,10 @@ Stopped at: Completed 02-04-PLAN.md
 - Status bar notification (15s) used for update available — unobtrusive vs modal dialog
 - http/urllib un-excluded in PyInstaller spec — required by update_checker, minimal size cost
 - Daemon thread for update check — auto-killed if app exits before check completes
+- Phase 03 Plan 01 (Wave 0): spectral_material_data key convention differs by geometry type — Rectangle surfaces use `{reflectance, transmittance}` (project_model.py:46 docstring); SolidBox/Cylinder/Prism use `{refractive_index}` (tracer.py:1242-1247, 1384-1389). Plans 02/03 must use the right schema per geometry.
+- Phase 03 Plan 01 (Wave 0): `spd="mono_<nm>"` verified to trigger `has_spectral` gate at tracer.py:631 and route to Python via `_project_uses_cpp_unsupported_features` — canonical way to emit monochromatic rays. Closes RESEARCH.md assumption A3.
+- Phase 03 Plan 01 (Wave 0): budget probe measured ~15 ms/1k rays C++ path and ~17 ms/1k rays Python spectral path on 100k/50k ray probes (includes one-shot overhead); downstream plans can use these as upper bounds for 300s phase gate sizing.
+- Phase 03 Plan 01 (Wave 0): RESEARCH.md Case 3 Fresnel table value T(60°, air→glass) = 0.9069 is incorrect; analytical and tracer implementation both return T ≈ 0.9108. Plans 02/03 should derive expected values from `fresnel_transmittance_unpolarized()` call, not the RESEARCH table.
 
 ### Roadmap Evolution
 
@@ -104,5 +108,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-04-18
-Stopped at: Completed 02-04-PLAN.md (PyInstaller spec bundles blu_tracer.cp312-win_amd64.pyd via dynamic importlib.util.find_spec resolution; numba fully excised from spec + requirements.txt; CLAUDE.md documents the C++ extension; C++-06/C++-07 un-skipped and passing; 124 tests green; measured 29.8× speedup vs 500 ms Python baseline on preset_simple_box @ 100k rays; PyInstaller bundle verified to contain the .pyd at `dist/BluOpticalSim/_internal/backlight_sim/sim/`). Phase 02 complete — awaiting phase-level verifier.
+Stopped at: Completed 03-01-PLAN.md (Wave 0 scaffolding + budget probe: `backlight_sim/golden/` CLI package with GoldenCase/GoldenResult/ALL_CASES registry; `backlight_sim/tests/golden/` test package with GOLDEN_SEED=42, assert_within_tolerance fixture, 5 scene-builder fixture stubs, analytical references (Fresnel/Snell/Lambert/cavity) — no tracer imports; budget probe emits throughput numbers ~15 ms/1k rays C++ and ~17 ms/1k rays Python spectral; `spd="mono_*"` convention verified to trigger spectral dispatch at tracer.py:631; 128 tests green (124 existing + 4 budget-probe); headless verified — no PySide6/pyqtgraph in sys.modules). Ready for Plan 02 (Wave 1 physics: integrating sphere + Lambertian + specular).
 Resume file: None
