@@ -709,137 +709,29 @@ def test_spectral_mp_runs_without_fallback():
 
 
 # ------------------------------------------------------------------
-# Phase 3 — Numba JIT acceleration tests
+# Phase 3 — Numba JIT acceleration tests REMOVED in Plan 02-03
 # ------------------------------------------------------------------
+# The Numba accel.py layer was deleted in Phase 02 Plan 03 per D-05/D-06;
+# the C++ extension (blu_tracer.pyd) is the single acceleration layer.
+# Tests that exercised accel.py internals were removed. The
+# `test_simulation_deterministic_with_cpp` test below preserves the
+# higher-level determinism check that previously relied on the JIT path.
 
 
-def test_jit_numba_available_is_bool():
-    """_NUMBA_AVAILABLE must be a bool regardless of whether Numba is installed."""
-    from backlight_sim.sim.accel import _NUMBA_AVAILABLE
-    assert isinstance(_NUMBA_AVAILABLE, bool)
+def test_simulation_deterministic_with_cpp():
+    """Full simulation should give same result on two runs (determinism check).
 
-
-def test_jit_warmup_runs_without_error():
-    """warmup_jit_kernels() should complete without raising any exception."""
-    from backlight_sim.sim.accel import warmup_jit_kernels
-    # Should not raise
-    result = warmup_jit_kernels()
-    assert isinstance(result, bool)
-
-
-def test_jit_intersect_plane_matches_numpy():
-    """intersect_plane JIT wrapper should produce same t-values as _intersect_rays_plane."""
-    from backlight_sim.sim.accel import intersect_plane
-    from backlight_sim.sim.tracer import _intersect_rays_plane
-
-    rng = np.random.default_rng(42)
-    # A horizontal plane at z=5, size 20x20
-    normal = np.array([0.0, 0.0, 1.0])
-    center = np.array([0.0, 0.0, 5.0])
-    u_axis = np.array([1.0, 0.0, 0.0])
-    v_axis = np.array([0.0, 1.0, 0.0])
-    size = (20.0, 20.0)
-
-    # 100 random rays starting below the plane pointing generally upward
-    origins = rng.uniform(-5, 5, (100, 3))
-    origins[:, 2] = rng.uniform(-2, 3, 100)  # z in [-2, 3], below plane at z=5
-    # Directions mostly upward
-    dirs_raw = rng.normal(0, 0.3, (100, 3))
-    dirs_raw[:, 2] = np.abs(dirs_raw[:, 2]) + 0.5
-    norms = np.linalg.norm(dirs_raw, axis=1, keepdims=True)
-    directions = dirs_raw / norms
-
-    t_numpy = _intersect_rays_plane(origins, directions, normal, center, u_axis, v_axis, size)
-    t_jit   = intersect_plane(origins, directions, normal, center, u_axis, v_axis, size)
-
-    # Both should give same finite hits
-    np.testing.assert_allclose(t_numpy, t_jit, rtol=1e-10, atol=1e-10,
-                                err_msg="JIT plane intersection differs from NumPy reference")
-
-
-def test_jit_intersect_sphere_matches_numpy():
-    """intersect_sphere JIT wrapper should produce same t-values as _intersect_rays_sphere."""
-    from backlight_sim.sim.accel import intersect_sphere
-    from backlight_sim.sim.tracer import _intersect_rays_sphere
-
-    rng = np.random.default_rng(7)
-    center = np.array([0.0, 0.0, 0.0])
-    radius = 5.0
-
-    # 100 random rays from outside the sphere, pointing inward
-    origins = rng.uniform(-15, 15, (100, 3))
-    # Ensure origins are outside the sphere
-    while True:
-        too_close = np.linalg.norm(origins - center, axis=1) < radius + 0.5
-        if not too_close.any():
-            break
-        origins[too_close] = rng.uniform(-15, 15, (too_close.sum(), 3))
-
-    # Directions pointing toward origin with some spread
-    dirs_raw = center - origins + rng.normal(0, 1.0, (100, 3))
-    norms = np.linalg.norm(dirs_raw, axis=1, keepdims=True)
-    directions = dirs_raw / norms
-
-    t_numpy = _intersect_rays_sphere(origins, directions, center, radius)
-    t_jit   = intersect_sphere(origins, directions, center, radius)
-
-    np.testing.assert_allclose(t_numpy, t_jit, rtol=1e-10, atol=1e-10,
-                                err_msg="JIT sphere intersection differs from NumPy reference")
-
-
-def test_jit_accumulate_grid_matches_numpy():
-    """accumulate_grid_jit should produce identical result to np.add.at scatter-add."""
-    from backlight_sim.sim.accel import accumulate_grid_jit
-
-    rng = np.random.default_rng(13)
-    grid_jit   = np.zeros((20, 30), dtype=float)
-    grid_numpy = np.zeros((20, 30), dtype=float)
-
-    # Random hit indices and weights
-    n_hits = 500
-    iy = rng.integers(0, 20, n_hits)
-    ix = rng.integers(0, 30, n_hits)
-    weights = rng.uniform(0.001, 0.1, n_hits)
-
-    accumulate_grid_jit(grid_jit, iy, ix, weights)
-    np.add.at(grid_numpy, (iy, ix), weights)
-
-    np.testing.assert_array_equal(grid_jit, grid_numpy,
-                                   err_msg="accumulate_grid_jit differs from np.add.at")
-
-
-def test_jit_accumulate_sphere_matches_numpy():
-    """accumulate_sphere_jit should produce identical result to np.add.at."""
-    from backlight_sim.sim.accel import accumulate_sphere_jit
-
-    rng = np.random.default_rng(99)
-    grid_jit   = np.zeros((18, 36), dtype=float)
-    grid_numpy = np.zeros((18, 36), dtype=float)
-
-    n_hits = 300
-    i_theta = rng.integers(0, 18, n_hits)
-    i_phi   = rng.integers(0, 36, n_hits)
-    weights = rng.uniform(0.001, 0.05, n_hits)
-
-    accumulate_sphere_jit(grid_jit, i_theta, i_phi, weights)
-    np.add.at(grid_numpy, (i_theta, i_phi), weights)
-
-    np.testing.assert_array_equal(grid_jit, grid_numpy,
-                                   err_msg="accumulate_sphere_jit differs from np.add.at")
-
-
-def test_simulation_deterministic_with_jit():
-    """Full simulation should give same result on two runs (determinism check with JIT)."""
-    # This also exercises the JIT path once Task 2 is complete (dispatch in tracer)
+    This exercises the C++ fast-path dispatch in tracer.py: two runs with the
+    same seed must produce bit-identical detector grids.
+    """
     p1 = _make_box_scene(rays_per_source=3000)
     p2 = _make_box_scene(rays_per_source=3000)
     r1 = RayTracer(p1).run()
     r2 = RayTracer(p2).run()
-    # Exact equality — same seed, same code path
     np.testing.assert_array_equal(
         r1.detectors["top_detector"].grid,
         r2.detectors["top_detector"].grid,
-        err_msg="Simulation not deterministic — JIT dispatch may have introduced non-determinism",
+        err_msg="Simulation not deterministic — C++ dispatch may have introduced non-determinism",
     )
 
 
@@ -1113,104 +1005,12 @@ def _make_many_surface_scene(n_surfaces=60, rays_per_source=1000) -> Project:
                    materials=materials, detectors=detectors, settings=settings)
 
 
-def test_bvh_build_valid_tree_structure():
-    """BVH build produces valid tree: node_count <= 2N-1, leaves reference valid indices."""
-    from backlight_sim.sim.accel import build_bvh_flat, compute_surface_aabbs
-
-    rng = np.random.default_rng(7)
-    n = 30
-    # Random small rectangles scattered in a 20x20x20 volume
-    centers = rng.uniform(-10, 10, (n, 3))
-    normals = np.tile(np.array([0.0, 0.0, 1.0]), (n, 1))
-    u_axes  = np.tile(np.array([1.0, 0.0, 0.0]), (n, 1))
-    v_axes  = np.tile(np.array([0.0, 1.0, 0.0]), (n, 1))
-    half_ws = np.full(n, 1.0)
-    half_hs = np.full(n, 1.0)
-
-    aabbs = compute_surface_aabbs(normals, centers, u_axes, v_axes, half_ws, half_hs)
-    assert aabbs.shape == (n, 6), f"Expected ({n}, 6) aabbs, got {aabbs.shape}"
-
-    node_bounds, node_meta, n_nodes = build_bvh_flat(aabbs)
-
-    # Node count must be <= 2N-1
-    assert n_nodes <= 2 * n - 1, f"n_nodes {n_nodes} exceeds 2N-1={2*n-1}"
-    assert n_nodes >= 1
-
-    # All leaf nodes must reference valid surface indices
-    for i in range(n_nodes):
-        if node_meta[i, 2] == 1:  # leaf
-            surf_idx = node_meta[i, 0]
-            assert 0 <= surf_idx < n, (
-                f"Leaf node {i} has invalid surf_idx {surf_idx}, expected in [0, {n-1}]"
-            )
-
-
-def test_bvh_matches_bruteforce():
-    """BVH traversal must produce the same hit surface as brute-force for a 60-surface scene."""
-    from backlight_sim.sim.accel import (
-        build_bvh_flat, compute_surface_aabbs, traverse_bvh_batch,
-    )
-
-    # Build a scene with 60 horizontal rectangles at various heights
-    rng = np.random.default_rng(13)
-    n = 60
-    centers = rng.uniform(-15, 15, (n, 3))
-    centers[:, 2] = rng.uniform(1, 20, n)  # z between 1 and 20
-    normals = np.tile(np.array([0.0, 0.0, 1.0], dtype=np.float64), (n, 1))
-    u_axes  = np.tile(np.array([1.0, 0.0, 0.0], dtype=np.float64), (n, 1))
-    v_axes  = np.tile(np.array([0.0, 1.0, 0.0], dtype=np.float64), (n, 1))
-    half_ws = np.full(n, 2.0, dtype=np.float64)
-    half_hs = np.full(n, 2.0, dtype=np.float64)
-
-    aabbs = compute_surface_aabbs(normals, centers, u_axes, v_axes, half_ws, half_hs)
-    node_bounds, node_meta, n_nodes = build_bvh_flat(aabbs)
-
-    # 500 random rays from below, pointing generally upward
-    n_rays = 500
-    ray_origins = rng.uniform(-10, 10, (n_rays, 3)).astype(np.float64)
-    ray_origins[:, 2] = 0.0
-    raw_dirs = rng.normal(0, 0.3, (n_rays, 3))
-    raw_dirs[:, 2] = np.abs(raw_dirs[:, 2]) + 0.3
-    norms = np.linalg.norm(raw_dirs, axis=1, keepdims=True)
-    ray_dirs = (raw_dirs / norms).astype(np.float64)
-
-    epsilon = 1e-6
-
-    # Brute-force: test all surfaces
-    from backlight_sim.sim.accel import intersect_plane_jit
-    bf_best_t = np.full(n_rays, np.inf)
-    bf_best_idx = np.full(n_rays, -1, dtype=np.int64)
-    for si in range(n):
-        t_vals = intersect_plane_jit(
-            ray_origins, ray_dirs,
-            normals[si], centers[si], u_axes[si], v_axes[si],
-            half_ws[si], half_hs[si], epsilon,
-        )
-        closer = t_vals < bf_best_t
-        bf_best_t[closer] = t_vals[closer]
-        bf_best_idx[closer] = si
-
-    # BVH traversal
-    bvh_best_t, bvh_best_idx = traverse_bvh_batch(
-        ray_origins, ray_dirs,
-        node_bounds, node_meta, n_nodes,
-        normals, centers, u_axes, v_axes, half_ws, half_hs,
-        epsilon,
-    )
-
-    # Rays with hits must match on surface index (and t within tolerance)
-    hit_mask = bf_best_idx >= 0
-    np.testing.assert_array_equal(
-        bvh_best_idx[hit_mask], bf_best_idx[hit_mask],
-        err_msg="BVH and brute-force surface indices differ for hit rays",
-    )
-    np.testing.assert_allclose(
-        bvh_best_t[hit_mask], bf_best_t[hit_mask], rtol=1e-9,
-        err_msg="BVH and brute-force t-values differ for hit rays",
-    )
-    # No-hit rays must also agree
-    miss_mask = ~hit_mask
-    assert np.all(bvh_best_idx[miss_mask] == -1), "BVH reported hit where brute-force found none"
+# Low-level BVH tests (test_bvh_build_valid_tree_structure,
+# test_bvh_matches_bruteforce) were removed in Plan 02-03: the Numba BVH
+# implementation in accel.py was deleted in favor of the C++ extension,
+# which handles spatial acceleration internally. The two simulation-level
+# BVH tests below are preserved — they exercise RayTracer.run() on
+# many-surface scenes and still pass via the C++ fast path.
 
 
 def test_bvh_not_used_below_threshold():

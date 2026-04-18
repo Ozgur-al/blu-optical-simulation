@@ -29,24 +29,101 @@ from backlight_sim.sim.spectral import (
     sample_wavelengths, spectral_bin_centers, N_SPECTRAL_BINS, LAMBDA_MIN, LAMBDA_MAX,
     get_spd_from_project,
 )
-from backlight_sim.sim.accel import (
-    _NUMBA_AVAILABLE,
-    intersect_plane as _intersect_plane_accel,
-    intersect_sphere as _intersect_sphere_accel,
-    accumulate_grid_jit,
-    accumulate_sphere_jit,
-    compute_surface_aabbs,
-    build_bvh_flat,
-    traverse_bvh_batch,
-)
+# C++ extension — mandatory (D-09: no silent fallback)
+try:
+    from backlight_sim.sim import blu_tracer as _blu_tracer
+except ImportError as e:
+    raise RuntimeError(
+        "blu_tracer C++ extension failed to load. "
+        "The pre-compiled blu_tracer.pyd is missing or incompatible with your Python version. "
+        f"Details: {e}\n"
+        "To rebuild from source, run:\n"
+        "  pip install --no-build-isolation -e backlight_sim/sim/_blu_tracer/\n"
+        "(requires MSVC 2022 Build Tools and CMake — see CLAUDE.md)"
+    ) from e
+
 
 _EPSILON = 1e-6
 
-# BVH activation threshold: use BVH when total plane surfaces >= this count
-_BVH_THRESHOLD = 50
+# BVH disabled on the Python fallback path — C++ extension handles the fast
+# non-spectral path; the Python path (spectral / solid bodies) falls back to
+# brute-force intersection. Setting the threshold above any realistic surface
+# count ensures the BVH branch never activates (Plan 02-03, Step 5).
+_BVH_THRESHOLD = 10**9
 
 # Maximum nesting depth for per-ray refractive index stack
 _N_STACK_MAX = 8
+
+
+# ---------------------------------------------------------------------------
+# Pure-Python shims for removed backlight_sim.sim.accel symbols
+# ---------------------------------------------------------------------------
+# The C++ extension handles the hot non-spectral path. For the Python spectral /
+# solid-body fallback path, we keep using the existing per-bounce numpy
+# intersection helpers defined later in this module (_intersect_rays_plane,
+# _intersect_rays_sphere). These shims alias those helpers so the rest of the
+# tracer code keeps its original call sites without touching every line.
+# BVH is disabled via _BVH_THRESHOLD above, so build_bvh_flat / traverse_bvh_batch
+# are no-op stubs preserved only for signature compatibility.
+
+
+def _intersect_plane_accel(origins, directions, normal, center, u_axis, v_axis, size):
+    """Shim: delegate to the pure-numpy _intersect_rays_plane defined below."""
+    return _intersect_rays_plane(origins, directions, normal, center, u_axis, v_axis, size)
+
+
+def _intersect_sphere_accel(origins, directions, center, radius):
+    """Shim: delegate to the pure-numpy _intersect_rays_sphere defined below."""
+    return _intersect_rays_sphere(origins, directions, center, radius)
+
+
+def accumulate_grid_jit(grid, iy, ix, weights):
+    """Shim: scatter-add replacement for numba accumulate_grid_jit."""
+    np.add.at(grid, (iy, ix), weights)
+
+
+def accumulate_sphere_jit(grid, i_theta, i_phi, weights):
+    """Shim: scatter-add replacement for numba accumulate_sphere_jit."""
+    np.add.at(grid, (i_theta, i_phi), weights)
+
+
+def compute_surface_aabbs(normals, centers, u_axes, v_axes, half_ws, half_hs):
+    """Shim: vectorized AABB computation (was in accel.py, no numba needed)."""
+    n = centers.shape[0]
+    hw = half_ws[:, None]
+    hh = half_hs[:, None]
+    corners = np.stack([
+        centers + hw * u_axes + hh * v_axes,
+        centers + hw * u_axes - hh * v_axes,
+        centers - hw * u_axes + hh * v_axes,
+        centers - hw * u_axes - hh * v_axes,
+    ], axis=1)
+    aabbs = np.empty((n, 6), dtype=np.float64)
+    aabbs[:, 0] = corners[:, :, 0].min(axis=1)
+    aabbs[:, 1] = corners[:, :, 0].max(axis=1)
+    aabbs[:, 2] = corners[:, :, 1].min(axis=1)
+    aabbs[:, 3] = corners[:, :, 1].max(axis=1)
+    aabbs[:, 4] = corners[:, :, 2].min(axis=1)
+    aabbs[:, 5] = corners[:, :, 2].max(axis=1)
+    return aabbs
+
+
+def build_bvh_flat(surface_aabbs):
+    """Stub: BVH disabled on Python path (see _BVH_THRESHOLD). Returns empty tree."""
+    empty_bounds = np.zeros((1, 6), dtype=np.float64)
+    empty_meta = np.zeros((1, 3), dtype=np.int32)
+    return empty_bounds, empty_meta, 0
+
+
+def traverse_bvh_batch(origins, directions, bvh_bounds, bvh_meta, n_nodes,
+                       surf_normals, surf_centers, surf_u, surf_v,
+                       surf_hw, surf_hh, epsilon):
+    """Stub: BVH disabled on Python path. All rays report no-hit (brute-force is
+    used instead because _BVH_THRESHOLD is set above any realistic count)."""
+    n_rays = origins.shape[0]
+    best_t = np.full(n_rays, np.inf, dtype=np.float64)
+    best_idx = np.full(n_rays, -1, dtype=np.int64)
+    return best_t, best_idx
 
 
 def _n_stack_update(n_depth, n_stack, ri, entering_mask, n1_vals):
@@ -167,6 +244,184 @@ def _refract_snell(
     return refracted / norms
 
 
+# ---------------------------------------------------------------------------
+# C++ extension dispatch helpers (Plan 02-03)
+# ---------------------------------------------------------------------------
+
+def _project_uses_cpp_unsupported_features(project) -> bool:
+    """Return True if the project uses any feature that the C++ extension
+    does not yet handle. Those scenes must stay on the Python path.
+
+    Unsupported by C++ (Wave 2 scope): spectral sources, solid bodies /
+    cylinders / prisms, far-field sphere detectors, non-white source colors,
+    BSDF profiles, spectral material data. Keep this predicate conservative —
+    anything outside the C++ feature set routes to Python.
+    """
+    # Spectral SPDs on any enabled source
+    if any(s.spd != "white" for s in project.sources if s.enabled):
+        return True
+    # Solid bodies (box / cylinder / prism) — C++ has no Fresnel/TIR dispatch yet
+    if getattr(project, "solid_bodies", None):
+        return True
+    if getattr(project, "solid_cylinders", None):
+        return True
+    if getattr(project, "solid_prisms", None):
+        return True
+    # Far-field sphere detectors need candela_grid post-processing that depends
+    # on direction-at-hit, which the C++ accumulator doesn't emit.
+    for sd in getattr(project, "sphere_detectors", []) or []:
+        if getattr(sd, "mode", "near_field") == "far_field":
+            return True
+    # Non-white source colors (RGB accumulation)
+    for s in project.sources:
+        if not s.enabled:
+            continue
+        color = getattr(s, "color_rgb", (1.0, 1.0, 1.0))
+        if tuple(color) != (1.0, 1.0, 1.0):
+            return True
+    # BSDF profiles or spectral material data
+    if getattr(project, "bsdf_profiles", None):
+        return True
+    if getattr(project, "spectral_material_data", None):
+        return True
+    return False
+
+
+def _serialize_project(project) -> dict:
+    """Serialize a Project dataclass to a plain dict for the C++ extension.
+
+    The C++ trace_source() deserializes this dict — keep the key names and
+    value types aligned with blu_tracer.cpp::trace_source deserialization.
+    Only the fields that the C++ extension reads are serialized. Features
+    unsupported by C++ (solid bodies, BSDF, spectral) are filtered out upstream
+    by _project_uses_cpp_unsupported_features().
+    """
+    def arr3(v):
+        return [float(x) for x in v]
+
+    surfaces_list = []
+    for s in project.surfaces:
+        surfaces_list.append({
+            "name": s.name,
+            "center": arr3(s.center),
+            "normal": arr3(s.normal),
+            "u_axis": arr3(s.u_axis),
+            "v_axis": arr3(s.v_axis),
+            "size": [float(s.size[0]), float(s.size[1])],
+            "material_name": str(s.material_name or ""),
+            "optical_properties_name": str(
+                getattr(s, "optical_properties_name", "") or ""
+            ),
+        })
+
+    detectors_list = []
+    for d in project.detectors:
+        detectors_list.append({
+            "name": d.name,
+            "center": arr3(d.center),
+            "normal": arr3(d.normal),
+            "u_axis": arr3(d.u_axis),
+            "v_axis": arr3(d.v_axis),
+            "size": [float(d.size[0]), float(d.size[1])],
+            "resolution": [int(d.resolution[0]), int(d.resolution[1])],
+        })
+
+    sphere_det_list = []
+    for sd in getattr(project, "sphere_detectors", []) or []:
+        sphere_det_list.append({
+            "name": sd.name,
+            "center": arr3(sd.center),
+            "radius": float(sd.radius),
+            "resolution": [int(sd.resolution[0]), int(sd.resolution[1])],
+            "mode": str(getattr(sd, "mode", "near_field")),
+        })
+
+    materials_dict = {}
+    for name, mat in project.materials.items():
+        materials_dict[name] = {
+            "surface_type": str(mat.surface_type),
+            "reflectance": float(mat.reflectance),
+            "transmittance": float(mat.transmittance),
+            "is_diffuse": bool(mat.is_diffuse),
+            "haze": float(mat.haze),
+            "refractive_index": float(getattr(mat, "refractive_index", 1.0)),
+        }
+
+    optical_props_dict = {}
+    for name, op in (getattr(project, "optical_properties", {}) or {}).items():
+        optical_props_dict[name] = {
+            "surface_type": str(op.surface_type),
+            "reflectance": float(op.reflectance),
+            "transmittance": float(op.transmittance),
+            "is_diffuse": bool(op.is_diffuse),
+            "haze": float(op.haze),
+            "refractive_index": float(getattr(op, "refractive_index", 1.0)),
+        }
+
+    ang_dist_dict = {}
+    for name, profile in (project.angular_distributions or {}).items():
+        ang_dist_dict[name] = {
+            "theta_deg": [float(x) for x in profile.get("theta_deg", [])],
+            "intensity": [float(x) for x in profile.get("intensity", [])],
+        }
+
+    sources_list = []
+    for s in project.sources:
+        sources_list.append({
+            "name": s.name,
+            "position": arr3(s.position),
+            "direction": arr3(s.direction),
+            "distribution": str(s.distribution),
+            "effective_flux": float(s.effective_flux),
+            "enabled": bool(s.enabled),
+            "flux_tolerance": float(s.flux_tolerance),
+            "spd": str(getattr(s, "spd", "white") or "white"),
+        })
+
+    settings = project.settings
+    settings_dict = {
+        "rays_per_source": int(settings.rays_per_source),
+        "max_bounces": int(settings.max_bounces),
+        "energy_threshold": float(settings.energy_threshold),
+        "random_seed": int(settings.random_seed),
+        "record_ray_paths": int(settings.record_ray_paths),
+        "use_multiprocessing": bool(settings.use_multiprocessing),
+        "adaptive_sampling": bool(getattr(settings, "adaptive_sampling", False)),
+        "check_interval": int(
+            getattr(settings, "check_interval", settings.rays_per_source)
+        ),
+    }
+
+    return {
+        "sources": sources_list,
+        "surfaces": surfaces_list,
+        "detectors": detectors_list,
+        "sphere_detectors": sphere_det_list,
+        "materials": materials_dict,
+        "optical_properties": optical_props_dict,
+        "angular_distributions": ang_dist_dict,
+        "solid_bodies": [],
+        "solid_cylinders": [],
+        "solid_prisms": [],
+        "settings": settings_dict,
+    }
+
+
+def _cpp_trace_single_source(project, source_name: str, base_seed: int) -> dict:
+    """Top-level function for multiprocessing: trace one source via C++ extension.
+
+    Mirrors _trace_single_source but delegates to _blu_tracer.trace_source().
+    Returns the same dict shape as _trace_single_source.
+    """
+    import hashlib
+    seed_hash = int(
+        hashlib.md5(f"{base_seed}_{source_name}".encode()).hexdigest()[:8],
+        16,
+    )
+    project_dict = _serialize_project(project)
+    return _blu_tracer.trace_source(project_dict, source_name, int(seed_hash))
+
+
 class RayTracer:
     def __init__(self, project: Project):
         self.project = project
@@ -266,11 +521,17 @@ class RayTracer:
         total = len(sources)
         escaped_total = 0.0
 
+        # Route to C++ fast path when the project uses only C++-supported features;
+        # otherwise keep the Python spectral / solid-body worker (per 02-CONTEXT.md
+        # deferred items).
+        _cpp_eligible = not _project_uses_cpp_unsupported_features(self.project)
+        _worker = _cpp_trace_single_source if _cpp_eligible else _trace_single_source
+
         with ProcessPoolExecutor(max_workers=n_workers) as pool:
             futures = []
             for src in sources:
                 f = pool.submit(
-                    _trace_single_source,
+                    _worker,
                     self.project, src.name, settings.random_seed,
                 )
                 futures.append(f)
@@ -559,9 +820,94 @@ class RayTracer:
         all_paths: list[list[np.ndarray]] = []
         escaped_flux = 0.0
 
+        # ---- C++ fast-path eligibility (Plan 02-03, D-02/D-03) ----
+        # Route non-spectral scenes without solid bodies / BSDF / far-field /
+        # record_ray_paths / adaptive convergence to the C++ extension. Scenes
+        # with features outside the C++ Wave 2 scope keep the Python bounce
+        # loop below. convergence_callback, adaptive, and record_ray_paths all
+        # need Python loop hooks, so they force the Python path.
+        _cpp_path = (
+            not _project_uses_cpp_unsupported_features(self.project)
+            and n_record == 0
+            and not _adaptive
+            and convergence_callback is None
+        )
+
         for src_idx, source in enumerate(sources):
             if self._cancelled:
                 break
+
+            # --- C++ fast path (non-spectral, plane-surfaces-only scenes) ---
+            if _cpp_path:
+                import hashlib
+                eff_flux_src = source.effective_flux
+                if source.flux_tolerance > 0:
+                    tol = source.flux_tolerance / 100.0
+                    eff_flux_src *= (1.0 + self.rng.uniform(-tol, tol))
+                project_dict = _serialize_project(self.project)
+                # Patch the serialized source effective_flux with the jittered value
+                # so the C++ extension uses the exact same per-source flux Python
+                # would have used.
+                for src_item in project_dict["sources"]:
+                    if src_item["name"] == source.name:
+                        src_item["effective_flux"] = float(eff_flux_src)
+                        break
+                seed_hash = int(
+                    hashlib.md5(
+                        f"{settings.random_seed}_{source.name}".encode()
+                    ).hexdigest()[:8],
+                    16,
+                )
+                result_dict = _blu_tracer.trace_source(
+                    project_dict, source.name, int(seed_hash)
+                )
+                # Merge C++ result into Python accumulators
+                for det_name, grid_data in result_dict.get("grids", {}).items():
+                    if det_name in det_results:
+                        det_results[det_name].grid += np.asarray(grid_data["grid"])
+                        det_results[det_name].total_hits += int(grid_data["hits"])
+                        det_results[det_name].total_flux += float(grid_data["flux"])
+                escaped_flux += float(result_dict.get("escaped", 0.0))
+                for sph_name, sph_data in result_dict.get("sph_grids", {}).items():
+                    if sph_name in sph_results:
+                        sph_results[sph_name].grid += np.asarray(sph_data["grid"])
+                        sph_results[sph_name].total_hits += int(sph_data["hits"])
+                        sph_results[sph_name].total_flux += float(sph_data["flux"])
+                for body_name, face_map in result_dict.get("sb_stats", {}).items():
+                    if body_name in sb_stats:
+                        for fid, flux_data in face_map.items():
+                            if fid in sb_stats[body_name]:
+                                sb_stats[body_name][fid]["entering_flux"] += float(
+                                    flux_data.get("entering_flux", 0.0)
+                                )
+                                sb_stats[body_name][fid]["exiting_flux"] += float(
+                                    flux_data.get("exiting_flux", 0.0)
+                                )
+                rays_processed += settings.rays_per_source
+                if progress_callback:
+                    progress = rays_processed / total_rays
+                    progress_callback(progress)
+                    if partial_result_callback is not None and progress >= 0.05:
+                        partial_detectors = {}
+                        for det_name, dr in det_results.items():
+                            partial_detectors[det_name] = DetectorResult(
+                                detector_name=det_name,
+                                grid=dr.grid.copy(),
+                                total_hits=dr.total_hits,
+                                total_flux=dr.total_flux,
+                                grid_spectral=dr.grid_spectral.copy()
+                                if dr.grid_spectral is not None else None,
+                            )
+                        partial = SimulationResult(
+                            detectors=partial_detectors,
+                            ray_paths=[],
+                            escaped_flux=escaped_flux,
+                            total_emitted_flux=total_emitted_flux,
+                            source_count=src_idx + 1,
+                        )
+                        partial_result_callback(partial)
+                continue
+            # --- end C++ fast path ---
 
             n_total = settings.rays_per_source
             eff_flux = source.effective_flux

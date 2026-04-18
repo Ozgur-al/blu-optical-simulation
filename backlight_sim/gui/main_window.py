@@ -42,7 +42,21 @@ from backlight_sim.gui.plot_tab import PlotTab
 from backlight_sim.gui.receiver_3d import Receiver3DWidget
 from backlight_sim.gui.spectral_data_panel import SpectralDataPanel
 from backlight_sim.io.angular_distributions import merge_default_profiles
-from backlight_sim.sim.accel import _NUMBA_AVAILABLE, warmup_jit_kernels
+# Native C++ acceleration is mandatory post Phase 02 Plan 03 (D-05/D-06):
+# the Numba accel.py layer is gone and the C++ blu_tracer extension is
+# always loaded by tracer.py at import time. If it fails to load, the
+# RayTracer import raises RuntimeError — so reaching this module means
+# native acceleration is active.
+_CPP_ACTIVE = True
+
+
+def _warmup_native_kernels() -> bool:
+    """No-op warmup retained for UI timing parity.
+
+    The C++ extension does not need LLVM-style warmup (it's AOT-compiled),
+    but we keep this helper so the status-bar dispatch stays the same.
+    """
+    return True
 from backlight_sim.gui.theme import ACCENT, TEXT_MUTED
 
 
@@ -114,15 +128,13 @@ class MainWindow(QMainWindow):
         self._restore_layout()
         self._refresh_all()
 
-        # Eager JIT warmup: triggers LLVM compilation so first simulation runs at full speed
-        if _NUMBA_AVAILABLE:
-            ok = warmup_jit_kernels()
-            if ok:
-                self._log("JIT kernels compiled and ready (Numba acceleration active)")
-            else:
-                self._log("JIT warmup failed — falling back to NumPy kernels")
+        # Native C++ acceleration is mandatory (Plan 02-03); no warmup needed
+        # for an AOT-compiled extension. Retain logging for UX parity.
+        if _CPP_ACTIVE:
+            _warmup_native_kernels()
+            self._log("Native C++ acceleration active (blu_tracer extension loaded)")
         else:
-            self._log("JIT acceleration not available (install numba for 10-50x speedup)")
+            self._log("Native acceleration unavailable — running pure Python")
 
     def _init_default_materials(self):
         self._project.materials["default_reflector"] = Material(
@@ -217,10 +229,10 @@ class MainWindow(QMainWindow):
         self._cancel_btn.clicked.connect(self._cancel_simulation)
         self._cancel_btn.setEnabled(False)
 
-        # JIT status indicator
-        self._jit_label = QLabel("JIT: Active" if _NUMBA_AVAILABLE else "JIT: Off")
-        self._jit_label.setAccessibleName("JIT acceleration status")
-        if _NUMBA_AVAILABLE:
+        # Native C++ acceleration status indicator (was JIT / Numba pre-02-03)
+        self._jit_label = QLabel("C++: Active" if _CPP_ACTIVE else "C++: Off")
+        self._jit_label.setAccessibleName("Native C++ acceleration status")
+        if _CPP_ACTIVE:
             self._jit_label.setStyleSheet(f"color: {ACCENT}; font-weight: bold; padding: 0 6px;")
         else:
             self._jit_label.setStyleSheet(f"color: {TEXT_MUTED}; padding: 0 6px;")
