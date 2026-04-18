@@ -9,4 +9,7 @@ requires-python = ">=3.12"
 
 [tool.scikit-build]
 cmake.build-type = "Release"
-wheel.install-dir = "backlight_sim/sim"
+# CMakeLists.txt installs to backlight_sim/sim/ already (relative to wheel root).
+# Leaving wheel.install-dir unset keeps the wheel root at site-packages,
+# so the .pyd lands at site-packages/backlight_sim/sim/blu_tracer*.pyd and is
+# importable as `backlight_sim.sim.blu_tracer` (the local source tree package).
