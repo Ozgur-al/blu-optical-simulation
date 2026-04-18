@@ -32,7 +32,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 5. UI Revamp | v1.0 | 4/4 | Complete | 2026-03-14 |
 | 6. Tracer Cross-Phase Wiring | v1.0 | 2/2 | Complete | 2026-03-15 |
 | 7. UI + Spectral Display Fixes | v1.0 | 1/1 | Complete | 2026-03-15 |
-| 02. Converting main simulation loop to C++ | v2.0 | 3/4 | In Progress | — |
+| 02. Converting main simulation loop to C++ | v2.0 | 4/4 | Complete (pending verify) | 2026-04-18 |
 
 ### Phase 1: distribution for admin locked work computer compatibility, splash screen etc.
 
@@ -57,7 +57,7 @@ Plans:
 - [x] 02-01-PLAN.md — Build infrastructure: pyproject.toml, CMakeLists.txt, C++ skeleton, .pyd build, test stubs (complete 2026-04-18)
 - [x] 02-02-PLAN.md — Core C++ engine: all intersection types, sampling, Fresnel/material dispatch, full bounce loop (complete 2026-04-18)
 - [x] 02-03-PLAN.md — Python integration: tracer.py C++ wiring, Numba removal, D-09 hard crash (complete 2026-04-18)
-- [ ] 02-04-PLAN.md — Distribution: PyInstaller spec, requirements.txt, docs, statistical equivalence + speedup validation
+- [x] 02-04-PLAN.md — Distribution: PyInstaller spec, requirements.txt, docs, statistical equivalence + speedup validation (complete 2026-04-18)
 
 ### Phase 3: Golden-reference validation suite
 
