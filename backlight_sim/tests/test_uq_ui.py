@@ -430,3 +430,60 @@ def test_efficiency_ci_uses_rays_per_batch_not_naive_division(qapp):
     # Naive formula (1005/10 = 100.5) would produce a different per-batch vector.
     naive = 1005.0 / 10.0
     assert not np.allclose(per_batch_src, naive)
+
+
+# ---------------------------------------------------------------------------
+# Simulation Settings form — UQ controls (post-verification polish)
+# ---------------------------------------------------------------------------
+
+
+def test_settings_form_exposes_uq_controls_with_tooltips(qapp):
+    """SimulationSettings form must expose uq_batches + uq_include_spectral with tooltips."""
+    from backlight_sim.core.project_model import SimulationSettings
+    from backlight_sim.gui.properties_panel import SettingsForm
+
+    form = SettingsForm()
+    # Widgets exist
+    assert hasattr(form, "_uq_batches"), "SettingsForm missing _uq_batches widget"
+    assert hasattr(form, "_uq_include_spectral"), "SettingsForm missing _uq_include_spectral widget"
+    # Spinbox range allows disabling UQ (0) and a sensible upper bound
+    assert form._uq_batches.minimum() == 0
+    assert form._uq_batches.maximum() >= 20
+    # Tooltips present and explain the feature
+    bt = form._uq_batches.toolTip().lower()
+    assert bt, "uq_batches has empty tooltip"
+    assert "confidence" in bt or "ci" in bt
+    assert "0" in bt  # documents the disable path
+    st = form._uq_include_spectral.toolTip().lower()
+    assert st, "uq_include_spectral has empty tooltip"
+    assert "spectral" in st
+
+
+def test_settings_form_roundtrips_uq_values(qapp):
+    """Changing the widgets must update the bound SimulationSettings dataclass."""
+    from backlight_sim.core.project_model import SimulationSettings
+    from backlight_sim.gui.properties_panel import SettingsForm
+
+    form = SettingsForm()
+    s = SimulationSettings()
+    # Defaults from the dataclass must show up in the widget
+    s.uq_batches = 7
+    s.uq_include_spectral = False
+    form.load(s)
+    assert form._uq_batches.value() == 7
+    assert form._uq_include_spectral.isChecked() is False
+    # User edits -> propagate back to the settings object
+    form._uq_batches.setValue(15)
+    form._uq_include_spectral.setChecked(True)
+    assert s.uq_batches == 15
+    assert s.uq_include_spectral is True
+
+
+def test_heatmap_conf_combo_tooltip_mentions_no_rerun(qapp):
+    """CI-level dropdown tooltip must tell users the sim is not re-run."""
+    from backlight_sim.gui.heatmap_panel import HeatmapPanel
+
+    panel = HeatmapPanel()
+    tip = panel._conf_combo.toolTip().lower()
+    assert tip, "CI level combo has empty tooltip"
+    assert "rerun" in tip or "re-run" in tip or "without" in tip

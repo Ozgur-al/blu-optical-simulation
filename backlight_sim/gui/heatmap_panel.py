@@ -99,7 +99,15 @@ class HeatmapPanel(QWidget):
         top.addWidget(self._selector)
         self._color_mode = QComboBox()
         self._color_mode.setAccessibleName("Display mode")
-        self._color_mode.setToolTip("Switch between intensity, RGB, spectral, or per-bin UQ stderr display")
+        self._color_mode.setToolTip(
+            "Heatmap display mode:\n"
+            "• Intensity (mono) — flux per bin\n"
+            "• Color (RGB) — RGB LED mix (for color scenes)\n"
+            "• Spectral Color — wavelength-resolved color (for spectral sims)\n"
+            "• Per-bin UQ stderr — relative noise map (sigma_bin / mean_bin); "
+            "requires Uncertainty (UQ) batches ≥ 4 in Simulation Settings. "
+            "Bright regions are noise-limited; dark regions are design-limited."
+        )
         self._color_mode.addItems([
             "Intensity (mono)",
             "Color (RGB)",
@@ -189,8 +197,12 @@ class HeatmapPanel(QWidget):
         self._conf_combo = QComboBox()
         self._conf_combo.setAccessibleName("Confidence level")
         self._conf_combo.setToolTip(
-            "Confidence level for the ± bounds on each KPI; recomputes without "
-            "re-running the simulation."
+            "Confidence level for the ± bounds on each KPI.\n\n"
+            "• 90% — tighter bounds, ~10% chance the true value lies outside\n"
+            "• 95% — default; standard engineering reporting convention\n"
+            "• 99% — wider bounds; very strong claim\n\n"
+            "Recomputes instantly from stored per-batch grids — no tracer rerun. "
+            "Only active when Uncertainty (UQ) batches ≥ 4 in Simulation Settings."
         )
         for text, _level in _CONF_CHOICES:
             self._conf_combo.addItem(text)

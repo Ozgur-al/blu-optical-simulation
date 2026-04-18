@@ -1534,6 +1534,36 @@ class SettingsForm(QWidget):
         sec_conv.addLayout(fl_conv)
         vbox.addWidget(sec_conv)
 
+        # ---- Uncertainty (UQ) section (collapsed by default) ----
+        sec_uq = CollapsibleSection("Uncertainty (UQ)", collapsed=True)
+        fl_uq = QFormLayout()
+        self._uq_batches = QSpinBox()
+        self._uq_batches.setRange(0, 50)
+        self._uq_batches.setValue(10)
+        self._uq_batches.setToolTip(
+            "Number of independent ray batches (K) used to estimate the confidence "
+            "interval on each KPI. Same total rays as 'Rays per source' — just split "
+            "into K groups so per-KPI variance can be measured.\n\n"
+            "• 0 = disable UQ (legacy fast path, no ± bounds on KPIs)\n"
+            "• 4-9 = coarse CI, faster\n"
+            "• 10 = recommended default (Student-t ± 95% works well)\n"
+            "• 20+ = tighter CI, marginal gain\n\n"
+            "The heatmap panel, sweep results, and HTML report all show "
+            "'value ± half_width' when K ≥ 4."
+        )
+        self._uq_include_spectral = QCheckBox("Store per-batch spectral grids")
+        self._uq_include_spectral.setChecked(True)
+        self._uq_include_spectral.setToolTip(
+            "When ON, spectral scenes also keep one spectral grid per batch "
+            "so wavelength-resolved KPIs get CI bounds too.\n\n"
+            "Turn OFF to save memory on spectral scenes with many wavelength bins "
+            "(only affects spectral sims; non-spectral sims ignore this)."
+        )
+        fl_uq.addRow("Batches (K):", self._uq_batches)
+        fl_uq.addRow("", self._uq_include_spectral)
+        sec_uq.addLayout(fl_uq)
+        vbox.addWidget(sec_uq)
+
         # ---- Advanced section (collapsed by default) ----
         sec_adv = CollapsibleSection("Advanced", collapsed=True)
         fl_adv = QFormLayout()
@@ -1576,6 +1606,8 @@ class SettingsForm(QWidget):
         self._adaptive.toggled.connect(self._on_adaptive_toggled)
         self._cv_target.valueChanged.connect(self._apply)
         self._check_interval.valueChanged.connect(self._apply)
+        self._uq_batches.valueChanged.connect(self._apply)
+        self._uq_include_spectral.toggled.connect(self._apply)
 
         # Explicit tab order for keyboard navigation
         self.setTabOrder(self._rays, self._bounce)
@@ -1583,7 +1615,9 @@ class SettingsForm(QWidget):
         self.setTabOrder(self._thresh, self._adaptive)
         self.setTabOrder(self._adaptive, self._cv_target)
         self.setTabOrder(self._cv_target, self._check_interval)
-        self.setTabOrder(self._check_interval, self._seed)
+        self.setTabOrder(self._check_interval, self._uq_batches)
+        self.setTabOrder(self._uq_batches, self._uq_include_spectral)
+        self.setTabOrder(self._uq_include_spectral, self._seed)
         self.setTabOrder(self._seed, self._rec)
         self.setTabOrder(self._rec, self._unit)
         self.setTabOrder(self._unit, self._flux_unit)
@@ -1606,6 +1640,8 @@ class SettingsForm(QWidget):
             QSignalBlocker(self._adaptive),
             QSignalBlocker(self._cv_target),
             QSignalBlocker(self._check_interval),
+            QSignalBlocker(self._uq_batches),
+            QSignalBlocker(self._uq_include_spectral),
         ]
         self._rays.setValue(s.rays_per_source)
         self._bounce.setValue(s.max_bounces)
@@ -1628,6 +1664,8 @@ class SettingsForm(QWidget):
         self._check_interval.setValue(getattr(s, "check_interval", 1000))
         self._cv_target.setEnabled(adaptive)
         self._check_interval.setEnabled(adaptive)
+        self._uq_batches.setValue(getattr(s, "uq_batches", 10))
+        self._uq_include_spectral.setChecked(getattr(s, "uq_include_spectral", True))
         self._loading = False
         del blockers
 
@@ -1662,6 +1700,11 @@ class SettingsForm(QWidget):
                 ('adaptive_sampling', self._adaptive.isChecked()),
                 ('convergence_cv_target', self._cv_target.value()),
                 ('check_interval', self._check_interval.value()),
+            ])
+        if hasattr(self._s, "uq_batches"):
+            changes.extend([
+                ('uq_batches', self._uq_batches.value()),
+                ('uq_include_spectral', self._uq_include_spectral.isChecked()),
             ])
         _push_or_apply_changes(self._s, changes,
                                getattr(self, '_push_command', None),
