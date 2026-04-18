@@ -32,7 +32,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 5. UI Revamp | v1.0 | 4/4 | Complete | 2026-03-14 |
 | 6. Tracer Cross-Phase Wiring | v1.0 | 2/2 | Complete | 2026-03-15 |
 | 7. UI + Spectral Display Fixes | v1.0 | 1/1 | Complete | 2026-03-15 |
-| 02. Converting main simulation loop to C++ | v2.0 | 4/4 | Complete (pending verify) | 2026-04-18 |
+| 02. Converting main simulation loop to C++ | v2.0 | 4/4 | Complete    | 2026-04-18 |
 
 ### Phase 1: distribution for admin locked work computer compatibility, splash screen etc.
 
