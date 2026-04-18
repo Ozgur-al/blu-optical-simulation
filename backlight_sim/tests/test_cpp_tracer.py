@@ -229,10 +229,10 @@ def test_determinism():
 
 
 def test_energy_conservation():
-    """C++-05: Total flux in + escaped <= source emission within 0.1%."""
+    """C++-05: Total accounted flux does not exceed source emission within 0.1%."""
     from backlight_sim.sim import blu_tracer
 
-    project_dict = _make_simple_project(n_rays=10000, max_bounces=50)
+    project_dict = _make_simple_project(n_rays=10_000, max_bounces=50)
     # Low reflectance => most energy absorbed in walls.
     project_dict["materials"]["reflector"]["reflectance"] = 0.1
 
@@ -242,13 +242,15 @@ def test_energy_conservation():
     detector_flux = result["grids"]["top_detector"]["flux"]
     escaped = result["escaped"]
 
-    # Full energy conservation (detector + absorbed + escaped == source) requires
-    # the real bounce loop from Plan 02-02. For the Wave 1 stub this simply
-    # asserts the accounting is non-negative and does not exceed source flux.
     total_accounted = detector_flux + escaped
+    # Total accounted must not exceed source by more than 0.1% (no energy creation).
     assert total_accounted <= source_flux * 1.001, (
         f"Accounted flux ({total_accounted:.4f}) exceeds source flux ({source_flux:.4f}) "
         "by more than 0.1% - energy not conserved"
+    )
+    # Total accounted must be > 0 (real bounce loop from 02-02 is running).
+    assert total_accounted > 0, (
+        "Total accounted flux is zero - bounce loop is not running real physics"
     )
 
 
