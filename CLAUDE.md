@@ -73,6 +73,12 @@ pytest backlight_sim/tests/test_tracer.py::test_function_name
 # Build standalone Windows executable (requires: pip install pyinstaller)
 python build_exe.py          # basic build
 python build_exe.py --clean --zip  # clean build + zip for distribution
+
+# Golden-reference validation suite (Phase 03)
+pytest backlight_sim/tests/golden/                    # Run all analytical physics tests
+pytest backlight_sim/tests/golden/ -v --tb=short      # Verbose with short tracebacks
+python -m backlight_sim.golden --report               # HTML + markdown report (to ./golden_reports/<timestamp>/)
+python -m backlight_sim.golden --report --out ./gold --rays 10000   # Fast smoke run
 ```
 
 ## C++ Extension (blu_tracer)
@@ -313,6 +319,9 @@ Semi-vectorized Monte Carlo engine:
 - Project JSON format: all numpy arrays as plain lists. Add new fields with `.get(key, default)` to keep backwards compatibility with older save files.
 - Run `pytest backlight_sim/tests/` (currently 20 tests) before committing simulation or core changes.
 - Session changes should be appended to `CODEX.md` with a session ID, title, files touched, and validation notes.
+- Before committing changes to `sim/` or `core/`, run `pytest backlight_sim/tests/golden/` — the analytical physics cases (Fresnel T(θ), Snell/dispersion on a prism, Lambertian cosine law, single-bounce specular reflection, integrating-cavity irradiance) catch regressions the functional suite can miss. This is a pre-merge gate enforced by `python -m backlight_sim.golden --report` (exit code nonzero on any failure).
+- Phase 03 closes the `project_spectral_ri_testing.md` memory flag: `backlight_sim/tests/golden/test_prism_dispersion.py::test_prism_dispersion_is_nonzero` is the regression guard for the solid-body spectral n(λ) path at `tracer.py:1495` — if this test fails, the spectral dispatch has silently fallen back to scalar refractive_index.
+- The golden-suite package `backlight_sim/golden/` ships with the wheel (headless; no PySide6/pyqtgraph imports) so the validation suite can be re-run against any installed distribution, not just the source tree.
 
 ## Feature Status Summary
 
