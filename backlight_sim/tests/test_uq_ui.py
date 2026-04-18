@@ -287,6 +287,116 @@ def test_export_kpi_csv_legacy(qapp, tmp_path, monkeypatch):
         assert col in header, f"Missing CI column '{col}' in header {header}"
 
 
+# ---------------------------------------------------------------------------
+# Task 2 tests: ConvergenceTab and parameter sweep CI columns
+# ---------------------------------------------------------------------------
+
+
+def test_convergence_tab_constructs(qapp):
+    import pyqtgraph as pg
+    from PySide6.QtWidgets import QWidget
+    from backlight_sim.gui.convergence_tab import ConvergenceTab
+
+    tab = ConvergenceTab()
+    assert isinstance(tab, QWidget)
+    # Must contain at least one pyqtgraph PlotWidget child.
+    plots = tab.findChildren(pg.PlotWidget)
+    assert len(plots) >= 1
+
+
+def test_convergence_tab_populate(qapp):
+    import pyqtgraph as pg
+    from backlight_sim.gui.convergence_tab import ConvergenceTab
+
+    tab = ConvergenceTab()
+    result = _make_uq_result(n_batches=10, add_spatial_variance=True)
+    tab.update_from_result(result)
+    items = tab._plot.items
+    # Should have at least 1 PlotDataItem (center curve) + 1 FillBetweenItem.
+    has_fill = any(isinstance(it, pg.FillBetweenItem) for it in items)
+    assert has_fill, f"Expected FillBetweenItem in plot items, got {[type(i).__name__ for i in items]}"
+
+
+def test_convergence_tab_legacy_noop(qapp):
+    from backlight_sim.gui.convergence_tab import ConvergenceTab
+
+    tab = ConvergenceTab()
+    result = _make_legacy_result()
+    tab.update_from_result(result)
+    # No fill item, empty label visible.
+    assert not tab._empty_label.isHidden()
+
+
+def test_sweep_plot_has_error_bars(qapp):
+    import pyqtgraph as pg
+    from backlight_sim.core.project_model import Project, SimulationSettings
+    from backlight_sim.gui.parameter_sweep_dialog import ParameterSweepDialog
+
+    project = Project(name="dummy", settings=SimulationSettings())
+    dlg = ParameterSweepDialog(project)
+
+    # Feed in synthetic per-step data (5 steps).
+    for i in range(5):
+        result = _make_uq_result(
+            n_batches=10,
+            add_spatial_variance=True,
+            total_emitted_flux=float(1000 + i * 100),
+        )
+        dlg._on_step_done(i, float(i), result)
+
+    # Trigger plot refresh (already called by _on_step_done).
+    dlg._refresh_plot()
+    items = dlg._plot_widget.items()
+    has_err = any(isinstance(it, pg.ErrorBarItem) for it in items)
+    assert has_err, (
+        f"Expected ErrorBarItem on sweep plot, items={[type(i).__name__ for i in items]}"
+    )
+
+
+def test_sweep_table_has_ci_columns(qapp):
+    from backlight_sim.core.project_model import Project, SimulationSettings
+    from backlight_sim.gui.parameter_sweep_dialog import ParameterSweepDialog
+
+    project = Project(name="dummy", settings=SimulationSettings())
+    dlg = ParameterSweepDialog(project)
+
+    # Default single-parameter sweep columns should include 3 CI columns.
+    headers = [
+        dlg._table.horizontalHeaderItem(i).text() if dlg._table.horizontalHeaderItem(i) else ""
+        for i in range(dlg._table.columnCount())
+    ]
+    # Verify at least 3 CI column headers containing '±' or 'CI' tokens.
+    ci_cols = [h for h in headers if "±" in h or "CI" in h]
+    assert len(ci_cols) >= 3, f"Expected >= 3 CI headers, got {headers}"
+
+
+def test_sweep_efficiency_uses_rays_per_batch(qapp):
+    """Verify the sweep step computes per-step CI with rays_per_batch scaling."""
+    from backlight_sim.core.project_model import Project, SimulationSettings
+    from backlight_sim.gui.parameter_sweep_dialog import ParameterSweepDialog
+
+    project = Project(name="dummy", settings=SimulationSettings())
+    dlg = ParameterSweepDialog(project)
+
+    # Build a result with uneven rays_per_batch; flux proportional -> eff CI half_width ~= 0.
+    result = _make_uq_result(
+        n_batches=10,
+        rays_per_batch_list=[101] * 5 + [100] * 5,
+        add_spatial_variance=False,   # deterministic batches
+        total_emitted_flux=1005.0,
+    )
+    dlg._on_step_done(0, 1.0, result)
+    # After step, sweep_ci_eff should hold a CIEstimate (or None).
+    ci_eff = dlg._sweep_ci_eff_full[0]
+    assert ci_eff is not None
+    # With rays_per_batch-proportional flux_batches, per-batch efficiency is
+    # identical across batches -> half_width ≈ 0.
+    assert ci_eff.half_width < 1e-6, (
+        f"Efficiency half_width {ci_eff.half_width} > 0 indicates naive "
+        "total/K scaling was used instead of rays_per_batch."
+    )
+
+
 def test_efficiency_ci_uses_rays_per_batch_not_naive_division(qapp):
     """Verify _per_batch_source_flux uses rays_per_batch (not total/K)."""
     from backlight_sim.core.kpi import _per_batch_source_flux
