@@ -39,6 +39,7 @@ from backlight_sim.gui.bsdf_panel import BSDFPanel
 from backlight_sim.gui.far_field_panel import FarFieldPanel
 from backlight_sim.gui.measurement_dialog import MeasurementDialog
 from backlight_sim.gui.plot_tab import PlotTab
+from backlight_sim.gui.convergence_tab import ConvergenceTab
 from backlight_sim.gui.receiver_3d import Receiver3DWidget
 from backlight_sim.gui.spectral_data_panel import SpectralDataPanel
 from backlight_sim.io.angular_distributions import merge_default_profiles
@@ -156,6 +157,9 @@ class MainWindow(QMainWindow):
         self._ang_dist.set_project(self._project)
 
         self._plot_tab = PlotTab()
+        # Phase 4 UQ: cumulative-KPI + CI band convergence plot (distinct
+        # from the existing live CV%-per-source convergence plot).
+        self._convergence_tab = ConvergenceTab()
         self._receiver_3d = Receiver3DWidget()
 
         self._spectral_panel = SpectralDataPanel()
@@ -285,6 +289,7 @@ class MainWindow(QMainWindow):
             ("3D View", self._viewport),
             ("Heatmap", self._heatmap),
             ("Plots", self._plot_tab),
+            ("Convergence (UQ)", self._convergence_tab),
             ("Angular Dist.", self._ang_dist),
             ("Far-field", self._far_field_panel),
             ("3D Receiver", self._receiver_3d),
@@ -687,6 +692,7 @@ class MainWindow(QMainWindow):
         self._properties.clear_selection()
         self._heatmap.clear()
         self._plot_tab.clear()
+        self._convergence_tab.clear()
         self._viewport.clear_ray_paths()
         self._refresh_all()
         self.setWindowTitle("Blu Optical Simulation - Untitled")
@@ -1287,6 +1293,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Simulation complete.", 5000)
         self._heatmap.update_results(result)
         self._plot_tab.update_results(result)
+        self._convergence_tab.update_from_result(result)
         self._receiver_3d.update_results(result)
         self._spectral_panel.update_from_result(result)  # Chromaticity scatter
 

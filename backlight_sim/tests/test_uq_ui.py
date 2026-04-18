@@ -311,10 +311,11 @@ def test_convergence_tab_populate(qapp):
     tab = ConvergenceTab()
     result = _make_uq_result(n_batches=10, add_spatial_variance=True)
     tab.update_from_result(result)
-    items = tab._plot.items
-    # Should have at least 1 PlotDataItem (center curve) + 1 FillBetweenItem.
+    items = tab._plot.listDataItems() + list(tab._plot.plotItem.items)
     has_fill = any(isinstance(it, pg.FillBetweenItem) for it in items)
-    assert has_fill, f"Expected FillBetweenItem in plot items, got {[type(i).__name__ for i in items]}"
+    assert has_fill, (
+        f"Expected FillBetweenItem in plot items, got {[type(i).__name__ for i in items]}"
+    )
 
 
 def test_convergence_tab_legacy_noop(qapp):
@@ -346,7 +347,7 @@ def test_sweep_plot_has_error_bars(qapp):
 
     # Trigger plot refresh (already called by _on_step_done).
     dlg._refresh_plot()
-    items = dlg._plot_widget.items()
+    items = list(dlg._plot_widget.plotItem.items)
     has_err = any(isinstance(it, pg.ErrorBarItem) for it in items)
     assert has_err, (
         f"Expected ErrorBarItem on sweep plot, items={[type(i).__name__ for i in items]}"

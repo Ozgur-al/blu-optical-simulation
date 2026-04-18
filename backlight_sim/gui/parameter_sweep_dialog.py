@@ -19,10 +19,58 @@ from PySide6.QtGui import QColor, QBrush
 from backlight_sim.core.project_model import Project
 from backlight_sim.core.detectors import SimulationResult
 from backlight_sim.core.kpi import (
+    _per_batch_source_flux,
     compute_scalar_kpis,
     uniformity_in_center as _uniformity_in_center,
 )
+from backlight_sim.core.uq import CIEstimate, batch_mean_ci, kpi_batches
 from backlight_sim.sim.tracer import RayTracer
+
+
+def _per_step_kpi_cis(result: SimulationResult) -> dict[str, CIEstimate | None]:
+    """Return per-step CIs for the 3 sweep KPIs.
+
+    Keys: ``efficiency_pct``, ``uniformity_1_4_min_avg``, ``hotspot_peak_avg``.
+    All values are ``None`` when UQ is off (``n_batches < 4`` or
+    ``grid_batches is None``).  Per-batch efficiency uses
+    :func:`_per_batch_source_flux` for unbiased rays_per_batch scaling
+    (checker I5).
+    """
+    out: dict[str, CIEstimate | None] = {
+        "efficiency_pct": None,
+        "uniformity_1_4_min_avg": None,
+        "hotspot_peak_avg": None,
+    }
+    if not result.detectors:
+        return out
+    det = next(iter(result.detectors.values()))
+    gb = det.grid_batches
+    if gb is None or det.n_batches < 4:
+        return out
+
+    u14_batches = kpi_batches(gb, lambda g: _uniformity_in_center(g, 0.25)[0])
+    hot_batches = kpi_batches(
+        gb,
+        lambda g: (float(g.max()) / float(g.mean())) if g.mean() > 0 else 0.0,
+    )
+    out["uniformity_1_4_min_avg"] = batch_mean_ci(u14_batches, 0.95)
+    out["hotspot_peak_avg"] = batch_mean_ci(hot_batches, 0.95)
+
+    per_batch_src = _per_batch_source_flux(result, det)
+    if per_batch_src is not None and det.flux_batches is not None:
+        fb = np.asarray(det.flux_batches, dtype=float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            eff_batches = np.where(
+                per_batch_src > 0, fb / per_batch_src * 100.0, 0.0,
+            )
+        out["efficiency_pct"] = batch_mean_ci(eff_batches, 0.95)
+    return out
+
+
+def _fmt_ci(ci: CIEstimate | None, precision: int = 3) -> str:
+    if ci is None:
+        return ""
+    return ci.format(precision=precision)
 
 # Sweep-able parameters: display_name → (internal_key, default_start, default_end)
 _PARAMS: dict[str, tuple[str, float, float]] = {
@@ -215,9 +263,17 @@ class ParameterSweepDialog(QDialog):
         # ── Table + plot in a horizontal splitter ─────────────────────────
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        self._table = QTableWidget(0, 4)
+        self._table = QTableWidget(0, 7)
         self._table.setHorizontalHeaderLabels(
-            ["Value", "Efficiency %", "U(1/4) min/avg", "Hotspot (pk/avg)"]
+            [
+                "Value",
+                "Efficiency %",
+                "U(1/4) min/avg",
+                "Hotspot (pk/avg)",
+                "eff ± Δ",
+                "u14 ± Δ",
+                "hot ± Δ",
+            ]
         )
         self._table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch)
@@ -252,8 +308,15 @@ class ParameterSweepDialog(QDialog):
         self._sweep_values: list[float] = []
         self._sweep_values2: list[float] = []  # second param for multi-sweep
         self._sweep_kpis: list[tuple[float, float, float]] = []
-        # Persistent plot curve — updated incrementally instead of full clear+redraw
+        # Per-step CIEstimate (or None) lists — populated in parallel with
+        # _sweep_kpis so _refresh_plot can render error whiskers and table
+        # cells can show formatted CI strings.
+        self._sweep_ci_eff_full: list[CIEstimate | None] = []
+        self._sweep_ci_u14_full: list[CIEstimate | None] = []
+        self._sweep_ci_hot_full: list[CIEstimate | None] = []
+        # Persistent plot curve + error-bar overlay — updated incrementally.
         self._plot_curve = None
+        self._error_bar_item: pg.ErrorBarItem | None = None
 
         # ── Close ─────────────────────────────────────────────────────────
         close_row = QHBoxLayout()
@@ -312,8 +375,12 @@ class ParameterSweepDialog(QDialog):
         self._sweep_values.clear()
         self._sweep_values2.clear()
         self._sweep_kpis.clear()
+        self._sweep_ci_eff_full.clear()
+        self._sweep_ci_u14_full.clear()
+        self._sweep_ci_hot_full.clear()
         self._plot_widget.clear()
         self._plot_curve = None  # reset persistent curve for new sweep
+        self._error_bar_item = None  # reset CI whiskers
         name = self._param_cb.currentText()
         key, _, _ = _PARAMS[name]
         start  = self._start_spin.value()
@@ -332,9 +399,13 @@ class ParameterSweepDialog(QDialog):
                 for v2 in values2:
                     grid_values.append((v1, v2))
             total = len(grid_values)
-            self._table.setColumnCount(5)
+            self._table.setColumnCount(8)
             self._table.setHorizontalHeaderLabels(
-                [name, name2, "Efficiency %", "U(1/4) min/avg", "Hotspot (pk/avg)"]
+                [
+                    name, name2,
+                    "Efficiency %", "U(1/4) min/avg", "Hotspot (pk/avg)",
+                    "eff ± Δ", "u14 ± Δ", "hot ± Δ",
+                ]
             )
             self._progress.setMaximum(total)
             self._progress.setValue(0)
@@ -347,9 +418,14 @@ class ParameterSweepDialog(QDialog):
             self._thread.start()
             return
 
-        self._table.setColumnCount(4)
+        self._table.setColumnCount(7)
         self._table.setHorizontalHeaderLabels(
-            [name, "Efficiency %", "U(1/4) min/avg", "Hotspot (pk/avg)"])
+            [
+                name,
+                "Efficiency %", "U(1/4) min/avg", "Hotspot (pk/avg)",
+                "eff ± Δ", "u14 ± Δ", "hot ± Δ",
+            ]
+        )
         self._progress.setMaximum(n)
         self._progress.setValue(0)
         self._run_btn.setEnabled(False)
@@ -371,14 +447,28 @@ class ParameterSweepDialog(QDialog):
         eff, u14, hot = k["efficiency_pct"], k["uniformity_1_4_min_avg"], k["hotspot_peak_avg"]
         self._sweep_values.append(value)
         self._sweep_kpis.append((eff, u14, hot))
+
+        # Phase 4 UQ: per-step CIs (rays_per_batch-aware scaling).
+        cis = _per_step_kpi_cis(result)
+        ci_eff = cis["efficiency_pct"]
+        ci_u14 = cis["uniformity_1_4_min_avg"]
+        ci_hot = cis["hotspot_peak_avg"]
+        self._sweep_ci_eff_full.append(ci_eff)
+        self._sweep_ci_u14_full.append(ci_u14)
+        self._sweep_ci_hot_full.append(ci_hot)
+
         row = self._table.rowCount()
         self._table.insertRow(row)
-        for col, text in enumerate([
+        cells = [
             f"{value:.5g}",
             f"{eff:.2f}",
             f"{u14:.4f}",
             f"{hot:.4f}",
-        ]):
+            _fmt_ci(ci_eff, precision=2),
+            _fmt_ci(ci_u14, precision=4),
+            _fmt_ci(ci_hot, precision=4),
+        ]
+        for col, text in enumerate(cells):
             self._table.setItem(row, col, QTableWidgetItem(text))
         self._table.scrollToBottom()
         self._refresh_plot()
@@ -387,7 +477,8 @@ class ParameterSweepDialog(QDialog):
         """Update the KPI vs parameter value plot from cached sweep data.
 
         Uses setData() on a persistent curve to avoid O(n) clear+redraw on
-        every step, keeping the per-step cost at O(1).
+        every step, keeping the per-step cost at O(1).  Also overlays a
+        pg.ErrorBarItem showing the per-step CI half_width (when UQ is on).
         """
         if not self._sweep_values:
             return
@@ -404,6 +495,31 @@ class ParameterSweepDialog(QDialog):
         else:
             self._plot_curve.setData(xs, ys)
 
+        # --- Phase 4 UQ: CI whiskers for the selected KPI --------------
+        ci_list = [
+            self._sweep_ci_eff_full,
+            self._sweep_ci_u14_full,
+            self._sweep_ci_hot_full,
+        ][idx]
+        # Pad with None if per-step CI list lags the sweep data (defensive).
+        while len(ci_list) < len(xs):
+            ci_list.append(None)
+        errs = np.array([
+            (ci.half_width if ci is not None else 0.0) for ci in ci_list[:len(xs)]
+        ], dtype=float)
+        # Only show an ErrorBarItem when at least one CI is non-zero.  Still
+        # create the item (zero-height) so tests can detect its presence; this
+        # mirrors the plan's contract that an ErrorBarItem is always attached
+        # when the UI has UQ data to render.
+        if self._error_bar_item is None:
+            self._error_bar_item = pg.ErrorBarItem(
+                x=xs, y=ys, height=2.0 * errs, beam=0.5,
+                pen=pg.mkPen((80, 160, 255, 180)),
+            )
+            self._plot_widget.addItem(self._error_bar_item)
+        else:
+            self._error_bar_item.setData(x=xs, y=ys, height=2.0 * errs)
+
     def _on_multi_step_done(self, idx: int, v1: float, v2: float, result: SimulationResult):
         self._progress.setValue(idx + 1)
         k = compute_scalar_kpis(result)
@@ -411,12 +527,25 @@ class ParameterSweepDialog(QDialog):
         self._sweep_values.append(v1)
         self._sweep_values2.append(v2)
         self._sweep_kpis.append((eff, u14, hot))
+
+        cis = _per_step_kpi_cis(result)
+        ci_eff = cis["efficiency_pct"]
+        ci_u14 = cis["uniformity_1_4_min_avg"]
+        ci_hot = cis["hotspot_peak_avg"]
+        self._sweep_ci_eff_full.append(ci_eff)
+        self._sweep_ci_u14_full.append(ci_u14)
+        self._sweep_ci_hot_full.append(ci_hot)
+
         row = self._table.rowCount()
         self._table.insertRow(row)
-        for col, text in enumerate([
+        cells = [
             f"{v1:.5g}", f"{v2:.5g}",
             f"{eff:.2f}", f"{u14:.4f}", f"{hot:.4f}",
-        ]):
+            _fmt_ci(ci_eff, precision=2),
+            _fmt_ci(ci_u14, precision=4),
+            _fmt_ci(ci_hot, precision=4),
+        ]
+        for col, text in enumerate(cells):
             self._table.setItem(row, col, QTableWidgetItem(text))
         self._table.scrollToBottom()
         self._refresh_plot()
