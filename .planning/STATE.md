@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: 3
+current_plan: 4
 status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-04-18T14:35:00Z"
-last_activity: 2026-04-18 -- Phase 02 Plan 02 complete (C++ bounce loop + real physics)
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-04-18T14:17:49Z"
+last_activity: 2026-04-18 -- Phase 02 Plan 03 complete (C++ dispatch wired; accel.py deleted)
 progress:
   total_phases: 8
   completed_phases: 1
-  total_plans: 8
-  completed_plans: 5
-  percent: 63
+  total_plans: 7
+  completed_plans: 6
+  percent: 86
 ---
 
 # Project State
@@ -28,17 +28,17 @@ See: .planning/PROJECT.md (updated 2026-03-15)
 
 Milestone: v2.0-distribution — In Progress
 Phase: 02 (converting-main-simulation-loop-to-cpp-for-faster-computation) — EXECUTING
-Plan: 3 of 4
-Status: Executing Phase 02
-Last activity: 2026-04-18 -- Phase 02 Plan 02 complete (C++ bounce loop + real physics)
+Plan: 4 of 4
+Status: Ready to execute
+Last activity: 2026-04-18 -- Phase 02 Plan 03 complete (C++ dispatch wired; accel.py deleted)
 
-Progress: [######----] 63% (5/8 plans)
+Progress: [█████████░] 86% (6/7 plans)
 
 ## Current Position Detail
 
 Phase: 02-converting-main-simulation-loop-to-cpp-for-faster-computation
-Current Plan: 3
-Stopped at: Completed 02-02-PLAN.md
+Current Plan: 4
+Stopped at: Completed 02-03-PLAN.md
 
 ## Accumulated Context
 
@@ -52,6 +52,12 @@ Stopped at: Completed 02-02-PLAN.md
 - C++ port Wave 2: parse_material defensive with per-field `.contains()` fallbacks (surface_type=absorber, reflectance=0, is_diffuse=true, haze=0) — older project JSONs may omit optional fields; strict pybind cast would raise KeyError
 - C++ port Wave 2: BVH stays as no-op stubs (BVH_THRESHOLD=9999 → brute-force always). Full BVH port deferred to a future cleanup phase per CONTEXT.md D-07
 - C++ port Wave 2: solid-body / cylinder-body / prism-body Fresnel dispatch deferred to Wave 3 — requires porting `core/solid_body.py::get_faces()` expansion; no Wave 2 test exercises this surface type
+- C++ port Wave 3: conservative dispatch predicate `_project_uses_cpp_unsupported_features(project)` gates the C++ fast path — routes to C++ only when scene has no spectral SPD, no solid bodies/cylinders/prisms, no far-field sphere detectors, no non-white RGB sources, no BSDF profiles, no spectral_material_data; additionally `_run_single` requires `n_record == 0`, `not _adaptive`, `convergence_callback is None`. Everything else keeps the Python bounce loop. This protects Wave 2 deferred items from being silently broken.
+- C++ port Wave 3: flux_tolerance jitter applied in Python via `self.rng.uniform(-tol, tol)` BEFORE serializing the project dict (the C++ extension reads `effective_flux` from the dict and does NOT apply jitter). Keeps Python and C++ determinism behavior identical for flux_tolerance > 0 scenes.
+- C++ port Wave 3: D-09 hard-crash pattern at module import — `from backlight_sim.sim import blu_tracer` wrapped in try/except ImportError that raises RuntimeError with rebuild instructions. No silent fallback to Python; the C++ extension is mandatory.
+- C++ port Wave 3: BVH disabled on the Python fallback path (`_BVH_THRESHOLD = 10**9`). The C++ extension handles acceleration for all scenes that would benefit from BVH; the Python path now services only spectral / solid-body scenes which are small enough for brute-force intersection.
+- C++ port Wave 3: pure-Python shim layer inside tracer.py replaces deleted `sim.accel` symbols (`_intersect_plane_accel`, `_intersect_sphere_accel`, `accumulate_grid_jit`, `accumulate_sphere_jit`, `compute_surface_aabbs`, `build_bvh_flat` stub, `traverse_bvh_batch` stub). Keeps the spectral / solid-body call sites untouched without dragging Numba infrastructure into the Wave 3 diff.
+- C++ port Wave 3: accel.py-internal tests deleted (6 JIT kernel equivalence + 2 BVH internal traversal); simulation-level BVH tests preserved and now served by C++. New `test_simulation_deterministic_with_cpp` replaces the old JIT determinism smoke test.
 - v2.0.0 chosen as first distributable release version (v1.0 was internal milestone)
 - User data dir uses %LOCALAPPDATA%/BluOpticalSim on Windows — corporate-safe, no admin rights needed
 - config.py strictly no PySide6 — headless-safe for io/ and sim/ layer consumption
@@ -93,5 +99,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-04-18
-Stopped at: Completed 02-02-PLAN.md (C++ Monte Carlo engine — real intersection/sampling/material/bounce-loop physics; 5 C++ tests passing, 124 Python tests still green)
+Stopped at: Completed 02-03-PLAN.md (C++ dispatch wired into RayTracer for non-spectral/plane-only scenes; accel.py deleted; feature-gate predicate protects Wave 2 deferred items; 122 Python tests + 6 C++ tests passing, suite runtime 14.7s → 4.1s)
 Resume file: None
