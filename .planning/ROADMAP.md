@@ -35,7 +35,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 02. Converting main simulation loop to C++ | v2.0 | 4/4 | Complete    | 2026-04-18 |
 | 03. Golden-reference validation suite | v2.0 | 4/4 | Complete    | 2026-04-18 |
 | 04. Uncertainty quantification | v2.0 | 3/3 | Complete    | 2026-04-18 |
-| 05. Geometry tolerance Monte Carlo | v2.0 | 1/4 | In Progress | — |
+| 05. Geometry tolerance Monte Carlo | v2.0 | 2/4 | In Progress | — |
 
 ### Phase 1: distribution for admin locked work computer compatibility, splash screen etc.
 
