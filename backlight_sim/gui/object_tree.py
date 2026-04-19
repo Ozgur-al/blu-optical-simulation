@@ -133,6 +133,12 @@ class _SceneTreeWidget(QTreeWidget):
     def _refresh_inner(self, project) -> None:
         disabled_sources = {s.name for s in project.sources if not s.enabled}
 
+        project_sigma = getattr(project.settings, "source_position_sigma_mm", 0.0)
+        toleranced_sources = {
+            s.name for s in project.sources
+            if getattr(s, "position_sigma_mm", 0.0) > 0 or project_sigma > 0
+        }
+
         group_data = {
             "Sources": [s.name for s in project.sources],
             "Surfaces": [s.name for s in project.surfaces],
@@ -147,8 +153,15 @@ class _SceneTreeWidget(QTreeWidget):
             parent.takeChildren()
             for name in names:
                 enabled = name not in disabled_sources
-                child = QTreeWidgetItem(parent, [name])
+                # Phase 5: badge toleranced sources with " ±"; store clean name in UserRole
+                if group_name == "Sources" and name in toleranced_sources:
+                    display_name = name + " \u00b1"
+                else:
+                    display_name = name
+                child = QTreeWidgetItem(parent, [display_name])
                 if group_name == "Sources":
+                    # Store clean name for signal emission (avoids " ±" in lookup keys)
+                    child.setData(0, Qt.ItemDataRole.UserRole, name)
                     child.setFlags(
                         child.flags() | Qt.ItemFlag.ItemIsUserCheckable
                     )
@@ -217,7 +230,10 @@ class _SceneTreeWidget(QTreeWidget):
                 item.setToolTip(0, "Disabled — uncheck to hide from sim")
         finally:
             self._loading = False
-        self.visibility_toggled.emit("Sources", item.text(0), enabled)
+        # Phase 5: use clean name from UserRole to avoid " ±" badge in signal
+        clean_name = item.data(0, Qt.ItemDataRole.UserRole)
+        emit_name = clean_name if clean_name is not None else item.text(0)
+        self.visibility_toggled.emit("Sources", emit_name, enabled)
 
     def _item_group_and_name(self, item: QTreeWidgetItem) -> tuple[str, str]:
         parent = item.parent()
@@ -247,7 +263,13 @@ class _SceneTreeWidget(QTreeWidget):
                 if name.startswith(prefix):
                     return "Solid Bodies:box", name[len(prefix):]
             return "Solid Bodies:box", name
-        return self._get_group_name(parent), item.text(0)
+        group = self._get_group_name(parent)
+        # Phase 5: source items may have a " ±" badge; use stored clean name if present
+        if group == "Sources":
+            clean = item.data(0, Qt.ItemDataRole.UserRole)
+            if clean is not None:
+                return group, clean
+        return group, item.text(0)
 
     def _on_selection_changed(self) -> None:
         selected = self.selectedItems()

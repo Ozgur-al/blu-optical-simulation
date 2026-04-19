@@ -386,13 +386,26 @@ class SourceForm(QWidget):
         fl_thermal.addRow("SPD:", self._spd)
         sec_thermal.addLayout(fl_thermal)
         vbox.addWidget(sec_thermal)
+
+        # Phase 5 — Position Tolerance
+        sec_pos_tol = CollapsibleSection("Position Tolerance", collapsed=True)
+        fl_pos_tol = QFormLayout()
+        self._pos_sigma = _dspin(0, 100, 3, 0.0, 0.001)
+        self._pos_sigma.setToolTip(
+            "Per-source position jitter σ in mm (Gaussian, standard deviation).\n"
+            "0 = use project-level default from Simulation Settings.\n"
+            "Example: σ = 0.15 mm means ±0.15 mm (1σ) placement error."
+        )
+        fl_pos_tol.addRow("Position σ (mm):", self._pos_sigma)
+        sec_pos_tol.addLayout(fl_pos_tol)
+        vbox.addWidget(sec_pos_tol)
         vbox.addStretch()
 
         self._src = None
         self._loading = False
         for w in (self._px, self._py, self._pz, self._flux, self._tolerance,
                   self._current, self._flux_per_mA, self._thermal,
-                  self._cr, self._cg, self._cb):
+                  self._cr, self._cg, self._cb, self._pos_sigma):
             w.valueChanged.connect(self._apply)
         self._dist.currentIndexChanged.connect(self._apply)
         self._spd.currentTextChanged.connect(self._apply)
@@ -430,6 +443,7 @@ class SourceForm(QWidget):
             QSignalBlocker(self._cg),
             QSignalBlocker(self._cb),
             QSignalBlocker(self._spd),
+            QSignalBlocker(self._pos_sigma),
         ]
         self._name.setText(src.name)
         self._enabled.setChecked(src.enabled)
@@ -441,6 +455,7 @@ class SourceForm(QWidget):
         self._current.setValue(src.current_mA)
         self._flux_per_mA.setValue(src.flux_per_mA)
         self._thermal.setValue(src.thermal_derate)
+        self._pos_sigma.setValue(getattr(src, 'position_sigma_mm', 0.0))
         self._cr.setValue(src.color_rgb[0])
         self._cg.setValue(src.color_rgb[1])
         self._cb.setValue(src.color_rgb[2])
@@ -508,6 +523,7 @@ class SourceForm(QWidget):
             ('flux', self._flux.value()),
             ('distribution', self._dist.currentText()),
             ('flux_tolerance', self._tolerance.value()),
+            ('position_sigma_mm', self._pos_sigma.value()),
             ('current_mA', self._current.value()),
             ('flux_per_mA', self._flux_per_mA.value()),
             ('thermal_derate', self._thermal.value()),
