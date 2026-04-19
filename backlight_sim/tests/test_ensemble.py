@@ -1,8 +1,6 @@
 """Tests for backlight_sim.sim.ensemble — tolerance Monte Carlo service.
 
-Wave 0 (TDD): all tests are marked xfail(strict=False) because sim/ensemble.py
-only has NotImplementedError stubs. After Wave 1 implements the module, tests
-will pass and the xfail markers should be removed.
+Phase 5 Wave 4: all xfail markers removed; ENS-01..ENS-11 pass unconditionally.
 """
 from __future__ import annotations
 
@@ -157,24 +155,28 @@ def test_sobol_sample_count_power_of_2():
     assert len(samples) == 32, f"Expected 32 (next pow2 >= max(10,32)), got {len(samples)}"
 
 
-@pytest.mark.xfail(raises=(NotImplementedError, AttributeError, TypeError, AssertionError), strict=False)
 def test_ensemble_spread_increases_with_sigma():
-    """ENS-09: larger sigma produces larger KPI spread across ensemble members."""
+    """ENS-09: larger sigma produces larger KPI spread across ensemble members.
+
+    Uses efficiency_pct (total flux reaching detector / source flux) as the KPI because
+    uniformity_1_4_min_avg returns 0 for the Simple Box preset at low ray counts (100x100
+    grid has empty bins, making center-min always 0). efficiency_pct is sensitive to LED
+    position jitter since displaced LEDs send fewer rays toward the detector aperture.
+    """
     from backlight_sim.io.presets import preset_simple_box
     from backlight_sim.sim.tracer import RayTracer
     from backlight_sim.core.kpi import compute_scalar_kpis
 
     def _run_ensemble(sigma, n=15, seed=0):
         base = preset_simple_box()
-        base.settings.rays_per_source = 500
+        base.settings.rays_per_source = 2000
         base.settings.source_position_sigma_mm = sigma
-        rng = np.random.default_rng(seed)
         kpis = []
         for i in range(n):
             member = apply_jitter(base, np.random.default_rng(seed + i))
             result = RayTracer(member).run()
             k = compute_scalar_kpis(result)
-            kpis.append(k.get("uniformity_1_4_min_avg", 0.0))
+            kpis.append(k.get("efficiency_pct", 0.0))
         return float(np.std(kpis))
 
     spread_zero = _run_ensemble(sigma=0.0)
@@ -183,7 +185,6 @@ def test_ensemble_spread_increases_with_sigma():
         f"Expected sigma=2 spread ({spread_large:.4f}) > sigma=0 spread ({spread_zero:.4f})"
 
 
-@pytest.mark.xfail(raises=(NotImplementedError, AttributeError, TypeError, ImportError), strict=False)
 def test_ensemble_thread_cancel():
     """ENS-10: _EnsembleThread halts before all members complete when cancel() is called."""
     import os

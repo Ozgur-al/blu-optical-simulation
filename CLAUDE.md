@@ -79,6 +79,10 @@ pytest backlight_sim/tests/golden/                    # Run all analytical physi
 pytest backlight_sim/tests/golden/ -v --tb=short      # Verbose with short tracebacks
 python -m backlight_sim.golden --report               # HTML + markdown report (to ./golden_reports/<timestamp>/)
 python -m backlight_sim.golden --report --out ./gold --rays 10000   # Fast smoke run
+
+# Phase 5 tolerance ensemble tests
+pytest backlight_sim/tests/test_ensemble.py -x -q        # Run ensemble service tests (ENS-01..ENS-10)
+pytest backlight_sim/tests/test_ensemble.py -v --tb=short  # Verbose with tracebacks
 ```
 
 ## C++ Extension (blu_tracer)
@@ -322,6 +326,9 @@ Semi-vectorized Monte Carlo engine:
 - Before committing changes to `sim/` or `core/`, run `pytest backlight_sim/tests/golden/` — the analytical physics cases (Fresnel T(θ), Snell/dispersion on a prism, Lambertian cosine law, single-bounce specular reflection, integrating-cavity irradiance) catch regressions the functional suite can miss. This is a pre-merge gate enforced by `python -m backlight_sim.golden --report` (exit code nonzero on any failure).
 - Phase 03 closes the `project_spectral_ri_testing.md` memory flag: `backlight_sim/tests/golden/test_prism_dispersion.py::test_prism_dispersion_is_nonzero` is the regression guard for the solid-body spectral n(λ) path at `tracer.py:1495` — if this test fails, the spectral dispatch has silently fallen back to scalar refractive_index.
 - The golden-suite package `backlight_sim/golden/` ships with the wheel (headless; no PySide6/pyqtgraph imports) so the validation suite can be re-run against any installed distribution, not just the source tree.
+- Before committing changes to `sim/ensemble.py` or `core/project_model.py`, run
+  `pytest backlight_sim/tests/test_ensemble.py -x -q` (Phase 5 ENS-01..ENS-10 must pass).
+  This catches regressions in the tolerance sampling and OAT sensitivity pipeline.
 
 ## Feature Status Summary
 
