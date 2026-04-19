@@ -32,6 +32,9 @@ class SimulationSettings:
     # Cache per-batch spectral grids so spectral KPIs can report CIs.  Users on
     # memory-tight scenes can disable to skip the K×(ny,nx,n_bins) allocation.
     uq_include_spectral: bool = True
+    # Phase 5 — ensemble tolerance defaults
+    source_position_sigma_mm: float = 0.0       # project-level isotropic σ in mm for all LEDs
+    source_position_distribution: str = "gaussian"  # "gaussian" | "uniform"
 
 
 @dataclass
@@ -57,3 +60,11 @@ class Project:
     #                         "trans_intensity": [[...], ...]} }
     bsdf_profiles: dict[str, dict] = field(default_factory=dict)
     settings: SimulationSettings = field(default_factory=SimulationSettings)
+    # Phase 5 — cavity build recipe for ensemble realization (empty dict = no cavity tolerances)
+    # Schema: {"width": float, "height": float, "depth": float,
+    #          "wall_angle_x_deg": float, "wall_angle_y_deg": float,
+    #          "floor_material": str, "wall_material": str,
+    #          "depth_sigma_mm": float, "wall_angle_x_sigma_deg": float,
+    #          "wall_angle_y_sigma_deg": float,
+    #          "depth_distribution": str, "wall_angle_distribution": str}
+    cavity_recipe: dict = field(default_factory=dict)

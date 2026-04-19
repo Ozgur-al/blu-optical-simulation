@@ -15,6 +15,7 @@ class PointSource:
     distribution: str = "isotropic"  # "isotropic" or "lambertian"
     enabled: bool = True  # when False the tracer skips this source
     flux_tolerance: float = 0.0  # ±% bin tolerance (e.g. 10 = ±10%)
+    position_sigma_mm: float = 0.0  # per-source position jitter σ in mm (0 = use project default)
     current_mA: float = 0.0  # drive current in mA (0 = use flux directly)
     flux_per_mA: float = 0.0  # lm/mA scaling (0 = use flux directly)
     thermal_derate: float = 1.0  # thermal derating factor 0-1 (1 = no derating)
