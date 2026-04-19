@@ -374,6 +374,8 @@ class MainWindow(QMainWindow):
         sm.addSeparator()
         act = sm.addAction("Parameter Sweep...", self._open_parameter_sweep)
         act.setStatusTip("Run a batch of simulations varying one or two parameters")
+        act = sm.addAction("Tolerance Ensemble...", self._open_ensemble_dialog)
+        act.setStatusTip("Run an ensemble of simulations sampling from tolerance distributions")
 
         vm = mb.addMenu("&View")
         self._view_mode_group = QActionGroup(self)
@@ -1321,6 +1323,17 @@ class MainWindow(QMainWindow):
         from backlight_sim.gui.parameter_sweep_dialog import ParameterSweepDialog
         dlg = ParameterSweepDialog(self._project, self)
         dlg.exec()
+
+    def _open_ensemble_dialog(self) -> None:
+        from backlight_sim.gui.ensemble_dialog import EnsembleDialog
+        dlg = EnsembleDialog(self._project, self)
+        dlg.save_variant.connect(self._on_save_ensemble_variant)
+        dlg.exec()
+
+    def _on_save_ensemble_variant(self, name: str, project: "Project") -> None:
+        """Store a worst-case ensemble realization as a named variant."""
+        self._variants[name] = project  # already a deep-copy from ensemble thread
+        self._refresh_variants_menu()
 
     def _show_settings(self):
         self._clear_selected_object()
