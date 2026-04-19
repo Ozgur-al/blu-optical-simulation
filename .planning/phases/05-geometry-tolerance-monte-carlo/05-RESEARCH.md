@@ -779,17 +779,19 @@ Document this clearly in the dialog: "Each ensemble member runs with your curren
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does the Geometry Builder dialog (gui/geometry_builder.py) currently write back to project.cavity_recipe?**
    - What we know: `io/geometry_builder.py::build_cavity()` takes explicit kwargs and modifies `project.surfaces`. The GUI wrapper (`gui/geometry_builder.py`) calls it.
    - What's unclear: Whether the GUI dialog stores the kwargs anywhere on the project after calling `build_cavity()`.
    - Recommendation: Read `gui/geometry_builder.py` during planning Wave 0. If it doesn't write a recipe, add a `record_recipe=True` parameter to `build_cavity()` as part of Wave 1.
+   - **RESOLVED:** No — `gui/geometry_builder.py` does not currently write back to `project.cavity_recipe`. Plan 04 Task 1 adds `record_recipe=True` to the `build_cavity()` call in the GUI builder, which triggers the `record_recipe` flag added to `io/geometry_builder.py::build_cavity()` in Plan 02 Task 2.
 
 2. **Sensitivity display when multiple KPIs are active (efficiency, uniformity, hotspot all at once)?**
    - What we know: The sensitivity table will have rows = parameters, columns = KPI sensitivity.
    - What's unclear: Which KPI the user wants to optimize is user preference.
    - Recommendation: Default to showing uniformity sensitivity as the primary column; allow KPI selector combo above the table (same pattern as convergence_tab uses a KPI selector combo).
+   - **RESOLVED:** Default display column is `uniformity_1_4_min_avg`. A KPI selector combo above the sensitivity table allows switching (same pattern as the histogram KPI selector in the Distribution tab). Implemented in Plan 03 Task 2.
 
 ---
 
