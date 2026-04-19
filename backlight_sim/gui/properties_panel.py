@@ -387,10 +387,10 @@ class SourceForm(QWidget):
         sec_thermal.addLayout(fl_thermal)
         vbox.addWidget(sec_thermal)
 
-        # Phase 5 — Position Tolerance
+        # Phase 5 — Position Tolerance (field: position_sigma_mm)
         sec_pos_tol = CollapsibleSection("Position Tolerance", collapsed=True)
         fl_pos_tol = QFormLayout()
-        self._pos_sigma = _dspin(0, 100, 3, 0.0, 0.001)
+        self._pos_sigma = _dspin(0, 100, 3, 0.0, 0.001)  # maps to position_sigma_mm
         self._pos_sigma.setToolTip(
             "Per-source position jitter σ in mm (Gaussian, standard deviation).\n"
             "0 = use project-level default from Simulation Settings.\n"
