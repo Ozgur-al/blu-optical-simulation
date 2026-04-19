@@ -385,6 +385,7 @@ class GeometryBuilderDialog(QDialog):
             floor_material=floor_mat_name,
             wall_material=wall_mat_name,
             replace_existing=True,
+            record_recipe=True,    # Phase 5: write recipe back to project.cavity_recipe
         )
 
         # Optical stack (diffuser + film placeholders)
