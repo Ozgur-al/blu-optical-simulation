@@ -27,22 +27,11 @@ from backlight_sim.sim.sampling import (
     sample_bsdf,
     precompute_bsdf_cdfs,
 )
+from backlight_sim.sim import blu_tracer as _blu_tracer
 from backlight_sim.sim.spectral import (
     sample_wavelengths, spectral_bin_centers, N_SPECTRAL_BINS, LAMBDA_MIN, LAMBDA_MAX,
     get_spd_from_project,
 )
-# C++ extension — mandatory (D-09: no silent fallback)
-try:
-    from backlight_sim.sim import blu_tracer as _blu_tracer
-except ImportError as e:
-    raise RuntimeError(
-        "blu_tracer C++ extension failed to load. "
-        "The pre-compiled blu_tracer.pyd is missing or incompatible with your Python version. "
-        f"Details: {e}\n"
-        "To rebuild from source, run:\n"
-        "  pip install --no-build-isolation -e backlight_sim/sim/_blu_tracer/\n"
-        "(requires MSVC 2022 Build Tools and CMake — see CLAUDE.md)"
-    ) from e
 
 
 _EPSILON = 1e-6
@@ -344,6 +333,21 @@ def _project_uses_cpp_unsupported_features(project) -> bool:
     return False
 
 
+def _cpp_extension_available() -> bool:
+    """Return True when the compiled C++ tracer module is loaded."""
+    return _blu_tracer is not None
+
+
+def _missing_cpp_extension_error() -> RuntimeError:
+    """Return a consistent error for direct C++-path calls without the module."""
+    return RuntimeError(
+        "blu_tracer C++ extension is not available. "
+        "Run the Python tracing path or rebuild/install the extension with:\n"
+        "  pip install --no-build-isolation -e backlight_sim/sim/_blu_tracer/\n"
+        "(requires MSVC 2022 Build Tools and CMake — see CLAUDE.md)"
+    )
+
+
 def _serialize_project(project) -> dict:
     """Serialize a Project dataclass to a plain dict for the C++ extension.
 
@@ -477,6 +481,9 @@ def _cpp_trace_single_source(project, source_name: str, base_seed: int) -> dict:
     ``flux_batches`` / ``rays_per_batch``.  The underlying C++ extension is
     NOT rebuilt — batching is Python-side only.
     """
+    if not _cpp_extension_available():
+        raise _missing_cpp_extension_error()
+
     settings = project.settings
     K = _effective_uq_batches(settings)
     project_dict = _serialize_project(project)
@@ -732,7 +739,10 @@ class RayTracer:
         # Route to C++ fast path when the project uses only C++-supported features;
         # otherwise keep the Python spectral / solid-body worker (per 02-CONTEXT.md
         # deferred items).
-        _cpp_eligible = not _project_uses_cpp_unsupported_features(self.project)
+        _cpp_eligible = (
+            _cpp_extension_available()
+            and not _project_uses_cpp_unsupported_features(self.project)
+        )
         _worker = _cpp_trace_single_source if _cpp_eligible else _trace_single_source
 
         with ProcessPoolExecutor(max_workers=n_workers) as pool:
@@ -1137,7 +1147,8 @@ class RayTracer:
         # loop below. convergence_callback, adaptive, and record_ray_paths all
         # need Python loop hooks, so they force the Python path.
         _cpp_path = (
-            not _project_uses_cpp_unsupported_features(self.project)
+            _cpp_extension_available()
+            and not _project_uses_cpp_unsupported_features(self.project)
             and n_record == 0
             and not _adaptive
             and convergence_callback is None

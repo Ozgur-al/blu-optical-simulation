@@ -2,14 +2,14 @@
 
 Phase 4 Wave 3: every scalar KPI row additionally shows its 95% confidence
 interval via the shared :func:`backlight_sim.core.kpi.compute_all_kpi_cis`
-helper.  A matplotlib errorbar chart is embedded as a second <img> tag when
-matplotlib is importable; graceful fallback to no chart otherwise.
+helper.  Heatmap and KPI summary visuals are rendered as inline SVG data URIs,
+so the report stays self-contained without optional plotting dependencies.
 """
 
 from __future__ import annotations
 
 import base64
-import io
+from html import escape as _escape
 from pathlib import Path
 
 import numpy as np
@@ -25,66 +25,161 @@ from backlight_sim.core.kpi import (
 from backlight_sim.core.uq import CIEstimate
 
 
-def _grid_to_png_base64(grid: np.ndarray) -> str:
-    """Render a 2D grid as a colormap PNG and return base64-encoded string."""
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
+def _svg_data_uri(svg: str) -> str:
+    """Return an inline SVG data URI."""
+    return "data:image/svg+xml;base64," + base64.b64encode(
+        svg.encode("utf-8")
+    ).decode("ascii")
+
+
+def _palette_color(norm: float) -> str:
+    """Map a normalized scalar in [0, 1] onto a warm heatmap palette."""
+    stops = [
+        (0.00, (0, 0, 4)),
+        (0.25, (66, 10, 104)),
+        (0.50, (147, 38, 103)),
+        (0.75, (228, 92, 33)),
+        (1.00, (252, 255, 164)),
+    ]
+    clamped = min(1.0, max(0.0, float(norm)))
+    for idx, (pos, rgb) in enumerate(stops[1:], start=1):
+        prev_pos, prev_rgb = stops[idx - 1]
+        if clamped <= pos:
+            span = max(pos - prev_pos, 1e-12)
+            t = (clamped - prev_pos) / span
+            color = tuple(
+                int(round(prev_rgb[ch] + (rgb[ch] - prev_rgb[ch]) * t))
+                for ch in range(3)
+            )
+            return "#{:02x}{:02x}{:02x}".format(*color)
+    last = stops[-1][1]
+    return "#{:02x}{:02x}{:02x}".format(*last)
+
+
+def _grid_to_image_data_uri(grid: np.ndarray) -> str:
+    """Render a detector heatmap as an inline SVG image."""
+    arr = np.asarray(grid, dtype=float)
+    if arr.ndim != 2 or arr.size == 0:
         return ""
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    im = ax.imshow(grid, origin="lower", cmap="inferno", aspect="auto")
-    fig.colorbar(im, ax=ax, label="Flux")
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_title("Detector Heatmap")
+    finite = arr[np.isfinite(arr)]
+    if finite.size == 0:
+        vmin = vmax = 0.0
+    else:
+        vmin = float(finite.min())
+        vmax = float(finite.max())
+    span = max(vmax - vmin, 1e-12)
 
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode("ascii")
+    ny, nx = arr.shape
+    cell = 26
+    left = 42
+    top = 34
+    inner_w = nx * cell
+    inner_h = ny * cell
+    width = left + inner_w + 22
+    height = top + inner_h + 56
+
+    rects: list[str] = []
+    for row in range(ny):
+        for col in range(nx):
+            value = float(arr[row, col])
+            norm = 0.0 if not np.isfinite(value) else (value - vmin) / span
+            x = left + col * cell
+            y = top + (ny - row - 1) * cell
+            rects.append(
+                f'<rect x="{x}" y="{y}" width="{cell}" height="{cell}" '
+                f'fill="{_palette_color(norm)}"/>'
+            )
+
+    svg = f"""
+<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <rect width="100%" height="100%" fill="#ffffff"/>
+  <text x="{width / 2:.1f}" y="22" text-anchor="middle" font-size="16" font-family="Segoe UI, Arial, sans-serif" fill="#222">Detector Heatmap</text>
+  <g>{"".join(rects)}</g>
+  <rect x="{left}" y="{top}" width="{inner_w}" height="{inner_h}" fill="none" stroke="#444" stroke-width="1"/>
+  <text x="{left}" y="{height - 18}" font-size="12" font-family="Segoe UI, Arial, sans-serif" fill="#555">min {vmin:.4g}</text>
+  <text x="{left + inner_w}" y="{height - 18}" text-anchor="end" font-size="12" font-family="Segoe UI, Arial, sans-serif" fill="#555">max {vmax:.4g}</text>
+</svg>
+""".strip()
+    return _svg_data_uri(svg)
 
 
-def _errorbar_chart_base64(
-    kpi_ci_dict: dict[str, CIEstimate | None],
-) -> str:
-    """Render a matplotlib errorbar chart of the CIs; base64 PNG or empty."""
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
-        return ""
-
+def _errorbar_chart_data_uri(kpi_ci_dict: dict[str, CIEstimate | None]) -> str:
+    """Render KPI confidence intervals as an inline SVG image."""
     names: list[str] = []
     means: list[float] = []
     errs: list[float] = []
     for name, ci in kpi_ci_dict.items():
         if ci is not None and ci.n_batches > 0 and np.isfinite(ci.half_width):
             names.append(name)
-            means.append(ci.mean)
-            errs.append(ci.half_width)
+            means.append(float(ci.mean))
+            errs.append(float(ci.half_width))
     if not names:
         return ""
 
-    fig, ax = plt.subplots(figsize=(6.5, 3.8))
-    xs = np.arange(len(names))
-    ax.errorbar(xs, means, yerr=errs, fmt="o", capsize=5, color="#3070c0")
-    ax.set_xticks(xs)
-    ax.set_xticklabels(names, rotation=30, ha="right")
-    ax.set_ylabel("Value")
-    ax.set_title("KPIs with 95% CI")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
+    width = 760
+    height = 360
+    left = 70
+    right = 24
+    top = 42
+    bottom = 88
+    plot_w = width - left - right
+    plot_h = height - top - bottom
 
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode("ascii")
+    y_min = min(mean - err for mean, err in zip(means, errs))
+    y_max = max(mean + err for mean, err in zip(means, errs))
+    if not np.isfinite(y_min) or not np.isfinite(y_max):
+        return ""
+    if abs(y_max - y_min) < 1e-12:
+        pad = max(abs(y_max) * 0.1, 1.0)
+        y_min -= pad
+        y_max += pad
+
+    def _x_pos(idx: int) -> float:
+        return left + plot_w * (idx + 0.5) / len(names)
+
+    def _y_pos(value: float) -> float:
+        norm = (value - y_min) / (y_max - y_min)
+        return top + plot_h * (1.0 - norm)
+
+    y_ticks: list[str] = []
+    for tick_idx in range(5):
+        value = y_min + (y_max - y_min) * tick_idx / 4.0
+        y = _y_pos(value)
+        y_ticks.append(
+            f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}" stroke="#d9d9d9" stroke-width="1"/>'
+            f'<text x="{left - 10}" y="{y + 4:.1f}" text-anchor="end" font-size="12" font-family="Segoe UI, Arial, sans-serif" fill="#555">{value:.3g}</text>'
+        )
+
+    markers: list[str] = []
+    labels: list[str] = []
+    for idx, (name, mean, err) in enumerate(zip(names, means, errs)):
+        x = _x_pos(idx)
+        y_mid = _y_pos(mean)
+        y_low = _y_pos(mean - err)
+        y_high = _y_pos(mean + err)
+        markers.append(
+            f'<line x1="{x:.1f}" y1="{y_high:.1f}" x2="{x:.1f}" y2="{y_low:.1f}" stroke="#2f6db0" stroke-width="2"/>'
+            f'<line x1="{x - 7:.1f}" y1="{y_high:.1f}" x2="{x + 7:.1f}" y2="{y_high:.1f}" stroke="#2f6db0" stroke-width="2"/>'
+            f'<line x1="{x - 7:.1f}" y1="{y_low:.1f}" x2="{x + 7:.1f}" y2="{y_low:.1f}" stroke="#2f6db0" stroke-width="2"/>'
+            f'<circle cx="{x:.1f}" cy="{y_mid:.1f}" r="4.5" fill="#f08c2e" stroke="#2f6db0" stroke-width="1.5"/>'
+        )
+        labels.append(
+            f'<text x="{x:.1f}" y="{height - 26}" text-anchor="middle" font-size="11" font-family="Segoe UI, Arial, sans-serif" fill="#333" transform="rotate(28 {x:.1f},{height - 26})">{_escape(name)}</text>'
+        )
+
+    svg = f"""
+<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <rect width="100%" height="100%" fill="#ffffff"/>
+  <text x="{width / 2:.1f}" y="24" text-anchor="middle" font-size="16" font-family="Segoe UI, Arial, sans-serif" fill="#222">KPIs with 95% CI</text>
+  <g>{"".join(y_ticks)}</g>
+  <line x1="{left}" y1="{top}" x2="{left}" y2="{top + plot_h}" stroke="#444" stroke-width="1.5"/>
+  <line x1="{left}" y1="{top + plot_h}" x2="{left + plot_w}" y2="{top + plot_h}" stroke="#444" stroke-width="1.5"/>
+  <g>{"".join(markers)}</g>
+  <g>{"".join(labels)}</g>
+</svg>
+""".strip()
+    return _svg_data_uri(svg)
 
 
 def _fmt_ci_cell(ci: CIEstimate | None, fallback: str, unit: str = "") -> str:
@@ -104,7 +199,7 @@ def generate_html_report(
 
     # Shared CI lookup (rays_per_batch-aware efficiency scaling — checker I5).
     kpi_ci_dict = compute_all_kpi_cis(result, conf_level=0.95)
-    errorbar_png = _errorbar_chart_base64(kpi_ci_dict)
+    errorbar_src = _errorbar_chart_data_uri(kpi_ci_dict)
 
     # Collect KPIs per detector
     det_sections = []
@@ -133,17 +228,17 @@ def generate_html_report(
                 f"<td>{u_max:.4f}</td></tr>\n"
             )
 
-        img_b64 = _grid_to_png_base64(grid)
+        img_src = _grid_to_image_data_uri(grid)
         img_html = (
-            f'<img src="data:image/png;base64,{img_b64}" style="max-width:100%;">'
-            if img_b64 else "<em>(matplotlib not available)</em>"
+            f'<img src="{img_src}" style="max-width:100%;">'
+            if img_src else "<em>(image unavailable)</em>"
         )
 
         errorbar_html = ""
-        if errorbar_png:
+        if errorbar_src:
             errorbar_html = (
                 f'<h3>KPIs with 95% CI</h3>\n'
-                f'<img src="data:image/png;base64,{errorbar_png}" '
+                f'<img src="{errorbar_src}" '
                 f'style="max-width:100%;">'
             )
 

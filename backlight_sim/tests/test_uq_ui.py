@@ -17,6 +17,7 @@ All tests run under QT_QPA_PLATFORM=offscreen — no display required.
 from __future__ import annotations
 
 import csv
+import gc
 import os
 import re
 
@@ -40,6 +41,23 @@ from backlight_sim.core.detectors import DetectorResult, SimulationResult
 def qapp():
     app = QApplication.instance() or QApplication([])
     yield app
+    QApplication.closeAllWindows()
+    app.processEvents()
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_qt_widgets(qapp):
+    """Dispose transient widgets eagerly to avoid Qt shutdown crashes on Windows."""
+    yield
+    QApplication.closeAllWindows()
+    for widget in list(QApplication.allWidgets()):
+        try:
+            widget.hide()
+            widget.deleteLater()
+        except RuntimeError:
+            pass
+    qapp.processEvents()
+    gc.collect()
 
 
 # ---------------------------------------------------------------------------

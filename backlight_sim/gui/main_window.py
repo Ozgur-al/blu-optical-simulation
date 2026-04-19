@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QProgressBar, QStatusBar, QMessageBox, QFileDialog, QPushButton,
     QTextEdit, QLabel, QToolBar, QSplitter, QTabWidget, QWidget,
+    QHBoxLayout, QFrame,
 )
 from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSettings, QSize
 from PySide6.QtGui import QActionGroup, QKeySequence, QAction, QShortcut, QUndoStack
@@ -58,7 +59,7 @@ def _warmup_native_kernels() -> bool:
     but we keep this helper so the status-bar dispatch stays the same.
     """
     return True
-from backlight_sim.gui.theme import ACCENT, TEXT_MUTED
+from backlight_sim.gui.theme import ACCENT, TEXT_MUTED, TEXT_PRIMARY, BG_INPUT, LINE_COLOR
 
 
 class SimulationThread(QThread):
@@ -122,6 +123,7 @@ class MainWindow(QMainWindow):
 
         self._setup_ui()
         self._setup_menu()
+        self._setup_quick_actions_bar()
         self._setup_toolbar()
         self._setup_shortcuts()
         self._connect_signals()
@@ -226,6 +228,7 @@ class MainWindow(QMainWindow):
         self._run_btn = QPushButton("Run")
         self._run_btn.setAccessibleName("Run simulation")
         self._run_btn.setToolTip("Run simulation (F5)")
+        self._run_btn.setProperty("accent", True)
         self._run_btn.clicked.connect(self._run_simulation)
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setAccessibleName("Cancel simulation")
@@ -242,7 +245,6 @@ class MainWindow(QMainWindow):
             self._jit_label.setStyleSheet(f"color: {TEXT_MUTED}; padding: 0 6px;")
 
         status.addWidget(self._jit_label)
-        status.addPermanentWidget(self._run_btn)
         status.addPermanentWidget(self._cancel_btn)
         status.addPermanentWidget(self._progress)
         self.setStatusBar(status)
@@ -412,42 +414,127 @@ class MainWindow(QMainWindow):
         act.setStatusTip("Open a 2D top-view editor to drag and reposition LEDs")
 
     def _setup_toolbar(self):
-        """Create the main toolbar with icon+text action buttons."""
-        toolbar = QToolBar("Main")
-        toolbar.setObjectName("main_toolbar")
-        toolbar.setIconSize(QSize(20, 20))
-        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        """Raydient branding toolbar: brand identity · view mode · camera presets."""
+        toolbar = QToolBar("Brand Toolbar")
+        toolbar.setObjectName("brand_toolbar")
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
 
-        # File actions (reuse actions created in _setup_menu)
-        toolbar.addAction(self._new_action)
-        toolbar.addAction(self._open_action)
-        toolbar.addAction(self._save_action)
-        toolbar.addSeparator()
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(12, 4, 12, 4)
+        layout.setSpacing(0)
 
-        # Undo/Redo actions (created after _setup_menu is called)
-        toolbar.addAction(self._undo_action)
-        toolbar.addAction(self._redo_action)
-        toolbar.addSeparator()
+        # ── LEFT: brand identity ──────────────────────────────────────────
+        brand_dot = QLabel()
+        brand_dot.setFixedSize(20, 20)
+        brand_dot.setStyleSheet(
+            "background: qradialgradient(cx:0.4, cy:0.35, radius:0.65,"
+            " fx:0.4, fy:0.35, stop:0 #f4c265, stop:0.55 #e8b04a, stop:1 #b07820);"
+            "border-radius: 10px;"
+        )
+        layout.addWidget(brand_dot)
+        layout.addSpacing(9)
 
-        # Simulation actions
-        toolbar.addAction(self._run_action)
-        toolbar.addAction(self._cancel_action)
-        toolbar.addSeparator()
+        brand_name = QLabel("Raydient")
+        brand_name.setStyleSheet(
+            "font-family: 'Inter', 'Segoe UI', sans-serif;"
+            f"font-size: 13pt; font-weight: 700; color: {TEXT_PRIMARY};"
+            "letter-spacing: -0.3px; background: transparent;"
+        )
+        layout.addWidget(brand_name)
+        layout.addSpacing(10)
 
-        # Quick-add buttons
-        for label, group, tip in (
-            ("Add LED",      "Sources",             "Add a new point light source"),
-            ("Add Surface",  "Surfaces",            "Add a new reflective/diffuse surface"),
-            ("Add Detector", "Detectors",           "Add a new planar detector"),
-            ("Add SolidBox", "Solid Bodies:box",    "Add a solid box (LGP slab)"),
-            ("Add Cylinder", "Solid Bodies:cylinder","Add a solid cylinder"),
-            ("Add Prism",    "Solid Bodies:prism",  "Add a solid prism"),
+        subtitle = QLabel("Automotive cluster backlight · iteration 04")
+        subtitle.setStyleSheet(
+            "font-family: 'JetBrains Mono', 'Consolas', monospace;"
+            f"font-size: 8pt; color: {TEXT_MUTED}; background: transparent;"
+        )
+        layout.addWidget(subtitle)
+
+        layout.addStretch(1)
+
+        # ── RIGHT: camera presets ─────────────────────────────────────────
+        cam_seg = QFrame()
+        cam_seg.setStyleSheet(
+            f"QFrame {{ background: {BG_INPUT}; border: 1px solid {LINE_COLOR}; border-radius: 5px; }}"
+        )
+        cam_seg_layout = QHBoxLayout(cam_seg)
+        cam_seg_layout.setContentsMargins(2, 2, 2, 2)
+        cam_seg_layout.setSpacing(1)
+
+        for label, preset in (("ISO", "xy+"), ("Top", "xz+"), ("Side", "yz+"), ("Front", "yz-")):
+            btn = QPushButton(label)
+            btn.setProperty("seg_btn", True)
+            btn.clicked.connect(lambda _=False, p=preset: self._set_view_preset(p))
+            cam_seg_layout.addWidget(btn)
+
+        layout.addWidget(cam_seg)
+        toolbar.addWidget(container)
+
+    def _setup_quick_actions_bar(self):
+        """QuickActions bar: New / Open / Save · command echo · Redo · Run."""
+        qa_bar = QToolBar("Quick Actions")
+        qa_bar.setObjectName("quick_actions_bar")
+        qa_bar.setMovable(False)
+        qa_bar.setFloatable(False)
+
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(8, 3, 8, 3)
+        layout.setSpacing(4)
+
+        for label, slot, tip in (
+            ("New Project", self._new_project,  "New Project (Ctrl+N)"),
+            ("Open",        self._open_project,  "Open project (Ctrl+O)"),
+            ("Save",        self._save_project,  "Save project (Ctrl+S)"),
         ):
-            act = QAction(label, self)
-            act.setToolTip(tip)
-            act.triggered.connect(lambda _=False, g=group: self._add_object(g))
-            toolbar.addAction(act)
+            btn = QPushButton(label)
+            btn.setToolTip(tip)
+            btn.setFixedHeight(26)
+            btn.clicked.connect(slot)
+            layout.addWidget(btn)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFixedWidth(1)
+        sep.setStyleSheet("background: #48433e; margin: 4px 2px;")
+        layout.addWidget(sep)
+
+        self._cmd_echo = QLabel("Ready")
+        self._cmd_echo.setStyleSheet(
+            "font-family: 'JetBrains Mono', 'Consolas', monospace;"
+            "font-size: 9pt; color: #807c74; padding: 0 6px;"
+        )
+        layout.addWidget(self._cmd_echo, 1)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.VLine)
+        sep2.setFixedWidth(1)
+        sep2.setStyleSheet("background: #48433e; margin: 4px 2px;")
+        layout.addWidget(sep2)
+
+        redo_btn = QPushButton("Redo")
+        redo_btn.setToolTip("Redo (Ctrl+Y)")
+        redo_btn.setFixedHeight(26)
+        redo_btn.clicked.connect(self._undo_stack.redo)
+        layout.addWidget(redo_btn)
+
+        self._run_btn.setFixedHeight(26)
+        self._run_btn.setMinimumWidth(68)
+        layout.addWidget(self._run_btn)
+
+        qa_bar.addWidget(container)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, qa_bar)
+        self.addToolBarBreak(Qt.ToolBarArea.TopToolBarArea)
+
+        self._undo_stack.indexChanged.connect(self._update_cmd_echo)
+
+    def _update_cmd_echo(self, index: int) -> None:
+        text = self._undo_stack.undoText() if index > 0 else ""
+        self._cmd_echo.setText(text if text else "Ready")
 
     def _connect_signals(self):
         self._tree.object_selected.connect(self._on_object_selected)
@@ -455,6 +542,7 @@ class MainWindow(QMainWindow):
         self._tree.add_requested.connect(self._add_object)
         self._tree.delete_requested.connect(self._delete_object)
         self._tree.duplicate_requested.connect(self._duplicate_object)
+        self._tree.visibility_toggled.connect(self._on_source_visibility_toggled)
         self._properties.properties_changed.connect(self._on_properties_changed)
         self._ang_dist.distributions_changed.connect(self._on_distributions_changed)
         self._spectral_panel.spectral_data_changed.connect(self._mark_dirty)
@@ -637,6 +725,9 @@ class MainWindow(QMainWindow):
         self._viewport.set_view_mode(mode)
         self.statusBar().showMessage(f"3D view mode: {mode}", 2000)
 
+    def _set_run_enabled(self, enabled: bool):
+        self._run_btn.setEnabled(enabled)
+
     def _set_view_preset(self, preset: str):
         self._viewport.set_camera_preset(preset)
         self.statusBar().showMessage(f"Camera view: {preset}", 2000)
@@ -784,6 +875,7 @@ class MainWindow(QMainWindow):
         self._tree.refresh(self._project)
         self._viewport.set_selected(self._selected_group, self._selected_name, redraw=False)
         self._viewport.refresh(self._project)
+        self._viewport.update_hud_scene(self._project)
         self._ang_dist.refresh()
 
     def _on_object_selected(self, group, name):
@@ -832,6 +924,14 @@ class MainWindow(QMainWindow):
             prism = next((p for p in getattr(self._project, "solid_prisms", []) if p.name == name), None)
             if prism:
                 self._properties.show_solid_prism(prism, list(self._project.materials.keys()))
+
+    def _on_source_visibility_toggled(self, group: str, name: str, enabled: bool) -> None:
+        src = next((s for s in self._project.sources if s.name == name), None)
+        if src is None:
+            return
+        src.enabled = enabled
+        self._mark_dirty()
+        self._refresh_all()
 
     def _on_multi_selected(self, group: str, names: list):
         """Handle Ctrl+click multi-selection of objects in the same group."""
@@ -1243,7 +1343,8 @@ class MainWindow(QMainWindow):
         self._progress.setValue(0)
         self.statusBar().showMessage("Running simulation...")
         self._viewport.clear_ray_paths()
-        self._run_btn.setEnabled(False)
+        self._viewport.show_hud_sim(True)
+        self._set_run_enabled(False)
         self._cancel_btn.setEnabled(True)
 
         s = self._project.settings
@@ -1288,8 +1389,9 @@ class MainWindow(QMainWindow):
 
     def _on_sim_finished(self, result):
         self._progress.setVisible(False)
-        self._run_btn.setEnabled(True)
+        self._set_run_enabled(True)
         self._cancel_btn.setEnabled(False)
+        self._viewport.show_hud_sim(False)
         self.statusBar().showMessage("Simulation complete.", 5000)
         self._heatmap.update_results(result)
         self._plot_tab.update_results(result)
@@ -1358,4 +1460,5 @@ class MainWindow(QMainWindow):
         rays_list.append(n_rays)
         cv_list.append(cv_pct)
         self._conv_curves[src_idx].setData(rays_list, cv_list)
+        self._viewport.update_hud_sim(n_rays, cv_pct)
 
