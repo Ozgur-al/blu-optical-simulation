@@ -35,7 +35,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 02. Converting main simulation loop to C++ | v2.0 | 4/4 | Complete    | 2026-04-18 |
 | 03. Golden-reference validation suite | v2.0 | 4/4 | Complete    | 2026-04-18 |
 | 04. Uncertainty quantification | v2.0 | 3/3 | Complete    | 2026-04-18 |
-| 05. Geometry tolerance Monte Carlo | v2.0 | 0/4 | Planned | — |
+| 05. Geometry tolerance Monte Carlo | v2.0 | 1/4 | In Progress | — |
 
 ### Phase 1: distribution for admin locked work computer compatibility, splash screen etc.
 
@@ -120,7 +120,7 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 05-01-PLAN.md — TDD scaffold: test_ensemble.py (ENS-01..ENS-10 xfail stubs) + sim/ensemble.py stub
+- [x] 05-01-PLAN.md — TDD scaffold: test_ensemble.py (ENS-01..ENS-11 xfail stubs) + sim/ensemble.py stub (complete 2026-04-19)
 - [ ] 05-02-PLAN.md — Core data model + headless ensemble engine: tolerance fields, JSON round-trip, apply_jitter, OAT/Sobol sampling
 - [ ] 05-03-PLAN.md — GUI: EnsembleDialog + _EnsembleThread + live histogram + SourceForm tolerance section + main_window wiring
 - [ ] 05-04-PLAN.md — Integration gate: remove xfail markers, full suite green, cavity recipe GUI wiring, CLAUDE.md update
