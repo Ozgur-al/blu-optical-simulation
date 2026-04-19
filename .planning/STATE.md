@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
-current_plan: 3
+current_plan: 4
 status: in_progress
-stopped_at: Completed 05-02-PLAN.md
-last_updated: "2026-04-19T17:59:02Z"
-last_activity: 2026-04-19 -- Phase 05 Plan 02 complete; ensemble.py full implementation (GREEN phase); ENS-01..ENS-08 + ENS-11 PASS; 249 passed 2 xfailed
+stopped_at: Completed 05-03-PLAN.md
+last_updated: "2026-04-19T18:11:26Z"
+last_activity: 2026-04-19 -- Phase 05 Plan 03 complete; EnsembleDialog + _EnsembleThread GUI created; Position Tolerance in SourceForm; Tolerance Ensemble menu wired; ENS-10 XPASS; 249 passed 1 xfailed 1 xpassed
 progress:
   total_phases: 8
   completed_phases: 4
   total_plans: 18
-  completed_plans: 16
-  percent: 89
+  completed_plans: 17
+  percent: 94
 ---
 
 # Project State
@@ -37,8 +37,8 @@ Progress: [███████████████] 100% (14/14 plans)
 ## Current Position Detail
 
 Phase: 05-geometry-tolerance-monte-carlo (in progress)
-Current Plan: 3 of 4 (plans 01-02 complete)
-Stopped at: Completed 05-02-PLAN.md
+Current Plan: 4 of 4 (plans 01-03 complete)
+Stopped at: Completed 05-03-PLAN.md
 
 ## Accumulated Context
 
@@ -120,6 +120,9 @@ Stopped at: Completed 05-02-PLAN.md
 - Phase 05 Plan 02 (Wave 1 Green): ENS-09 xfail `raises` tuple expanded to include `AssertionError` — after ensemble.py implementation, `test_ensemble_spread_increases_with_sigma` fails with AssertionError (500 rays produces zero KPI spread), not NotImplementedError. Wave 3 integration test will verify at proper ray counts.
 - Phase 05 Plan 02 (Wave 1 Green): D-01b (flux_tolerance redraw) centralized in `apply_jitter` rather than `build_mc_sample` — ensures OAT, Sobol, and MC paths all get per-realization flux jitter, consistent with tracer.py pre-serialization pattern.
 - Phase 05 Plan 02 (Wave 1 Green): `build_sobol_sample` uses `d=k` Sobol dimensionality (not `d=2*k`) — satisfies ENS-08 single-param test; `compute_sobol_sensitivity` handles Saltelli layout separately.
+- Phase 05 Plan 03 (Wave 2 GUI): ENS-10 (`test_ensemble_thread_cancel`) promoted from XFAIL to XPASS by `_EnsembleThread` implementation — xfail marker removal deferred to Plan 04 per plan spec; `strict=False` means XPASS does not fail the suite.
+- Phase 05 Plan 03 (Wave 2 GUI): `object_tree.py` stores clean source name in `Qt.ItemDataRole.UserRole` so `visibility_toggled`, `object_selected`, and `_item_group_and_name` signals always emit undecorated names even when " ±" badge is appended to display text for toleranced sources.
+- Phase 05 Plan 03 (Wave 2 GUI): `EnsembleDialog._sobol_n_spin.minimum() == 32` and `_EnsembleThread._n` clamp [1,500] are independent guards — defense in depth per threat model T-05-W2-01/T-05-W2-02.
 
 ### Roadmap Evolution
 
