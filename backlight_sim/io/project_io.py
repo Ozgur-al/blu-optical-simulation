@@ -80,6 +80,7 @@ def _src_to_dict(s: PointSource) -> dict:
         "thermal_derate": s.thermal_derate,
         "color_rgb": list(s.color_rgb),
         "spd": s.spd,
+        "position_sigma_mm": s.position_sigma_mm,
     }
 
 
@@ -203,6 +204,8 @@ def project_to_dict(project: Project) -> dict:
             "check_interval": s.check_interval,
             "uq_batches": s.uq_batches,
             "uq_include_spectral": s.uq_include_spectral,
+            "source_position_sigma_mm": s.source_position_sigma_mm,
+            "source_position_distribution": s.source_position_distribution,
         },
         "angular_distributions": project.angular_distributions,
         "spd_profiles": project.spd_profiles,
@@ -217,6 +220,7 @@ def project_to_dict(project: Project) -> dict:
         "solid_cylinders": [_solid_cylinder_to_dict(c) for c in getattr(project, "solid_cylinders", [])],
         "solid_prisms": [_solid_prism_to_dict(p) for p in getattr(project, "solid_prisms", [])],
         "bsdf_profiles": getattr(project, "bsdf_profiles", {}),
+        "cavity_recipe": project.cavity_recipe,
     }
 
 
@@ -266,6 +270,7 @@ def _dict_to_src(d: dict) -> PointSource:
         thermal_derate=d.get("thermal_derate", 1.0),
         color_rgb=tuple(d.get("color_rgb", [1.0, 1.0, 1.0])),
         spd=d.get("spd", "white"),
+        position_sigma_mm=max(0.0, d.get("position_sigma_mm", 0.0)),
     )
 
 
@@ -334,6 +339,8 @@ def load_project(path: str | Path) -> Project:
         check_interval=s.get("check_interval", 1000),
         uq_batches=s.get("uq_batches", 10),
         uq_include_spectral=s.get("uq_include_spectral", True),
+        source_position_sigma_mm=max(0.0, s.get("source_position_sigma_mm", 0.0)),
+        source_position_distribution=s.get("source_position_distribution", "gaussian"),
     )
     materials = {d["name"]: _dict_to_mat(d) for d in data.get("materials", [])}
     opt_props = {d["name"]: _dict_to_op(d) for d in data.get("optical_properties", [])}
@@ -360,4 +367,5 @@ def load_project(path: str | Path) -> Project:
         solid_cylinders=solid_cylinders,
         solid_prisms=solid_prisms,
         bsdf_profiles=bsdf_profiles,
+        cavity_recipe=data.get("cavity_recipe", {}),
     )

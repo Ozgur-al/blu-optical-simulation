@@ -23,6 +23,7 @@ def build_cavity(
     floor_material: str = "default_reflector",
     wall_material: str = "default_reflector",
     replace_existing: bool = True,
+    record_recipe: bool = False,
 ) -> None:
     """Generate floor + 4 walls and add them to *project.surfaces*.
 
@@ -61,6 +62,16 @@ def build_cavity(
             Rectangle.axis_aligned("Wall Back", [0.0, half_h, d / 2], (d, w), 1, 1.0, wall_material),
             Rectangle.axis_aligned("Wall Front", [0.0, -half_h, d / 2], (d, w), 1, -1.0, wall_material),
         ]
+        if record_recipe:
+            project.cavity_recipe = {
+                "width": width,
+                "height": height,
+                "depth": depth,
+                "wall_angle_x_deg": float(wall_angle_x_deg),
+                "wall_angle_y_deg": float(wall_angle_y_deg),
+                "floor_material": floor_material,
+                "wall_material": wall_material,
+            }
         return
 
     wall_h_x = d / max(cos_tx, 1e-9)
@@ -111,6 +122,17 @@ def build_cavity(
             material_name=wall_material,
         )
     )
+
+    if record_recipe:
+        project.cavity_recipe = {
+            "width": width,
+            "height": height,
+            "depth": depth,
+            "wall_angle_x_deg": float(wall_angle_x_deg),
+            "wall_angle_y_deg": float(wall_angle_y_deg),
+            "floor_material": floor_material,
+            "wall_material": wall_material,
+        }
 
 
 def build_optical_stack(
