@@ -11,6 +11,7 @@ from backlight_sim.sim.ensemble import (
     apply_jitter,
     build_oat_sample,
     compute_oat_sensitivity,
+    compute_sobol_sensitivity,
     build_sobol_sample,
     build_mc_sample,
 )
@@ -137,6 +138,21 @@ def test_oat_sample_count_and_baseline():
     assert label_0 == "baseline", f"Expected 'baseline' as first label, got {label_0!r}"
 
 
+def test_oat_sample_uses_fixed_plus_sigma_offset():
+    """ENS-06b: OAT perturbations are deterministic +1 sigma offsets, not random draws."""
+    sigma = 0.5
+    project = _make_tolerance_scene(project_sigma_mm=sigma)
+    samples_a = build_oat_sample(project, seed=1)
+    samples_b = build_oat_sample(project, seed=999)
+    proj_a = next(p for p, label in samples_a if label == "position_sigma_mm")
+    proj_b = next(p for p, label in samples_b if label == "position_sigma_mm")
+    delta_a = proj_a.sources[0].position - project.sources[0].position
+    delta_b = proj_b.sources[0].position - project.sources[0].position
+    expected = np.full(3, sigma / np.sqrt(3.0))
+    np.testing.assert_allclose(delta_a, expected)
+    np.testing.assert_allclose(delta_b, expected)
+
+
 def test_oat_sensitivity_zero_sigma():
     """ENS-07: compute_oat_sensitivity returns 0.0 for zero-sigma params."""
     baseline = {"uniformity_1_4_min_avg": 0.80}
@@ -148,11 +164,56 @@ def test_oat_sensitivity_zero_sigma():
 
 
 def test_sobol_sample_count_power_of_2():
-    """ENS-08: build_sobol_sample rounds N up to next power of 2, minimum 32."""
-    pytest.importorskip("scipy.stats.qmc")
+    """ENS-08: Sobol design rounds N up to next power of 2 and emits A/B/AB_i blocks."""
     project = _make_tolerance_scene(project_sigma_mm=0.5)
     samples = build_sobol_sample(project, N=10, seed=42)
-    assert len(samples) == 32, f"Expected 32 (next pow2 >= max(10,32)), got {len(samples)}"
+    assert len(samples) == 96, f"Expected 96 rows (32 * (k+2) with k=1), got {len(samples)}"
+
+
+def test_sobol_sample_uses_saltelli_layout():
+    """ENS-08b: build_sobol_sample orders rows as A, B, then each AB_i block."""
+    project = _make_tolerance_scene(project_sigma_mm=0.5)
+    project.cavity_recipe = {
+        "width": 50.0,
+        "height": 50.0,
+        "depth": 20.0,
+        "wall_angle_x_deg": 0.0,
+        "wall_angle_y_deg": 0.0,
+        "floor_material": "wall",
+        "wall_material": "wall",
+        "depth_sigma_mm": 1.0,
+    }
+    n = 32
+    samples = build_sobol_sample(project, N=n, seed=42)
+    assert len(samples) == n * 4
+    a0 = samples[0][1]
+    b0 = samples[n][1]
+    ab0 = samples[2 * n][1]
+    ab1 = samples[3 * n][1]
+    np.testing.assert_allclose(ab0, np.array([b0[0], a0[1]]))
+    np.testing.assert_allclose(ab1, np.array([a0[0], b0[1]]))
+
+
+def test_compute_sobol_sensitivity_recovers_first_order_effect():
+    """ENS-08c: Sobol estimator recovers a dominant first-order term on synthetic data."""
+    rng = np.random.default_rng(7)
+    N = 64
+    k = 2
+    A = rng.random((N, k))
+    B = rng.random((N, k))
+    f_A = A[:, 0]
+    f_B = B[:, 0]
+    f_AB0 = B[:, 0]
+    f_AB1 = A[:, 0]
+    kpi_matrix = np.concatenate([f_A, f_B, f_AB0, f_AB1])[:, np.newaxis]
+    si = compute_sobol_sensitivity(
+        kpi_matrix,
+        np.zeros((N * (k + 2), k)),
+        N,
+        k,
+    )["0"]
+    assert si[0] == pytest.approx(1.0, abs=0.05)
+    assert si[1] == pytest.approx(0.0, abs=0.05)
 
 
 def test_ensemble_spread_increases_with_sigma():

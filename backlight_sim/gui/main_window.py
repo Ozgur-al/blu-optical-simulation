@@ -30,6 +30,7 @@ from backlight_sim.core.materials import Material
 from backlight_sim.core.sources import PointSource
 from backlight_sim.core.detectors import DetectorSurface, SphereDetector, SimulationResult
 from backlight_sim.core.solid_body import SolidBox, SolidCylinder, SolidPrism
+from backlight_sim.sim import blu_tracer as _blu_tracer
 from backlight_sim.sim.tracer import RayTracer
 from backlight_sim.gui.object_tree import ObjectTree
 from backlight_sim.gui.properties_panel import PropertiesPanel
@@ -44,12 +45,21 @@ from backlight_sim.gui.convergence_tab import ConvergenceTab
 from backlight_sim.gui.receiver_3d import Receiver3DWidget
 from backlight_sim.gui.spectral_data_panel import SpectralDataPanel
 from backlight_sim.io.angular_distributions import merge_default_profiles
-# Native C++ acceleration is mandatory post Phase 02 Plan 03 (D-05/D-06):
-# the Numba accel.py layer is gone and the C++ blu_tracer extension is
-# always loaded by tracer.py at import time. If it fails to load, the
-# RayTracer import raises RuntimeError — so reaching this module means
-# native acceleration is active.
-_CPP_ACTIVE = True
+
+
+def _cpp_active() -> bool:
+    """Return True when the optional native tracer extension is available."""
+    return _blu_tracer is not None
+
+
+def _cpp_status_text() -> str:
+    return "C++: Active" if _cpp_active() else "C++: Off"
+
+
+def _cpp_status_log_message() -> str:
+    if _cpp_active():
+        return "Native C++ acceleration active (blu_tracer extension loaded)"
+    return "Native acceleration unavailable - running pure Python"
 
 
 def _warmup_native_kernels() -> bool:
@@ -133,11 +143,11 @@ class MainWindow(QMainWindow):
 
         # Native C++ acceleration is mandatory (Plan 02-03); no warmup needed
         # for an AOT-compiled extension. Retain logging for UX parity.
-        if _CPP_ACTIVE:
+        if _cpp_active():
             _warmup_native_kernels()
-            self._log("Native C++ acceleration active (blu_tracer extension loaded)")
+            self._log(_cpp_status_log_message())
         else:
-            self._log("Native acceleration unavailable — running pure Python")
+            self._log(_cpp_status_log_message())
 
     def _init_default_materials(self):
         self._project.materials["default_reflector"] = Material(
@@ -237,9 +247,9 @@ class MainWindow(QMainWindow):
         self._cancel_btn.setEnabled(False)
 
         # Native C++ acceleration status indicator (was JIT / Numba pre-02-03)
-        self._jit_label = QLabel("C++: Active" if _CPP_ACTIVE else "C++: Off")
+        self._jit_label = QLabel(_cpp_status_text())
         self._jit_label.setAccessibleName("Native C++ acceleration status")
-        if _CPP_ACTIVE:
+        if _cpp_active():
             self._jit_label.setStyleSheet(f"color: {ACCENT}; font-weight: bold; padding: 0 6px;")
         else:
             self._jit_label.setStyleSheet(f"color: {TEXT_MUTED}; padding: 0 6px;")
@@ -510,6 +520,7 @@ class MainWindow(QMainWindow):
             "font-family: 'JetBrains Mono', 'Consolas', monospace;"
             "font-size: 9pt; color: #807c74; padding: 0 6px;"
         )
+        self._cmd_echo.setMaximumWidth(260)
         layout.addWidget(self._cmd_echo, 1)
 
         sep2 = QFrame()
@@ -1361,6 +1372,8 @@ class MainWindow(QMainWindow):
         self._cancel_btn.setEnabled(True)
 
         s = self._project.settings
+        n_active = sum(1 for src in self._project.sources if src.enabled)
+        self._total_sim_rays = s.rays_per_source * n_active
         self._log(
             f"Simulation started — {len(self._project.sources)} source(s), "
             f"{len(self._project.surfaces)} surface(s), "
@@ -1379,7 +1392,7 @@ class MainWindow(QMainWindow):
         )
 
         self._sim_thread = SimulationThread(self._project)
-        self._sim_thread.progress.connect(lambda f: self._progress.setValue(int(f * 100)))
+        self._sim_thread.progress.connect(self._on_sim_progress)
         self._sim_thread.convergence.connect(self._on_convergence_update)
         self._sim_thread.partial_result.connect(self._on_partial_result)
         self._sim_thread.finished_sim.connect(self._on_sim_finished)
@@ -1388,6 +1401,11 @@ class MainWindow(QMainWindow):
         # Inform user if live preview is disabled due to multiprocessing
         if self._project.settings.use_multiprocessing:
             self._log("Live preview disabled in multiprocessing mode")
+
+    def _on_sim_progress(self, f: float):
+        self._progress.setValue(int(f * 100))
+        rays = int(f * getattr(self, "_total_sim_rays", 0))
+        self.statusBar().showMessage(f"Running simulation… {rays:,} rays traced")
 
     def _cancel_simulation(self):
         if self._sim_thread and self._sim_thread.isRunning():
