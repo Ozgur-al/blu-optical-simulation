@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: 4 of 4 (plans 01-03 complete)
-status: verifying
-stopped_at: Completed 05-04-PLAN.md
-last_updated: "2026-04-19T18:21:07Z"
-last_activity: 2026-04-19 -- Phase 05 Plan 04 complete; record_recipe=True wired in GUI geometry builder; all 11 ENS tests pass (no xfail); ENS-09 fixed to use efficiency_pct KPI; full suite 251 passed
+current_plan: 4 of 4 (complete)
+status: complete
+stopped_at: ~
+last_updated: "2026-04-19T19:00:00.000Z"
+last_activity: 2026-04-19
 progress:
   total_phases: 8
   completed_phases: 5
@@ -27,18 +27,17 @@ See: .planning/PROJECT.md (updated 2026-03-15)
 ## Current Position
 
 Milestone: v2.0-distribution — In Progress
-Phase: 04 (uncertainty-quantification) — COMPLETE (all 3 plans shipped)
-Plan: 3 of 3 (complete)
-Status: Phase complete — ready for verification
+Phase: 05 (geometry-tolerance-monte-carlo) — COMPLETE (all 4 plans shipped, verified 2026-04-19)
+Plan: 4 of 4 (complete)
+Status: Phase complete — ready for Phase 6
 Last activity: 2026-04-19
 
-Progress: [███████████████] 100% (14/14 plans)
+Progress: [███████████████] 100% (18/18 plans)
 
 ## Current Position Detail
 
-Phase: 05-geometry-tolerance-monte-carlo — COMPLETE (all 4 plans shipped)
-Current Plan: 4 of 4 (complete)
-Stopped at: Completed 05-04-PLAN.md
+Phase: 06-inverse-design-optimizer — NOT STARTED
+Next: /gsd-discuss-phase 6 or /gsd-plan-phase 6
 
 ## Accumulated Context
 
@@ -156,6 +155,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-19T18:23:37.372Z
+Last session: 2026-04-19T18:26:54.940Z
 Stopped at: Completed 05-02-PLAN.md (Phase 05 Wave 1 GREEN — ensemble.py full implementation; ENS-01..ENS-08+ENS-11 PASS; 249 passed 2 xfailed). New `backlight_sim/gui/convergence_tab.py` (199 lines) introduces `ConvergenceTab(QWidget)` with a pyqtgraph PlotWidget + FillBetweenItem CI band and a KPI selector (uniformity 1/4 / efficiency / hotspot). MainWindow wires it as "Convergence (UQ)" tab next to the Plots tab (distinct from the existing live CV%-per-source "Convergence" tab). `backlight_sim/core/kpi.py` gains `_per_batch_source_flux(result, det)` (single source of truth for rays_per_batch-aware per-batch source flux — closes checker I5 / threat T-04.03-05) and `compute_all_kpi_cis(result, conf_level)` (shared CI aggregator consumed by heatmap_panel, io/report, io/batch_export). `backlight_sim/gui/heatmap_panel.py` gains a confidence-level dropdown (90/95/99%, default 95%) that recomputes CI labels WITHOUT re-running the tracer, a "Per-bin relative stderr" entry in the color-mode combo that renders `sigma_bin / mean_bin` from `grid_batches`, a UQ warnings banner (orange label for all `result.uq_warnings` strings), and a CI-aware KPI CSV exporter with the 10-column schema `metric,value,unit,mean,half_width,std,lower,upper,n_batches,conf_level`. `backlight_sim/gui/parameter_sweep_dialog.py` gains 3 CI columns (`eff ± Δ / u14 ± Δ / hot ± Δ`) on both single and multi-parameter sweep tables, a `pg.ErrorBarItem` overlay on the KPI trace with per-step half-widths, and a `_per_step_kpi_cis` helper using `_per_batch_source_flux` for unbiased efficiency scaling. `backlight_sim/io/report.py` HTML report renders `value ± half_width unit` on KPI rows and embeds a second `<img>` matplotlib errorbar chart (graceful fallback when matplotlib is missing); `backlight_sim/io/batch_export.py` ships the same 10-column CI schema in the ZIP kpi.csv. New `backlight_sim/tests/test_uq_ui.py` (430 lines, 17 headless-Qt tests via `QT_QPA_PLATFORM=offscreen`) covers heatmap labels (CI / legacy / sub-floor), confidence dropdown, noise overlay, warning banner multi-line + hidden state, CSV schema, ConvergenceTab construction/populate/noop, sweep ErrorBarItem + CI columns, rays_per_batch efficiency scaling. New `backlight_sim/tests/test_uq_exports.py` (298 lines, 8 tests) covers HTML CI strings / legacy no-CI / errorbar image / matplotlib-missing graceful; batch zip CI header (UQ-on + legacy); compute_all_kpi_cis rays_per_batch correctness; end-to-end Simple-Box smoke (4k rays, K=10, adaptive disabled) through csv + html + zip. Full suite: **237 passed, 7 warnings in 91.76 s**. Phase 04 CLOSED — every reported KPI ships with a 95% CI end-to-end, rays_per_batch-aware scaling eliminates remainder-distribution bias across all surfaces. Phase 05 (tolerance MC) and Phase 06 (optimizer) can now consume `compute_all_kpi_cis` for noise-aware objectives.
 Resume file: None
