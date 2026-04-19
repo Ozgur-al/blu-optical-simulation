@@ -29,7 +29,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 | 2. Spectral Engine | v1.0 | 2/2 | Complete | 2026-03-14 |
 | 3. Performance Acceleration | v1.0 | 2/2 | Complete | 2026-03-14 |
 | 4. Advanced Materials and Geometry | v1.0 | 5/5 | Complete | 2026-03-14 |
-| 5. UI Revamp | v1.0 | 4/4 | Complete | 2026-03-14 |
+| 5. UI Revamp | v1.0 | 4/4 | Complete   | 2026-04-19 |
 | 6. Tracer Cross-Phase Wiring | v1.0 | 2/2 | Complete | 2026-03-15 |
 | 7. UI + Spectral Display Fixes | v1.0 | 1/1 | Complete | 2026-03-15 |
 | 02. Converting main simulation loop to C++ | v2.0 | 4/4 | Complete    | 2026-04-18 |
@@ -117,13 +117,13 @@ Plans:
 - **Reuses Phase 4 UQ plumbing:** each member calls compute_scalar_kpis; ensemble variance (from tolerances) distinguishable from MC variance (from ray noise).
 
 **Depends on:** Phase 4
-**Plans:** 4 plans
+**Plans:** 4/4 plans complete
 
 Plans:
 - [x] 05-01-PLAN.md — TDD scaffold: test_ensemble.py (ENS-01..ENS-11 xfail stubs) + sim/ensemble.py stub (complete 2026-04-19)
 - [x] 05-02-PLAN.md — Core data model + headless ensemble engine: tolerance fields, JSON round-trip, apply_jitter, OAT/Sobol sampling (complete 2026-04-19)
 - [x] 05-03-PLAN.md — GUI: EnsembleDialog + _EnsembleThread + live histogram + SourceForm tolerance section + main_window wiring (complete 2026-04-19)
-- [ ] 05-04-PLAN.md — Integration gate: remove xfail markers, full suite green, cavity recipe GUI wiring, CLAUDE.md update
+- [x] 05-04-PLAN.md — Integration gate: remove xfail markers, full suite green, cavity recipe GUI wiring, CLAUDE.md update
 
 ### Phase 6: Inverse design / target-driven optimizer
 
