@@ -278,3 +278,19 @@ Use each `Session ID` like a lightweight commit message reference.
 ### Validation
 - Screenshot harness on the 1536x816 laptop screen: main window + all 5 menu dialogs fit on screen (before: 3 overflowed/clipped, 1 crashed).
 - `test_main_window.py`, `test_uq_ui.py`, `test_uq_exports.py`, `test_kpi.py` (tracer stubbed): 46 passed; only failure is the end-to-end sim smoke that needs the compiled `blu_tracer`.
+
+## Session ID: S2026-11-25-03
+**Title:** Direct-lit geometry builder — layout bugs, active-area mode, live DLED readout
+**Status:** Completed
+
+### What was done
+- **Bugs:** pitch-mode LED grid is now centred (leftover span split between both ends; was left-anchored). Dialog LED-count preview uses the same `_axis_positions()` as the builder (count=1 showed 2). Film placeholders use a transmissive `film_stack` diffuser material (were the opaque wall reflector); `build_optical_stack(film_material=None)` defaults to the diffuser material. Ensemble cavity jitter rebuilds only the shell (Floor/Wall*), keeps diffuser/films/other surfaces, and moves an output plane sitting on the old opening to the jittered depth. Accept is blocked with a warning when a diffuser/film is at or above the output detector.
+- **Features:** optional cavity walls (`build_cavity(walls=False)` → bare LED plate, stored in `cavity_recipe["walls"]`). "From active area" size mode: plate = active area + per-side margin, count mode forced, detector covers the active area. LED takeoff (LED centre → plate edge), LED package size X×Y, LED height (emitter Z). OD is the LED-plate-top → diffuser distance. Live readout: LED count, total flux, LED density, pitch, OD, OD/pitch; flux entry per LED or total (split evenly). Live warnings: overlapping LEDs, LEDs past the plate edge, diffuser below LED top, stack above detector. Top-view preview of plate, opening, active area and LED footprints.
+
+### Files touched
+- `backlight_sim/io/geometry_builder.py`, `backlight_sim/sim/ensemble.py`, `backlight_sim/gui/geometry_builder.py`
+- Tests: new `test_geometry_builder.py`; updated `test_ensemble.py::test_oat_cavity_perturbation_isolates_single_parameter` (non-cavity surfaces now survive the rebuild)
+
+### Validation
+- Linux build of `blu_tracer` (py3.13): `pytest backlight_sim/tests` → 341 passed, 3 skipped; `pytest backlight_sim/tests/golden` → 21 passed.
+- Offscreen screenshot of the Direct-Lit tab checked by eye.

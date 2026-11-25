@@ -5,7 +5,8 @@ from __future__ import annotations
 import copy
 
 import numpy as np
-from PySide6.QtCore import QTimer
+import pyqtgraph as pg
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -29,8 +30,10 @@ from backlight_sim.core.detectors import DetectorSurface
 from backlight_sim.core.materials import Material
 from backlight_sim.core.project_model import Project
 
-from backlight_sim.io.geometry_builder import build_cavity, build_led_grid, build_optical_stack, build_lgp_scene
-from backlight_sim.gui.theme import TEXT_MUTED, KPI_GREEN
+from backlight_sim.io.geometry_builder import (
+    _axis_positions, build_cavity, build_led_grid, build_lgp_scene, build_optical_stack,
+)
+from backlight_sim.gui.theme import TEXT_MUTED, KPI_GREEN, KPI_ORANGE
 from backlight_sim.gui.widgets.screen_fit import fit_to_screen, scrollable
 
 
@@ -99,16 +102,36 @@ class GeometryBuilderDialog(QDialog):
         cols.addLayout(right_col, 1)
         root = left_col
 
-        cav = QGroupBox("Cavity Dimensions")
+        cav = QGroupBox("LED Plate && Cavity")
         cf = QFormLayout(cav)
+        self._size_mode = QComboBox()
+        self._size_mode.addItems(["Enter LED plate size", "From active area"])
+        self._size_mode.setToolTip(
+            "From active area: plate = active area + margin on each side, "
+            "and the LED count is entered directly.")
+        cf.addRow("Size from:", self._size_mode)
+        self._aa_w = _dspin(110.0, 1.0, 5000.0, 1, 10.0)
+        self._aa_h = _dspin(50.0, 1.0, 5000.0, 1, 10.0)
+        self._margin_x = _dspin(5.0, 0.0, 500.0, 2, 0.5)
+        self._margin_y = _dspin(5.0, 0.0, 500.0, 2, 0.5)
+        self._margin_x.setToolTip("How much the LED plate extends past the active area, per side (X)")
+        self._margin_y.setToolTip("How much the LED plate extends past the active area, per side (Y)")
+        cf.addRow("Active area W:", self._aa_w)
+        cf.addRow("Active area H:", self._aa_h)
+        cf.addRow("Plate margin X (per side):", self._margin_x)
+        cf.addRow("Plate margin Y (per side):", self._margin_y)
         self._cav_w = _dspin(120.0, 1.0, 5000.0, 1, 10.0)
         self._cav_h = _dspin(60.0, 1.0, 5000.0, 1, 10.0)
         self._cav_d = _dspin(10.0, 0.5, 1000.0, 1, 1.0)
+        self._cav_d.setToolTip("Height of the output detector above the LED plate top (and wall height)")
+        self._walls = QCheckBox("Build cavity walls (metal frame)")
+        self._walls.setChecked(True)
         self._wall_angle_x = _dspin(0.0, -60.0, 60.0, 1, 1.0)
         self._wall_angle_y = _dspin(0.0, -60.0, 60.0, 1, 1.0)
-        cf.addRow("Width (W):", self._cav_w)
-        cf.addRow("Height (H):", self._cav_h)
-        cf.addRow("Depth (D):", self._cav_d)
+        cf.addRow("LED plate W:", self._cav_w)
+        cf.addRow("LED plate H:", self._cav_h)
+        cf.addRow("Depth / output plane Z:", self._cav_d)
+        cf.addRow("", self._walls)
         cf.addRow("Wall Angle Left/Right (deg):", self._wall_angle_x)
         cf.addRow("Wall Angle Front/Back (deg):", self._wall_angle_y)
         root.addWidget(cav)
@@ -119,7 +142,7 @@ class GeometryBuilderDialog(QDialog):
         self._wall_ref = _dspin(0.92, 0.0, 1.0, 3, 0.01)
         self._wall_diff = QComboBox()
         self._wall_diff.addItems(["Diffuse (Lambertian)", "Specular"])
-        mf.addRow("Floor Reflectance:", self._floor_ref)
+        mf.addRow("LED Plate Reflectance:", self._floor_ref)
         mf.addRow("Wall Reflectance:", self._wall_ref)
         mf.addRow("Wall Type:", self._wall_diff)
         root.addWidget(mat)
@@ -127,16 +150,19 @@ class GeometryBuilderDialog(QDialog):
         stack = QGroupBox("Optical Stack")
         sf = QFormLayout(stack)
         self._diff_dist = _dspin(0.0, 0.0, 500.0, 1, 0.5)
-        self._diff_dist.setToolTip("Z height of diffuser plane (0 = no diffuser)")
+        self._diff_dist.setToolTip("OD: distance from the LED plate top to the diffuser plate (0 = no diffuser)")
         self._diff_trans = _dspin(0.7, 0.0, 1.0, 3, 0.01)
         self._film1_z = _dspin(0.0, 0.0, 500.0, 1, 0.5)
         self._film1_z.setToolTip("Z height of film placeholder 1 (0 = skip)")
         self._film2_z = _dspin(0.0, 0.0, 500.0, 1, 0.5)
         self._film2_z.setToolTip("Z height of film placeholder 2 (0 = skip)")
-        sf.addRow("Diffuser distance (Z):", self._diff_dist)
+        self._film_trans = _dspin(0.9, 0.0, 1.0, 3, 0.01)
+        self._film_trans.setToolTip("Transmittance of film placeholders (transmitted light is scattered)")
+        sf.addRow("OD (plate top → diffuser):", self._diff_dist)
         sf.addRow("Diffuser transmittance:", self._diff_trans)
         sf.addRow("Film 1 distance (Z):", self._film1_z)
         sf.addRow("Film 2 distance (Z):", self._film2_z)
+        sf.addRow("Film transmittance:", self._film_trans)
         root.addWidget(stack)
 
         det = QGroupBox("Output Detector")
@@ -156,6 +182,7 @@ class GeometryBuilderDialog(QDialog):
         self._use_count = QCheckBox("Specify number of LEDs (auto pitch)")
         self._use_count.setChecked(False)
         self._use_count.toggled.connect(self._schedule_preview)
+        self._use_count.toggled.connect(self._sync_count_mode)
         lf.addRow("", self._use_count)
 
         self._count_x = _ispin(4, 1, 999)
@@ -180,23 +207,68 @@ class GeometryBuilderDialog(QDialog):
         self._edge_y = _dspin(10.0, 0.0, 500.0, 1, 1.0)
         self._edge_x.valueChanged.connect(self._schedule_preview)
         self._edge_y.valueChanged.connect(self._schedule_preview)
-        lf.addRow("Edge Offset X:", self._edge_x)
-        lf.addRow("Edge Offset Y:", self._edge_y)
-        self._led_flux = _dspin(100.0, 0.0, 1e6, 1, 10.0)
-        lf.addRow("LED Flux (per LED):", self._led_flux)
+        self._edge_x.setToolTip("Takeoff: edge LED centre to LED plate edge (X)")
+        self._edge_y.setToolTip("Takeoff: edge LED centre to LED plate edge (Y)")
+        lf.addRow("Takeoff X (LED ctr → plate edge):", self._edge_x)
+        lf.addRow("Takeoff Y (LED ctr → plate edge):", self._edge_y)
+        self._led_len = _dspin(3.0, 0.0, 100.0, 2, 0.1)
+        self._led_wid = _dspin(3.0, 0.0, 100.0, 2, 0.1)
+        led_size_row = QHBoxLayout()
+        led_size_row.addWidget(self._led_len)
+        led_size_row.addWidget(QLabel("×"))
+        led_size_row.addWidget(self._led_wid)
+        lf.addRow("LED size X × Y:", led_size_row)
+        self._led_flux = _dspin(100.0, 0.0, 1e7, 1, 10.0)
+        self._flux_mode = QComboBox()
+        self._flux_mode.addItems(["Per LED", "Total (split evenly)"])
+        flux_row = QHBoxLayout()
+        flux_row.addWidget(self._led_flux, 1)
+        flux_row.addWidget(self._flux_mode)
+        lf.addRow("LED Flux:", flux_row)
         self._led_dist = QComboBox()
         self._refresh_distributions()
         self._led_z = _dspin(0.5, 0.0, 100.0, 2, 0.1)
+        self._led_z.setToolTip("LED package height above the plate top; the emitter sits on top")
         lf.addRow("Distribution:", self._led_dist)
-        lf.addRow("Z Offset:", self._led_z)
+        lf.addRow("LED height (emitter Z):", self._led_z)
 
         self._count_lbl = QLabel("LED count: ?")
+        self._count_lbl.setWordWrap(True)
         lf.addRow("", self._count_lbl)
-        self._btn_preview = QPushButton("Preview LED Count")
-        self._btn_preview.clicked.connect(self._preview_count)
-        lf.addRow("", self._btn_preview)
+        self._warn_lbl = QLabel("")
+        self._warn_lbl.setWordWrap(True)
+        self._warn_lbl.setStyleSheet(f"color: {KPI_ORANGE};")
+        lf.addRow("", self._warn_lbl)
         root.addWidget(led)
+
+        # Top-view preview of the cavity outline and LED positions.
+        self._top_view = pg.PlotWidget()
+        self._top_view.setAspectLocked(True)
+        self._top_view.setMinimumHeight(220)
+        self._top_view.setLabel("bottom", "X")
+        self._top_view.setLabel("left", "Y")
+        self._top_view.addLegend(offset=(5, 5))
+        self._tv_floor = self._top_view.plot([], [], pen=pg.mkPen((90, 140, 220), width=2), name="LED plate")
+        self._tv_open = self._top_view.plot(
+            [], [], pen=pg.mkPen((90, 140, 220), width=1, style=Qt.PenStyle.DashLine), name="Opening")
+        self._tv_aa = self._top_view.plot([], [], pen=pg.mkPen((125, 209, 160), width=1), name="Active area")
+        self._tv_leds = self._top_view.plot([], [], pen=pg.mkPen((255, 200, 40), width=1), name="LEDs")
+        root.addWidget(self._top_view, 1)
         root.addWidget(det)
+
+        # Everything shown in the readout / preview refreshes live.
+        for w in (self._cav_w, self._cav_h, self._cav_d, self._wall_angle_x, self._wall_angle_y,
+                  self._diff_dist, self._film1_z, self._film2_z, self._led_flux, self._led_z,
+                  self._led_len, self._led_wid):
+            w.valueChanged.connect(self._schedule_preview)
+        for w in (self._aa_w, self._aa_h, self._margin_x, self._margin_y):
+            w.valueChanged.connect(self._sync_size_mode)
+        self._size_mode.currentIndexChanged.connect(self._sync_size_mode)
+        self._walls.toggled.connect(self._sync_size_mode)
+        self._flux_mode.currentIndexChanged.connect(self._schedule_preview)
+        self._add_det.toggled.connect(self._schedule_preview)
+        self._sync_count_mode()
+        self._sync_size_mode()
 
         root.addStretch()
         return container
@@ -339,26 +411,120 @@ class GeometryBuilderDialog(QDialog):
         """Debounce rapid spinbox edits — delay _preview_count by 80 ms."""
         self._preview_timer.start()
 
-    def _preview_count(self):
-        from backlight_sim.io.geometry_builder import _grid_positions
+    def _from_active_area(self) -> bool:
+        return self._size_mode.currentIndex() == 1
 
-        w = self._cav_w.value()
-        h = self._cav_h.value()
-        ex = self._edge_x.value()
-        ey = self._edge_y.value()
-        if self._use_count.isChecked():
-            cx = max(1, self._count_x.value())
-            cy = max(1, self._count_y.value())
-            span_x = w - 2.0 * ex
-            span_y = h - 2.0 * ey
-            pitch_x = span_x / max(cx - 1, 1) if span_x > 0 else 0.0
-            pitch_y = span_y / max(cy - 1, 1) if span_y > 0 else 0.0
+    def _effective_wall_angles(self) -> tuple[float, float]:
+        """Wall angles, or 0 when no walls are built (stack/detector stay plate-sized)."""
+        if not self._walls.isChecked():
+            return 0.0, 0.0
+        return self._wall_angle_x.value(), self._wall_angle_y.value()
+
+    def _sync_size_mode(self, _=None):
+        """Enable the fields of the chosen size mode; derive plate size from the active area."""
+        aa = self._from_active_area()
+        for w in (self._aa_w, self._aa_h, self._margin_x, self._margin_y):
+            w.setEnabled(aa)
+        self._cav_w.setEnabled(not aa)
+        self._cav_h.setEnabled(not aa)
+        if aa:
+            self._cav_w.setValue(self._aa_w.value() + 2.0 * self._margin_x.value())
+            self._cav_h.setValue(self._aa_h.value() + 2.0 * self._margin_y.value())
+            # Active-area workflow: the LED count is entered, pitch follows.
+            self._use_count.setChecked(True)
+        self._use_count.setEnabled(not aa)
+        self._wall_angle_x.setEnabled(self._walls.isChecked())
+        self._wall_angle_y.setEnabled(self._walls.isChecked())
+        self._schedule_preview()
+
+    def _sync_count_mode(self, _=None):
+        """Grey out whichever of count / pitch the builder will ignore."""
+        use_count = self._use_count.isChecked()
+        for w in (self._count_x, self._count_y):
+            w.setEnabled(use_count)
+        for w in (self._pitch_x, self._pitch_y):
+            w.setEnabled(not use_count)
+
+    def _led_positions(self) -> tuple[list[float], list[float]]:
+        """LED X/Y positions exactly as build_led_grid() will place them."""
+        w, h = self._cav_w.value(), self._cav_h.value()
+        use_count = self._use_count.isChecked()
+        xs = _axis_positions(-w / 2, w / 2, self._pitch_x.value(), self._edge_x.value(),
+                             self._count_x.value() if use_count else None)
+        ys = _axis_positions(-h / 2, h / 2, self._pitch_y.value(), self._edge_y.value(),
+                             self._count_y.value() if use_count else None)
+        return xs, ys
+
+    def _layout_warnings(self) -> str:
+        """Human-readable problems with the current layout (shown live)."""
+        msgs = []
+        xs, ys = self._led_positions()
+        for axis, pos, size, takeoff in (("X", xs, self._led_len.value(), self._edge_x.value()),
+                                         ("Y", ys, self._led_wid.value(), self._edge_y.value())):
+            if len(pos) > 1 and float(np.diff(pos).min()) < size:
+                msgs.append(f"LEDs overlap in {axis}: pitch is smaller than the LED size.")
+            if takeoff < size / 2.0:
+                msgs.append(f"Takeoff {axis} is less than half the LED size: LEDs hang over the plate edge.")
+        if self._diff_dist.value() > 0 and self._diff_dist.value() <= self._led_z.value():
+            msgs.append("OD is not above the LED height: the diffuser cuts through the LEDs.")
+        stack = self._stack_block_warning()
+        return "\n".join(msgs + ([stack] if stack else []))
+
+    def _stack_block_warning(self) -> str:
+        """Non-empty when a diffuser/film sits on or above the output detector."""
+        if not self._add_det.isChecked():
+            return ""
+        d = self._cav_d.value()
+        bad = [f"{name} (Z={z:g})" for name, z in (
+            ("Diffuser", self._diff_dist.value()),
+            ("Film 1", self._film1_z.value()),
+            ("Film 2", self._film2_z.value()),
+        ) if z >= d]
+        if not bad:
+            return ""
+        return (f"{', '.join(bad)} is at or above the output detector (Z={d:g}) "
+                "and will never be reached. Place it below the cavity depth.")
+
+    def _preview_count(self):
+        xs, ys = self._led_positions()
+        n = len(xs) * len(ys)
+        w, h, d = self._cav_w.value(), self._cav_h.value(), self._cav_d.value()
+
+        flux = self._led_flux.value()
+        total = flux if self._flux_mode.currentIndex() == 1 else flux * n
+        pitches = [float(np.diff(v).max()) for v in (xs, ys) if len(v) > 1]
+        od = self._diff_dist.value()  # plate top is z=0
+        lines = [f"LED count: {n} ({len(xs)} × {len(ys)})",
+                 f"Total flux: {total:g}" + (f"   ({total / n:g} per LED)" if n else "")]
+        if n:
+            lines.append(f"LED density: {n / (w * h) * 100.0:.3g} per cm²")
+        if pitches:
+            pitch = max(pitches)
+            lines.append(f"Pitch: {pitch:.4g}   OD: {od:g}   OD/pitch: {od / pitch:.2f}" if od > 0
+                         else f"Pitch: {pitch:.4g}   OD/pitch: set a diffuser OD")
+        self._count_lbl.setText("\n".join(lines))
+        self._warn_lbl.setText(self._layout_warnings())
+
+        # Top view: floor rectangle, opening at z=d (differs when walls are flared).
+        def _rect(rw, rh):
+            return [-rw / 2, rw / 2, rw / 2, -rw / 2, -rw / 2], [-rh / 2, -rh / 2, rh / 2, rh / 2, -rh / 2]
+        ax, ay = self._effective_wall_angles()
+        tw = w + 2 * d * float(np.tan(np.radians(min(ax, 89.0))))
+        th = h + 2 * d * float(np.tan(np.radians(min(ay, 89.0))))
+        self._tv_floor.setData(*_rect(w, h))
+        self._tv_open.setData(*_rect(tw, th))
+        if self._from_active_area():
+            self._tv_aa.setData(*_rect(self._aa_w.value(), self._aa_h.value()))
         else:
-            pitch_x = self._pitch_x.value()
-            pitch_y = self._pitch_y.value()
-        xs = _grid_positions(-w / 2, w / 2, pitch_x, ex)
-        ys = _grid_positions(-h / 2, h / 2, pitch_y, ey)
-        self._count_lbl.setText(f"LED count: {len(xs) * len(ys)}")
+            self._tv_aa.setData([], [])
+        # LED footprints as closed outlines separated by NaN breaks.
+        lx, ly = _rect(max(self._led_len.value(), 0.3), max(self._led_wid.value(), 0.3))
+        px, py = [], []
+        for y in ys:
+            for x in xs:
+                px += [x + v for v in lx] + [np.nan]
+                py += [y + v for v in ly] + [np.nan]
+        self._tv_leds.setData(px, py, connect="finite")
 
     def _on_accept(self):
         # If on LGP tab and LGP was built, just accept
@@ -370,11 +536,20 @@ class GeometryBuilderDialog(QDialog):
             return
 
         # Direct-Lit tab
+        warning = self._stack_block_warning()
+        if warning:
+            QMessageBox.warning(self, "Optical Stack", warning)
+            return
+        xs, ys = self._led_positions()
+        n_leds = len(xs) * len(ys)
+        led_flux = self._led_flux.value()
+        if self._flux_mode.currentIndex() == 1 and n_leds:
+            led_flux /= n_leds
+
         w = self._cav_w.value()
         h = self._cav_h.value()
         d = self._cav_d.value()
-        wall_x = self._wall_angle_x.value()
-        wall_y = self._wall_angle_y.value()
+        wall_x, wall_y = self._effective_wall_angles()
 
         floor_mat_name = "cavity_floor"
         wall_mat_name = "cavity_wall"
@@ -405,6 +580,7 @@ class GeometryBuilderDialog(QDialog):
             wall_material=wall_mat_name,
             replace_existing=True,
             record_recipe=True,    # Phase 5: write recipe back to project.cavity_recipe
+            walls=self._walls.isChecked(),
         )
 
         # Optical stack (diffuser + film placeholders)
@@ -419,12 +595,20 @@ class GeometryBuilderDialog(QDialog):
                 reflectance=1.0 - self._diff_trans.value(),
                 is_diffuse=True,
             )
+            film_mat_name = "film_stack"
+            self._project.materials[film_mat_name] = Material(
+                name=film_mat_name,
+                surface_type="diffuser",
+                transmittance=self._film_trans.value(),
+                reflectance=1.0 - self._film_trans.value(),
+                is_diffuse=True,
+            )
             build_optical_stack(
                 self._project, w, h, d,
                 diffuser_distance=diff_z,
                 film_distances=film_zs if film_zs else None,
                 diffuser_material=diff_mat_name,
-                film_material=wall_mat_name,
+                film_material=film_mat_name,
                 wall_angle_x_deg=wall_x,
                 wall_angle_y_deg=wall_y,
             )
@@ -436,6 +620,9 @@ class GeometryBuilderDialog(QDialog):
             safe_wy = min(wall_y, 89.0)
             top_w = w + 2 * d * float(np.tan(np.radians(safe_wx)))
             top_h = h + 2 * d * float(np.tan(np.radians(safe_wy)))
+            if self._from_active_area():
+                # Score what the cell shows: the detector covers the active area.
+                top_w, top_h = self._aa_w.value(), self._aa_h.value()
             self._project.detectors.append(
                 DetectorSurface.axis_aligned(
                     "Output Plane",
@@ -458,7 +645,7 @@ class GeometryBuilderDialog(QDialog):
             pitch_y=self._pitch_y.value(),
             edge_offset_x=self._edge_x.value(),
             edge_offset_y=self._edge_y.value(),
-            led_flux=self._led_flux.value(),
+            led_flux=led_flux,
             distribution=self._led_dist.currentText(),
             z_offset=self._led_z.value(),
             replace_existing=True,
