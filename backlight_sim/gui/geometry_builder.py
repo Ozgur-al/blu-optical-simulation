@@ -231,6 +231,12 @@ class GeometryBuilderDialog(QDialog):
         emit_row.addWidget(QLabel("×"))
         emit_row.addWidget(self._emit_y)
         lf.addRow("Emitter X × Y:", emit_row)
+        self._side_emit = QCheckBox("Side faces also emit (clear package)")
+        self._side_emit.setToolTip(
+            "The four side faces of the emitting area, from the LED top down to the "
+            "plate, emit too. Rays are split over top and sides by area.")
+        self._side_emit.toggled.connect(self._schedule_preview)
+        lf.addRow("", self._side_emit)
         self._led_flux = _dspin(100.0, 0.0, 1e7, 1, 10.0)
         self._flux_mode = QComboBox()
         self._flux_mode.addItems(["Per LED", "Total (split evenly)"])
@@ -461,6 +467,7 @@ class GeometryBuilderDialog(QDialog):
         custom = self._emit_mode.currentIndex() == 1
         self._emit_x.setEnabled(custom)
         self._emit_y.setEnabled(custom)
+        self._side_emit.setEnabled(self._emit_mode.currentIndex() != 2)
         self._schedule_preview()
 
     def _emitter_size(self) -> tuple[float, float]:
@@ -681,6 +688,9 @@ class GeometryBuilderDialog(QDialog):
             count_x=count_x,
             count_y=count_y,
             emitter_size=self._emitter_size(),
+            # Stop just above the plate so side rays never start on the floor plane.
+            emitter_side_height=(max(self._led_z.value() - 1e-3, 0.0)
+                                 if self._side_emit.isChecked() and self._side_emit.isEnabled() else 0.0),
         )
 
         QMessageBox.information(

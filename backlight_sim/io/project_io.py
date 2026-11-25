@@ -82,6 +82,7 @@ def _src_to_dict(s: PointSource) -> dict:
         "spd": s.spd,
         "position_sigma_mm": s.position_sigma_mm,
         "emitter_size": list(s.emitter_size),
+        "emitter_side_height": s.emitter_side_height,
     }
 
 
@@ -312,6 +313,7 @@ def _dict_to_src(d: dict) -> PointSource:
         spd=d.get("spd", "white"),
         position_sigma_mm=max(0.0, d.get("position_sigma_mm", 0.0)),
         emitter_size=tuple(max(0.0, float(v)) for v in d.get("emitter_size", [0.0, 0.0])),
+        emitter_side_height=max(0.0, float(d.get("emitter_side_height", 0.0))),
     )
 
 

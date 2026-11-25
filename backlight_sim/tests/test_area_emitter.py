@@ -62,3 +62,37 @@ def test_emitter_size_round_trips(tmp_path):
     p.sources.append(PointSource("led", [0, 0, 0], emitter_size=(1.5, 0.8)))
     save_project(p, tmp_path / "p.json")
     assert load_project(tmp_path / "p.json").sources[0].emitter_size == (1.5, 0.8)
+
+
+def test_side_faces_emit_outward_by_area():
+    src = PointSource("led", [0, 0, 1.0], direction=[0, 0, 1], distribution="lambertian",
+                      emitter_size=(2.0, 2.0), emitter_side_height=1.0)
+    rng = np.random.default_rng(1)
+    from backlight_sim.sim.sampling import sample_lambertian
+    n = 60000
+    dirs = sample_lambertian(n, src.direction, rng)
+    o = src.sample_emission(n, rng, dirs)
+    on_px = np.isclose(o[:, 0], 1.0)
+    on_top = np.isclose(o[:, 2], 1.0) & ~on_px
+    # Areas: top 4, each side 2 -> top 1/3, +X face 1/6.
+    assert on_top.mean() == pytest.approx(1 / 3, abs=0.01)
+    assert on_px.mean() == pytest.approx(1 / 6, abs=0.01)
+    assert (dirs[on_px, 0] > 0).all()          # +X face emits outward
+    assert (o[on_px, 2] >= 0).all() and (o[on_px, 2] <= 1.0).all()
+    assert np.allclose(np.linalg.norm(dirs, axis=1), 1.0)
+
+
+@pytest.mark.parametrize("force_python", [False, True])
+def test_side_emission_reaches_below_led(monkeypatch, force_python):
+    if force_python:
+        monkeypatch.setattr(tracer_mod, "_project_uses_cpp_unsupported_features", lambda p: True)
+    p = Project()
+    p.sources.append(PointSource("led", [0, 0, 1.0], direction=[0, 0, 1], distribution="lambertian",
+                                 emitter_size=(2.0, 2.0), emitter_side_height=1.0))
+    p.detectors.append(DetectorSurface.axis_aligned("below", [0, 0, -0.01], (400.0, 400.0), 2, 1.0, (4, 4)))
+    p.settings.rays_per_source = 20000
+    p.settings.max_bounces = 2
+    p.settings.record_ray_paths = 0
+    flux = RayTracer(p).run().detectors["below"].total_flux
+    # Side faces are 2/3 of the area; half of their rays head down -> ~1/3 of 100.
+    assert flux == pytest.approx(100.0 / 3, rel=0.08)

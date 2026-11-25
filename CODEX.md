@@ -312,3 +312,14 @@ Use each `Session ID` like a lightweight commit message reference.
 ### Validation
 - Linux py3.13 build of `blu_tracer`: `pytest backlight_sim/tests` → 347 passed, 3 skipped; golden → 21 passed. Footprint test passes on both the C++ and forced-Python paths.
 - **The bundled Windows .pyd must be rebuilt** to get the C++ fast path for area emitters.
+
+## Session ID: S2026-11-25-05
+**Title:** Optional side-face emission (clear LED package)
+**Status:** Completed
+
+### What was done
+- `PointSource.emitter_side_height`: the four side faces of the emitting rectangle, this tall below it, emit too. Rays are split over top + sides by area (equal radiance); side rays use the same angular distribution rotated onto each face's outward normal. The package is optically clear (not modelled as a body). Implemented in `PointSource.sample_emission` and mirrored in C++ `run_bounce_loop`.
+- Geometry Builder: "Side faces also emit (clear package)" → side height = LED height − 1 µm (keeps origins off the floor plane). Properties panel: "Side emit height". JSON field `emitter_side_height`.
+
+### Validation
+- Linux py3.13 `blu_tracer`: `pytest backlight_sim/tests` → 351 passed, 3 skipped; golden 21 passed. Side-emission flux below the LED ≈ 1/3 on both C++ and Python paths.

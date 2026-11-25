@@ -384,6 +384,10 @@ class SourceForm(QWidget):
         emit_row.addWidget(QLabel("×"))
         emit_row.addWidget(self._emit_y)
         fl_emission.addRow("Emitter X × Y:", emit_row)
+        self._emit_side = _dspin(0, 1000, 3, 0.0, 0.1)
+        self._emit_side.setToolTip("Height of the emitting side faces below the emitter "
+                                   "(clear package). 0 = top surface only.")
+        fl_emission.addRow("Side emit height:", self._emit_side)
         sec_emission.addLayout(fl_emission)
         vbox.addWidget(sec_emission)
 
@@ -452,7 +456,7 @@ class SourceForm(QWidget):
         for w in (self._px, self._py, self._pz, self._flux, self._tolerance,
                   self._current, self._flux_per_mA, self._thermal,
                   self._cr, self._cg, self._cb, self._pos_sigma,
-                  self._emit_x, self._emit_y):
+                  self._emit_x, self._emit_y, self._emit_side):
             w.valueChanged.connect(self._apply)
         self._dist.currentIndexChanged.connect(self._apply)
         self._spd.currentTextChanged.connect(self._apply)
@@ -493,7 +497,9 @@ class SourceForm(QWidget):
             QSignalBlocker(self._pos_sigma),
             QSignalBlocker(self._emit_x),
             QSignalBlocker(self._emit_y),
+            QSignalBlocker(self._emit_side),
         ]
+        self._emit_side.setValue(src.emitter_side_height)
         self._name.setText(src.name)
         self._emit_x.setValue(src.emitter_size[0])
         self._emit_y.setValue(src.emitter_size[1])
@@ -581,6 +587,7 @@ class SourceForm(QWidget):
             ('color_rgb', (self._cr.value(), self._cg.value(), self._cb.value())),
             ('spd', self._spd.currentText()),
             ('emitter_size', (self._emit_x.value(), self._emit_y.value())),
+            ('emitter_side_height', self._emit_side.value()),
         ]
         _push_or_apply_changes(self._src, changes,
                                getattr(self, '_push_command', None),

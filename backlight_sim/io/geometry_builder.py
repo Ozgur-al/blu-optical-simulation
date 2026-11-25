@@ -221,11 +221,13 @@ def build_led_grid(
     count_x: int | None = None,
     count_y: int | None = None,
     emitter_size: tuple[float, float] = (0.0, 0.0),
+    emitter_side_height: float = 0.0,
 ) -> int:
     """Create a uniform LED grid and add PointSources to *project*.
 
     *emitter_size* is each LED's emitting surface (X, Y), centred at the LED
-    position and facing +Z; (0, 0) gives point emitters.
+    position and facing +Z; (0, 0) gives point emitters. *emitter_side_height*
+    > 0 makes the four side faces below it emit as well (clear package).
 
     Per axis: if count_x / count_y is given (>= 1) the pitch on that axis is
     ignored and exactly that many LEDs are spread evenly between the edge
@@ -251,6 +253,7 @@ def build_led_grid(
                     direction=np.array([0.0, 0.0, 1.0]),
                     distribution=distribution,
                     emitter_size=emitter_size,
+                    emitter_side_height=emitter_side_height,
                 )
             )
     return count

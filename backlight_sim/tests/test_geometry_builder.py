@@ -140,6 +140,14 @@ def test_dialog_custom_emitting_area(dialog):
     assert {s.emitter_size for s in dialog.built_project().sources} == {(1.2, 0.6)}
 
 
+def test_dialog_side_emission_spans_led_height(dialog):
+    dialog._led_z.setValue(0.6)
+    dialog._side_emit.setChecked(True)
+    dialog._on_accept()
+    hs = [s.emitter_side_height for s in dialog.built_project().sources]
+    assert hs and hs == pytest.approx([0.599] * len(hs))
+
+
 def test_dialog_blocks_diffuser_above_detector(dialog):
     dialog._cav_d.setValue(10.0)
     dialog._diff_dist.setValue(12.0)
