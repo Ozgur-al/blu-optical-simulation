@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import threading
 import urllib.request
 from dataclasses import dataclass, field
@@ -49,18 +50,58 @@ class UpdateInfo:
 # ---------------------------------------------------------------------------
 # Version comparison (no external dependencies)
 # ---------------------------------------------------------------------------
+_VERSION_RE = re.compile(
+    r"^\s*v?(\d+(?:\.\d+)*)"              # release: 1, 1.2, 1.2.3 ...
+    r"(?:[-_.]?([A-Za-z]+)[-_.]?(\d*))?"     # pre-release: -beta, rc1, .dev2
+    r"(?:\+[0-9A-Za-z.-]*)?\s*$"            # build metadata (ignored)
+)
+
+# Pre-release labels in increasing order; a final release sorts after all.
+_PRE_RANK = {"dev": 0, "a": 1, "alpha": 1, "b": 2, "beta": 2,
+             "pre": 3, "c": 3, "rc": 3}
+_FINAL_RANK = 10
+
+
+def _parse_version(text: str) -> tuple:
+    """Parse ``"1.2.3"``, ``"v1.2"``, ``"1.1.0-beta"``, ``"2.0rc1"`` ...
+
+    Returns a sortable key ``(release_tuple_padded, pre_rank, pre_num)``.
+    Trailing zeros are stripped so ``1.0 == 1.0.0``; a final release ranks
+    above any of its pre-releases.  Raises ``ValueError`` on garbage.
+    """
+    m = _VERSION_RE.match(text or "")
+    if not m:
+        raise ValueError(f"unparseable version: {text!r}")
+    release = [int(x) for x in m.group(1).split(".")]
+    while len(release) > 1 and release[-1] == 0:
+        release.pop()
+    label = (m.group(2) or "").lower()
+    if not label:
+        rank, num = _FINAL_RANK, 0
+    else:
+        if label not in _PRE_RANK:
+            raise ValueError(f"unknown pre-release label in {text!r}")
+        rank, num = _PRE_RANK[label], int(m.group(3) or 0)
+    return (tuple(release), rank, num)
+
+
 def _compare_versions(current: str, latest: str) -> bool:
     """Return True if latest is strictly newer than current.
 
-    Compares dot-separated integer tuples.  Falls back to False on any parse
-    error so the app never crashes on a malformed tag.
+    Understands pre-release tags (``1.1.0-beta`` < ``1.1.0``) and treats
+    ``1.0`` and ``1.0.0`` as equal.  Falls back to False on any parse error
+    so the app never crashes on a malformed tag.
     """
     try:
-        c = tuple(int(x) for x in current.strip().split("."))
-        la = tuple(int(x) for x in latest.strip().split("."))
-        return la > c
-    except (ValueError, AttributeError):
+        c = _parse_version(current)
+        la = _parse_version(latest)
+    except (ValueError, TypeError, AttributeError):
         return False
+    # Compare release tuples with zero padding.
+    n = max(len(c[0]), len(la[0]))
+    ck = (c[0] + (0,) * (n - len(c[0])), c[1], c[2])
+    lk = (la[0] + (0,) * (n - len(la[0])), la[1], la[2])
+    return lk > ck
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +142,9 @@ def check_for_update(
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
-        tag = data.get("tag_name", "").lstrip("v")
+        if not isinstance(data, dict):
+            return UpdateInfo(available=False, error="Unexpected response format")
+        tag = str(data.get("tag_name") or "").strip().lstrip("vV")
         download = data.get("html_url", "")
 
         if not tag:

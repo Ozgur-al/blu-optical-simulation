@@ -66,15 +66,23 @@ def _active_tolerance_params(project: Project) -> list[tuple[str, float]]:
 
 def _jitter_cavity(
     p: Project,
-    rng: np.random.Generator,
+    rng: np.random.Generator | None,
     overrides: dict[str, float] | None = None,
+    prescribed_only: bool = False,
 ) -> None:
-    """Mutate *p* in-place by re-invoking ``build_cavity`` with jittered args."""
+    """Mutate *p* in-place by re-invoking ``build_cavity`` with jittered args.
+
+    ``overrides`` maps sigma keys to exact offsets (deterministic shift). With
+    ``prescribed_only=True`` parameters absent from ``overrides`` get zero
+    offset instead of a random draw — required for OAT/Sobol isolation.
+    """
     recipe = dict(p.cavity_recipe)
     dist_depth = recipe.get("depth_distribution", "gaussian")
     dist_angle = recipe.get("wall_angle_distribution", "gaussian")
 
     def _draw(sigma: float, dist: str) -> float:
+        if prescribed_only or rng is None:
+            return 0.0
         if dist == "uniform":
             return float(rng.uniform(-sigma * np.sqrt(3.0), sigma * np.sqrt(3.0)))
         return float(rng.normal(0.0, sigma))
@@ -127,8 +135,9 @@ def _apply_prescribed_offsets(p: Project, offsets: dict[str, float]) -> None:
     if p.cavity_recipe and cavity_overrides:
         _jitter_cavity(
             p,
-            np.random.default_rng(0),
+            None,
             overrides=cavity_overrides,
+            prescribed_only=True,
         )
 
 

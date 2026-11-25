@@ -153,6 +153,35 @@ def test_oat_sample_uses_fixed_plus_sigma_offset():
     np.testing.assert_allclose(delta_b, expected)
 
 
+def test_oat_cavity_perturbation_isolates_single_parameter():
+    """CR-02: OAT '+1 sigma depth' must not also randomly jitter wall angles."""
+    from backlight_sim.io.geometry_builder import build_cavity
+
+    recipe = {
+        "width": 50.0, "height": 50.0, "depth": 20.0,
+        "wall_angle_x_deg": 0.0, "wall_angle_y_deg": 0.0,
+        "floor_material": "wall", "wall_material": "wall",
+    }
+    sigmas = {"depth_sigma_mm": 1.0, "wall_angle_x_sigma_deg": 2.0, "wall_angle_y_sigma_deg": 2.0}
+    project = _make_tolerance_scene()
+    project.cavity_recipe = {**recipe, **sigmas}
+
+    samples = dict((label, p) for p, label in build_oat_sample(project, seed=3))
+    depth_proj = samples["depth_sigma_mm"]
+
+    expected = _make_tolerance_scene()
+    build_cavity(
+        expected, width=50.0, height=50.0, depth=21.0,
+        wall_angle_x_deg=0.0, wall_angle_y_deg=0.0,
+        floor_material="wall", wall_material="wall", replace_existing=True,
+    )
+    assert len(depth_proj.surfaces) == len(expected.surfaces)
+    for got, want in zip(depth_proj.surfaces, expected.surfaces):
+        np.testing.assert_allclose(got.center, want.center, atol=1e-12)
+        np.testing.assert_allclose(got.u_axis, want.u_axis, atol=1e-12)
+        np.testing.assert_allclose(got.v_axis, want.v_axis, atol=1e-12)
+
+
 def test_oat_sensitivity_zero_sigma():
     """ENS-07: compute_oat_sensitivity returns 0.0 for zero-sigma params."""
     baseline = {"uniformity_1_4_min_avg": 0.80}

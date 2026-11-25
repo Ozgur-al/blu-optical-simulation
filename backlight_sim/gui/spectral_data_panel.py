@@ -292,6 +292,12 @@ class SpectralDataPanel(QWidget):
         self._chroma_plot.setXRange(0.0, 0.85, padding=0.02)
         self._chroma_plot.setYRange(0.0, 0.92, padding=0.02)
 
+    def clear_result(self) -> None:
+        """Remove the simulation chromaticity scatter (project changed)."""
+        if getattr(self, "_sim_scatter", None) is not None:
+            self._chroma_plot.removeItem(self._sim_scatter)
+            self._sim_scatter = None
+
     def update_from_result(self, result) -> None:
         """Update chromaticity scatter with per-pixel simulation colors.
 

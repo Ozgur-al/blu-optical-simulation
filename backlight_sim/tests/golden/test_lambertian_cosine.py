@@ -1,8 +1,7 @@
 """GOLD-02: Lambertian emitter angular intensity matches I0 * cos(theta).
 
 Scene — see ``backlight_sim.golden.builders.build_lambertian_emitter_project``:
-a single Lambertian point source at the origin aimed at -Z (so the cosine-law
-peak aligns with the candela grid's theta=0 bin) and a single
+a single Lambertian point source at the origin and a single
 ``SphereDetector(mode="far_field")`` at the origin (forces Python path via
 ``_project_uses_cpp_unsupported_features`` at tracer.py:272).
 
@@ -10,6 +9,11 @@ Validation: peak-normalize the mean-over-azimuth candela profile, mask out
 grazing angles (theta > 80°) and the back hemisphere (theta > 90°), then
 compute RMS deviation from cos(theta). Tolerance: RMS < 0.03 at 500k rays
 seeded at GOLDEN_SEED=42.
+
+The test aims the source at +Z explicitly: far-field bins the OUTGOING ray
+direction, so the cosine peak must land at theta=0 and the back hemisphere
+(theta > 90 deg) must stay empty. (The shared builder historically aimed at
+-Z to compensate for a sign bug in the far-field accumulator.)
 """
 from __future__ import annotations
 
@@ -23,6 +27,7 @@ def test_lambertian_emitter_matches_cosine(make_lambertian_emitter_scene,
                                            assert_within_tolerance):
     rays = 500_000
     project = make_lambertian_emitter_scene(rays=rays)
+    project.sources[0].direction = np.array([0.0, 0.0, 1.0])
 
     result = RayTracer(project).run()
     sd = result.sphere_detectors["farfield"]
@@ -35,6 +40,17 @@ def test_lambertian_emitter_matches_cosine(make_lambertian_emitter_scene,
     profile = sd.candela_grid.mean(axis=1)   # (n_theta,)
     n_theta = profile.shape[0]
     theta_centers = (np.arange(n_theta) + 0.5) * np.pi / n_theta
+
+    # Direction check: a +Z emitter puts all flux in the upper hemisphere.
+    upper = sd.grid[theta_centers < np.pi / 2.0].sum()
+    lower = sd.grid[theta_centers > np.pi / 2.0].sum()
+    assert upper > 0 and lower == 0.0, (
+        f"+Z Lambertian emitter must land in theta<90 deg only "
+        f"(upper={upper}, lower={lower}) — far-field direction is mirrored"
+    )
+    assert int(np.argmax(profile)) < n_theta // 4, (
+        "cosine peak should sit near theta=0 for a +Z emitter"
+    )
 
     # Mask out grazing (theta > 80°) and back hemisphere (theta > 90°).
     mask = theta_centers <= np.radians(80.0)

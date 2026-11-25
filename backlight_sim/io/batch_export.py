@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import csv
 import io as _io_mod
-import json
 import zipfile
 from pathlib import Path
 
@@ -24,7 +23,7 @@ from backlight_sim.core.kpi import (
     uniformity_in_center as _uniformity_in_center,
 )
 from backlight_sim.core.uq import CIEstimate
-from backlight_sim.io.project_io import project_to_dict
+from backlight_sim.io.project_io import project_to_json
 from backlight_sim.io.report import generate_html_report
 
 
@@ -78,26 +77,28 @@ def export_batch_zip(
     p = Path(path)
     with zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED) as zf:
         # 1. Project JSON
-        proj_json = json.dumps(project_to_dict(project), indent=2)
+        proj_json = project_to_json(project)
         zf.writestr("project.json", proj_json)
 
         if result is None or not result.detectors:
             return
 
         # 2. KPI CSV with CI columns (Phase 4 Wave 3 schema)
-        kpi_ci_dict = compute_all_kpi_cis(result, conf_level=0.95)
-
         buf = _io_mod.StringIO()
         writer = csv.writer(buf)
         writer.writerow(_CI_HEADER)
 
         for det_name, dr in result.detectors.items():
+            # Per-detector CIs (each detector's own batches).
+            kpi_ci_dict = compute_all_kpi_cis(
+                result, conf_level=0.95, detector_name=det_name
+            )
             grid = dr.grid
             avg = float(grid.mean())
             peak = float(grid.max())
             mn = float(grid.min())
             std = float(grid.std())
-            cv = std / avg if avg > 0 else 0.0
+            cv = std / avg * 100.0 if avg > 0 else 0.0  # percent (matches CI)
             hot = peak / avg if avg > 0 else 0.0
             ecr = _edge_center_ratio(grid)
             corner = _corner_ratio(grid)
@@ -113,6 +114,13 @@ def export_batch_zip(
             writer.writerow(_row("corner_ratio", f"{corner:.4f}", ci=kpi_ci_dict.get("corner")))
             writer.writerow(_row("total_hits", str(dr.total_hits)))
             writer.writerow(_row("total_flux", f"{dr.total_flux:.6g}"))
+            if result.total_emitted_flux > 0:
+                writer.writerow(_row(
+                    "detector_efficiency_pct",
+                    f"{dr.total_flux / result.total_emitted_flux * 100:.2f}",
+                    "%",
+                    ci=kpi_ci_dict.get("efficiency_pct"),
+                ))
 
             for label, frac in [("1_4", 0.25), ("1_6", 1 / 6), ("1_10", 0.1)]:
                 u_avg, u_max = _uniformity_in_center(grid, frac)
@@ -136,7 +144,6 @@ def export_batch_zip(
                 "efficiency_pct",
                 f"{all_det / emitted * 100:.2f}",
                 "%",
-                ci=kpi_ci_dict.get("efficiency_pct"),
             ))
             writer.writerow(_row("absorbed_pct", f"{absorbed / emitted * 100:.2f}", "%"))
             writer.writerow(_row("escaped_pct", f"{escaped / emitted * 100:.2f}", "%"))

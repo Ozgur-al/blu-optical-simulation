@@ -33,10 +33,14 @@ class _EnsembleThread(QThread):
       "oat"   -- k+1 OAT runs via build_oat_sample (Sensitivity tab)
       "sobol" -- N*(k+2) Sobol runs via build_sobol_sample (Sensitivity tab)
 
-    Emits step_done(idx, result, project_clone) after each member.
-    Emits sweep_finished() when all members complete or cancel is called.
+    Emits total_known(n) once the sample design is built.
+    Emits step_done(idx, result, project_clone) after each successful member and
+    member_failed(idx, message) for each member whose trace raised.
+    Emits sweep_finished() when all members complete, fail, or cancel is called.
     """
+    total_known = Signal(int)                 # number of members in the design
     step_done = Signal(int, object, object)   # (member_idx, SimulationResult, Project clone)
+    member_failed = Signal(int, str)          # (member_idx, error message)
     sweep_finished = Signal()
 
     def __init__(
@@ -52,53 +56,67 @@ class _EnsembleThread(QThread):
         self._mode = mode
         self._seed = seed & 0x7FFFFFFF          # int32 mask (Phase 4 pattern)
         self._cancelled = False
-        self._member_projects: list[Project] = []   # for worst-case drill-down
+        self._tracer = None
 
     def cancel(self) -> None:
         self._cancelled = True
+        tracer = self._tracer
+        if tracer is not None:
+            tracer.cancel()   # stop the in-flight trace, not just the next member
 
     def run(self) -> None:
         from backlight_sim.sim.ensemble import build_mc_sample, build_oat_sample, build_sobol_sample
         from backlight_sim.sim.tracer import RayTracer
 
-        if self._mode == "mc":
-            # Distribution mode: N i.i.d. draws — provides histogram + P5/P50/P95
-            projects = build_mc_sample(self._base, self._n, self._seed)
-            samples = [(p, None) for p in projects]
-        elif self._mode == "sobol":
-            samples = build_sobol_sample(self._base, self._n, self._seed)
-        else:
-            # "oat" -- sensitivity mode, k+1 runs
-            samples = build_oat_sample(self._base, self._seed)
+        try:
+            if self._mode == "mc":
+                # Distribution mode: N i.i.d. draws — provides histogram + P5/P50/P95
+                projects = build_mc_sample(self._base, self._n, self._seed)
+                samples = [(p, None) for p in projects]
+            elif self._mode == "sobol":
+                samples = build_sobol_sample(self._base, self._n, self._seed)
+            else:
+                # "oat" -- sensitivity mode, k+1 runs
+                samples = build_oat_sample(self._base, self._seed)
+            self.total_known.emit(len(samples))
 
-        for i, (proj, _param_info) in enumerate(samples):
-            if self._cancelled:
-                break
-            try:
-                result = RayTracer(proj).run()
-            except Exception:
-                continue    # skip failed members; do not crash the thread
-            self._member_projects.append(proj)
-            self.step_done.emit(i, result, proj)
-
-        self.sweep_finished.emit()
+            for i, (proj, _param_info) in enumerate(samples):
+                if self._cancelled:
+                    break
+                self._tracer = RayTracer(proj)
+                try:
+                    result = self._tracer.run()
+                except Exception as exc:
+                    # Report (do not hide) failed members; keep the thread alive.
+                    self.member_failed.emit(i, f"{type(exc).__name__}: {exc}")
+                    continue
+                if self._cancelled:
+                    break   # cancelled mid-trace: partial result is not a valid member
+                self.step_done.emit(i, result, proj)
+        except Exception as exc:
+            self.member_failed.emit(-1, f"{type(exc).__name__}: {exc}")
+        finally:
+            self._tracer = None
+            self.sweep_finished.emit()
 
 
 # ---------------------------------------------------------------------------
 # KPI registry
 # ---------------------------------------------------------------------------
 
-# KPI keys available from compute_scalar_kpis (Phase 4)
+# KPI keys available from compute_scalar_kpis (Phase 4) with their direction:
+# True = higher is better (worst case = minimum), False = lower is better
+# (worst case = maximum).  Only keys that compute_scalar_kpis actually returns
+# are listed — offering others would silently plot zeros.
 _KPI_KEYS = [
-    ("uniformity_1_4_min_avg", "Uniformity 1/4 (min/avg)"),
-    ("efficiency_pct",         "Efficiency (%)"),
-    ("hotspot_peak_avg",       "Hotspot (peak/avg)"),
-    ("avg_flux",               "Avg flux"),
-    ("cv_pct",                 "CV (%)"),
+    ("uniformity_1_4_min_avg", "Uniformity 1/4 (min/avg)", True),
+    ("efficiency_pct",         "Efficiency (%)",           True),
+    ("hotspot_peak_avg",       "Hotspot (peak/avg)",       False),
 ]
 # Map from display name -> key
-_KPI_LABEL_TO_KEY = {label: key for key, label in _KPI_KEYS}
-_KPI_KEY_TO_LABEL = {key: label for key, label in _KPI_KEYS}
+_KPI_LABEL_TO_KEY = {label: key for key, label, _hib in _KPI_KEYS}
+_KPI_KEY_TO_LABEL = {key: label for key, label, _hib in _KPI_KEYS}
+_KPI_HIGHER_IS_BETTER = {key: hib for key, _label, hib in _KPI_KEYS}
 
 
 # ---------------------------------------------------------------------------
@@ -121,13 +139,17 @@ class EnsembleDialog(QDialog):
         super().__init__(parent)
         self._project = project
         self._thread: _EnsembleThread | None = None
-        # Distribution tab state
+        self._failures: list[str] = []
+        # Distribution tab state (parallel lists, successful members only, in order)
         self._dist_kpi_values: list[float] = []
         self._dist_all_kpis: list[dict[str, float]] = []
         self._dist_member_projects: list[Project] = []
         self._worst_project: Project | None = None
-        # Sensitivity tab state
-        self._sens_all_kpis: list[dict[str, float]] = []
+        self._worst_val: float | None = None
+        # Sensitivity tab state: member index -> KPI dict (None = member failed)
+        self._sens_kpis_by_idx: dict[int, dict[str, float] | None] = {}
+        self._sens_expected = 0
+        self._sens_run_mode: str | None = None   # mode of the data in _sens_kpis_by_idx
 
         self.setWindowTitle("Tolerance Ensemble")
         self.resize(950, 650)
@@ -172,7 +194,7 @@ class EnsembleDialog(QDialog):
         ctrl.addStretch()
         ctrl.addWidget(QLabel("Show KPI:"))
         self._dist_kpi_combo = QComboBox()
-        for _key, label in _KPI_KEYS:
+        for _key, label, _hib in _KPI_KEYS:
             self._dist_kpi_combo.addItem(label)
         self._dist_kpi_combo.currentIndexChanged.connect(self._on_dist_kpi_changed)
         ctrl.addWidget(self._dist_kpi_combo)
@@ -237,7 +259,7 @@ class EnsembleDialog(QDialog):
         ctrl.addStretch()
         ctrl.addWidget(QLabel("Show KPI:"))
         self._sens_kpi_combo = QComboBox()
-        for _key, label in _KPI_KEYS:
+        for _key, label, _hib in _KPI_KEYS:
             self._sens_kpi_combo.addItem(label)
         self._sens_kpi_combo.currentIndexChanged.connect(self._on_sens_kpi_changed)
         ctrl.addWidget(self._sens_kpi_combo)
@@ -254,6 +276,8 @@ class EnsembleDialog(QDialog):
         self._sens_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._sens_table.setSortingEnabled(True)
         layout.addWidget(self._sens_table)
+        self._sens_status = QLabel("")
+        layout.addWidget(self._sens_status)
         return tab
 
     # ------------------------------------------------------------------
@@ -268,7 +292,10 @@ class EnsembleDialog(QDialog):
         self._dist_all_kpis.clear()
         self._dist_member_projects.clear()
         self._worst_project = None
+        self._worst_val = None
         self._load_worst_btn.setEnabled(False)
+        self._load_worst_btn.setText("Load worst case as variant")
+        self._failures = []
         self._progress.setValue(0)
         self._progress.setMaximum(n)
         self._set_running(True)
@@ -279,9 +306,20 @@ class EnsembleDialog(QDialog):
             mode="mc",
             seed=seed,
         )
+        self._thread.total_known.connect(self._progress.setMaximum)
         self._thread.step_done.connect(self._on_dist_step_done)
+        self._thread.member_failed.connect(self._on_member_failed)
         self._thread.sweep_finished.connect(self._on_dist_finished)
         self._thread.start()
+
+    def _on_member_failed(self, idx: int, message: str) -> None:
+        if idx >= 0:
+            self._progress.setValue(idx + 1)
+            self._failures.append(f"member {idx}: {message}")
+        else:
+            self._failures.append(f"sample design: {message}")
+        # Failed sensitivity members stay absent from _sens_kpis_by_idx, so the
+        # OAT/Sobol tables refuse to compute from a misaligned design (WR-02).
 
     def _on_dist_step_done(self, idx: int, result, proj: Project) -> None:
         self._progress.setValue(idx + 1)
@@ -295,10 +333,9 @@ class EnsembleDialog(QDialog):
 
     def _on_dist_finished(self) -> None:
         self._set_running(False)
-        if self._thread:
-            self._dist_member_projects = self._thread._member_projects
         if self._worst_project is not None:
             self._load_worst_btn.setEnabled(True)
+        self._report_failures()
 
     def _on_dist_kpi_changed(self) -> None:
         if not self._dist_all_kpis:
@@ -321,8 +358,14 @@ class EnsembleDialog(QDialog):
         if mode == "sobol" and n < 32:
             QMessageBox.warning(self, "Sobol Minimum",
                                 "Sobol mode requires N >= 32. N will be rounded up automatically.")
-        self._sens_all_kpis.clear()
+        self._sens_kpis_by_idx = {}
+        self._sens_expected = 0
+        self._sens_run_mode = mode
+        self._failures = []
+        self._sens_table.setRowCount(0)
+        self._sens_status.setText("")
         self._progress.setValue(0)
+        self._progress.setMaximum(0)   # busy until the design size is known
         self._set_running(True)
         seed = self._project.settings.random_seed & 0x7FFFFFFF
         self._thread = _EnsembleThread(
@@ -331,30 +374,53 @@ class EnsembleDialog(QDialog):
             mode=mode,
             seed=seed,
         )
+        self._thread.total_known.connect(self._on_sens_total_known)
         self._thread.step_done.connect(self._on_sens_step_done)
+        self._thread.member_failed.connect(self._on_member_failed)
         self._thread.sweep_finished.connect(self._on_sens_finished)
         self._thread.start()
 
+    def _on_sens_total_known(self, total: int) -> None:
+        self._sens_expected = total
+        self._progress.setMaximum(max(total, 1))
+
     def _on_sens_step_done(self, idx: int, result, proj: Project) -> None:
         self._progress.setValue(idx + 1)
-        kpis = compute_scalar_kpis(result)
-        self._sens_all_kpis.append(kpis)
+        self._sens_kpis_by_idx[idx] = compute_scalar_kpis(result)
 
     def _on_sens_finished(self) -> None:
         self._set_running(False)
-        mode_text = self._sens_mode_combo.currentText()
-        if "Sobol" in mode_text:
-            self._update_sobol_sensitivity_table()
-        else:
-            self._update_oat_sensitivity_table()
+        if self._progress.maximum() == 0:
+            self._progress.setMaximum(1)
+        self._update_sens_table()
+        self._report_failures()
 
     def _on_sens_mode_changed(self) -> None:
         sobol = "Sobol" in self._sens_mode_combo.currentText()
-        self._sobol_n_spin.setEnabled(sobol)
+        self._sobol_n_spin.setEnabled(sobol and not self._is_running())
 
     def _on_sens_kpi_changed(self) -> None:
-        if self._sens_all_kpis:
+        if self._sens_kpis_by_idx and not self._is_running():
+            self._update_sens_table()
+
+    def _update_sens_table(self) -> None:
+        """Dispatch on the mode the data was produced with (not the current combo)."""
+        if self._sens_run_mode == "sobol":
+            self._update_sobol_sensitivity_table()
+        elif self._sens_run_mode == "oat":
             self._update_oat_sensitivity_table()
+
+    def _complete_sens_kpis(self, expected: int) -> list[dict[str, float]] | None:
+        """Return KPI dicts for indices 0..expected-1, or None if any is missing."""
+        if expected <= 0:
+            return None
+        out = []
+        for i in range(expected):
+            k = self._sens_kpis_by_idx.get(i)
+            if k is None:
+                return None
+            out.append(k)
+        return out
 
     # ------------------------------------------------------------------
     # Histogram (Distribution tab)
@@ -379,43 +445,62 @@ class EnsembleDialog(QDialog):
     # Sensitivity table (Sensitivity Analysis tab)
     # ------------------------------------------------------------------
 
+    def _fill_sens_table(self, rows: list[tuple[str, float]]) -> None:
+        self._sens_table.setSortingEnabled(False)
+        self._sens_table.setRowCount(len(rows))
+        for row_idx, (pname, sv) in enumerate(rows):
+            self._sens_table.setItem(row_idx, 0, QTableWidgetItem(pname))
+            self._sens_table.setItem(row_idx, 1, QTableWidgetItem(f"{sv:.4f}"))
+        self._sens_table.setSortingEnabled(True)
+
     def _update_oat_sensitivity_table(self) -> None:
         """Populate sensitivity table using OAT indices. index 0=baseline, 1..k=perturbed."""
         from backlight_sim.sim.ensemble import compute_oat_sensitivity, _active_tolerance_params
-        if len(self._sens_all_kpis) < 2:
-            return
         params = _active_tolerance_params(self._project)
         if not params:
+            self._sens_table.setRowCount(0)
+            self._sens_status.setText("No active tolerance parameters (all sigmas are 0).")
             return
-        baseline_kpis = self._sens_all_kpis[0]
-        perturbed_kpis = self._sens_all_kpis[1:len(params) + 1]
-        if len(perturbed_kpis) < len(params):
+        kpis = self._complete_sens_kpis(len(params) + 1)
+        if kpis is None:
+            self._sens_table.setRowCount(0)
+            self._sens_status.setText(
+                "OAT run incomplete (cancelled or member failures) — sensitivity not computed."
+            )
             return
         selected_key = _KPI_LABEL_TO_KEY[self._sens_kpi_combo.currentText()]
         sensitivity = compute_oat_sensitivity(
-            baseline_kpis,
-            perturbed_kpis,
+            kpis[0],
+            kpis[1:],
             [p[0] for p in params],
             [p[1] for p in params],
         )
         sens_vals = sensitivity.get(selected_key, [0.0] * len(params))
         rows = sorted(zip([p[0] for p in params], sens_vals), key=lambda x: -x[1])
-        self._sens_table.setRowCount(len(rows))
-        for row_idx, (pname, sv) in enumerate(rows):
-            self._sens_table.setItem(row_idx, 0, QTableWidgetItem(pname))
-            self._sens_table.setItem(row_idx, 1, QTableWidgetItem(f"{sv:.4f}"))
+        self._fill_sens_table(rows)
+        self._sens_status.setText("OAT: |ΔKPI| / σ per parameter.")
 
     def _update_sobol_sensitivity_table(self) -> None:
         """Populate sensitivity table using Sobol first-order Si indices."""
         from backlight_sim.sim.ensemble import compute_sobol_sensitivity, _active_tolerance_params
         params = _active_tolerance_params(self._project)
-        if not params or not self._sens_all_kpis:
+        if not params:
+            self._sens_table.setRowCount(0)
+            self._sens_status.setText("No active tolerance parameters (all sigmas are 0).")
             return
         k = len(params)
-        n_runs = len(self._sens_all_kpis)
+        all_kpis = self._complete_sens_kpis(self._sens_expected)
+        if all_kpis is None:
+            self._sens_table.setRowCount(0)
+            self._sens_status.setText(
+                "Sobol run incomplete (cancelled or member failures) — the Saltelli "
+                "design needs every run, so indices were not computed."
+            )
+            return
+        n_runs = len(all_kpis)
         # Expected Saltelli layout: N*(k+2) runs
         selected_key = _KPI_LABEL_TO_KEY[self._sens_kpi_combo.currentText()]
-        kpi_col = np.array([kpis.get(selected_key, 0.0) for kpis in self._sens_all_kpis])
+        kpi_col = np.array([kpis.get(selected_key, 0.0) for kpis in all_kpis])
         # N = n_runs / (k+2)
         N = n_runs // (k + 2)
         if N < 1:
@@ -425,10 +510,8 @@ class EnsembleDialog(QDialog):
         si_dict = compute_sobol_sensitivity(kpi_matrix, param_matrix, N, k)
         si_vals = si_dict.get("0", np.zeros(k))
         rows = sorted(zip([p[0] for p in params], si_vals), key=lambda x: -x[1])
-        self._sens_table.setRowCount(len(rows))
-        for row_idx, (pname, sv) in enumerate(rows):
-            self._sens_table.setItem(row_idx, 0, QTableWidgetItem(pname))
-            self._sens_table.setItem(row_idx, 1, QTableWidgetItem(f"{sv:.4f}"))
+        self._fill_sens_table(rows)
+        self._sens_status.setText(f"Sobol first-order Si (N={N}, {n_runs} runs).")
 
     # ------------------------------------------------------------------
     # Worst-case drill-down (Distribution tab)
@@ -437,21 +520,26 @@ class EnsembleDialog(QDialog):
     def _update_worst_case(self, selected_key: str) -> None:
         if not self._dist_all_kpis:
             return
-        worst_idx = int(np.argmin([k.get(selected_key, float("inf"))
-                                   for k in self._dist_all_kpis]))
+        vals = [k.get(selected_key, np.nan) for k in self._dist_all_kpis]
+        if all(np.isnan(v) for v in vals):
+            return
+        # Worst = minimum for higher-is-better KPIs, maximum for lower-is-better.
+        if _KPI_HIGHER_IS_BETTER.get(selected_key, True):
+            worst_idx = int(np.nanargmin(vals))
+        else:
+            worst_idx = int(np.nanargmax(vals))
         if worst_idx < len(self._dist_member_projects):
             self._worst_project = self._dist_member_projects[worst_idx]
-            worst_val = self._dist_all_kpis[worst_idx].get(selected_key, 0.0)
+            self._worst_val = float(vals[worst_idx])
             self._load_worst_btn.setText(
-                f"Load worst case as variant ({selected_key}={worst_val:.4f})"
+                f"Load worst case as variant ({selected_key}={self._worst_val:.4f})"
             )
 
     def _load_worst_case(self) -> None:
-        if self._worst_project is None:
+        if self._worst_project is None or self._worst_val is None:
             return
         selected_key = _KPI_LABEL_TO_KEY[self._dist_kpi_combo.currentText()]
-        worst_val = min(k.get(selected_key, float("inf")) for k in self._dist_all_kpis)
-        name = f"Ensemble worst ({selected_key}={worst_val:.4f})"
+        name = f"Ensemble worst ({selected_key}={self._worst_val:.4f})"
         self.save_variant.emit(name, self._worst_project)
 
     # ------------------------------------------------------------------
@@ -463,19 +551,42 @@ class EnsembleDialog(QDialog):
             QMessageBox.warning(self, "No Active Sources",
                                 "Enable at least one source before running.")
             return False
+        if not self._project.detectors:
+            QMessageBox.warning(self, "No Detectors",
+                                "Add at least one detector — ensemble KPIs are "
+                                "computed on the first detector.")
+            return False
         return True
+
+    def _report_failures(self) -> None:
+        if not self._failures or not self.isVisible():
+            return
+        QMessageBox.warning(
+            self, "Ensemble Members Failed",
+            f"{len(self._failures)} member(s) failed and were skipped:\n"
+            + "\n".join(self._failures[:10]),
+        )
+
+    def _is_running(self) -> bool:
+        return self._thread is not None and self._thread.isRunning()
 
     def _set_running(self, running: bool) -> None:
         self._dist_run_btn.setEnabled(not running)
         self._sens_run_btn.setEnabled(not running)
+        # Lock inputs that define/interpret the running design (WR-03).
+        self._sens_mode_combo.setEnabled(not running)
+        self._dist_n_spin.setEnabled(not running)
+        self._sobol_n_spin.setEnabled(
+            not running and "Sobol" in self._sens_mode_combo.currentText()
+        )
         self._cancel_btn.setEnabled(running)
 
     def _cancel_ensemble(self) -> None:
         if self._thread and self._thread.isRunning():
             self._thread.cancel()
 
-    def closeEvent(self, event) -> None:
-        if self._thread and self._thread.isRunning():
-            self._thread.cancel()
-            self._thread.wait(2000)
-        super().closeEvent(event)
+    def done(self, result: int) -> None:
+        # Close / Esc / window-X all route through done(): always stop the worker.
+        from backlight_sim.gui.thread_utils import stop_thread
+        stop_thread(self._thread)
+        super().done(result)

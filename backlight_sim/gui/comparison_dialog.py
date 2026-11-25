@@ -19,7 +19,9 @@ from backlight_sim.gui.heatmap_panel import _uniformity_in_center, _edge_center_
 
 class _ComparisonThread(QThread):
     """Run two quick simulations off the GUI thread."""
-    finished = Signal(object, object)  # (result_a, result_b) or (error_str, None)
+    # NOTE: must not be named "finished" -- that would shadow QThread.finished,
+    # which thread_utils.stop_thread relies on.
+    comparison_done = Signal(object, object)  # (result_a, result_b) or (error_str, None)
 
     def __init__(self, current: Project, variant: Project):
         super().__init__()
@@ -29,14 +31,29 @@ class _ComparisonThread(QThread):
             p.settings.rays_per_source = 1000
             p.settings.max_bounces = 20
             p.settings.record_ray_paths = 0
+        self._cancelled = False
+        self._tracer: RayTracer | None = None
+
+    def cancel(self):
+        self._cancelled = True
+        tracer = self._tracer
+        if tracer is not None:
+            tracer.cancel()
 
     def run(self):
         try:
-            result_a = RayTracer(self._current).run()
-            result_b = RayTracer(self._variant).run()
-            self.finished.emit(result_a, result_b)
+            results = []
+            for proj in (self._current, self._variant):
+                if self._cancelled:
+                    return
+                self._tracer = RayTracer(proj)
+                results.append(self._tracer.run())
+            if not self._cancelled:
+                self.comparison_done.emit(results[0], results[1])
         except Exception as exc:
-            self.finished.emit(str(exc), None)
+            self.comparison_done.emit(str(exc), None)
+        finally:
+            self._tracer = None
 
 
 def _project_kpis(project: Project, result: SimulationResult) -> dict[str, str]:
@@ -85,6 +102,7 @@ class ComparisonDialog(QDialog):
         self.setMinimumWidth(500)
         self.setMinimumHeight(400)
         self._current = current
+        self._variant = variant
         self._variant_name = variant_name
         self._thread = None
 
@@ -107,7 +125,7 @@ class ComparisonDialog(QDialog):
 
         # Run simulations off the GUI thread
         self._thread = _ComparisonThread(current, variant)
-        self._thread.finished.connect(self._on_finished)
+        self._thread.comparison_done.connect(self._on_finished)
         self._thread.start()
 
     def _on_finished(self, result_a, result_b):
@@ -119,7 +137,7 @@ class ComparisonDialog(QDialog):
             return
 
         kpis_a = _project_kpis(self._current, result_a)
-        kpis_b = _project_kpis(self._current, result_b)  # variant uses same KPI function
+        kpis_b = _project_kpis(self._variant, result_b)
 
         all_keys = list(dict.fromkeys(list(kpis_a.keys()) + list(kpis_b.keys())))
         self._table.setColumnCount(3)
@@ -135,7 +153,8 @@ class ComparisonDialog(QDialog):
         self._status_lbl.setText(
             f"Quick comparison ({self._current.name} vs {self._variant_name})")
 
-    def closeEvent(self, event):
-        if self._thread and self._thread.isRunning():
-            self._thread.wait(3000)
-        super().closeEvent(event)
+    def done(self, result: int):
+        # Close button / Esc / window-X all route through done(): stop the worker.
+        from backlight_sim.gui.thread_utils import stop_thread
+        stop_thread(self._thread)
+        super().done(result)

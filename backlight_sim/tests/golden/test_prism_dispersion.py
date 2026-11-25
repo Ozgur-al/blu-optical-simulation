@@ -73,14 +73,14 @@ def _peak_direction_from_sphere(sph_result) -> np.ndarray:
     n_theta, n_phi = grid.shape
     theta_peak = (peak[0] + 0.5) * np.pi / n_theta
     phi_peak = (peak[1] + 0.5) * 2.0 * np.pi / n_phi
-    # Far-field records ``-direction`` — so the exit direction is the
-    # negation of the unit vector at (theta_peak, phi_peak).
+    # Far-field bins the outgoing ray direction, so the exit direction is
+    # the unit vector at (theta_peak, phi_peak).
     v = np.array([
         np.sin(theta_peak) * np.cos(phi_peak),
         np.sin(theta_peak) * np.sin(phi_peak),
         np.cos(theta_peak),
     ])
-    return -v / np.linalg.norm(v)
+    return v / np.linalg.norm(v)
 
 
 def _total_deviation_deg(

@@ -224,9 +224,48 @@ def project_to_dict(project: Project) -> dict:
     }
 
 
+def _json_default(obj):
+    """Serialise numpy scalars / arrays that slip into project fields."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, (set, frozenset)):
+        return sorted(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def project_to_json(project: Project) -> str:
+    return json.dumps(project_to_dict(project), indent=2, default=_json_default)
+
+
 def save_project(project: Project, path: str | Path):
-    data = project_to_dict(project)
-    Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
+    """Write *project* as JSON atomically (temp file + ``os.replace``).
+
+    Serialisation happens before the target is touched, and the temp file
+    lives in the target directory so a crash mid-write never truncates an
+    existing project file.
+    """
+    import os
+    import tempfile
+
+    text = project_to_json(project)
+    target = Path(path)
+    fd, tmp = tempfile.mkstemp(
+        prefix=target.name + ".", suffix=".tmp", dir=str(target.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # ---------------------------------------------------------------------------

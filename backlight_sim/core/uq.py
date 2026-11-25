@@ -278,9 +278,96 @@ def kpi_batches(
     )
 
 
+# ---------------------------------------------------------------------------
+# Delete-one-batch jackknife (full-grid point estimate + CI)
+# ---------------------------------------------------------------------------
+
+def jackknife_ci(
+    point_estimate: float,
+    loo_values: np.ndarray | list[float],
+    conf_level: float = 0.95,
+) -> CIEstimate:
+    """Return a CI centred on ``point_estimate`` from K leave-one-out values.
+
+    ``loo_values[k]`` is the KPI evaluated with batch ``k`` removed (and the
+    remaining K-1 batches rescaled to full-run size).  The jackknife variance
+    is ``(K-1)/K * sum((theta_k - mean(theta_k))**2)`` and the half-width is
+    ``t_{K-1} * sqrt(var)``.
+
+    ``CIEstimate.std`` is reported as ``sqrt(var * K)`` so the documented
+    relation ``half_width = t * std / sqrt(K)`` still holds.
+    """
+    arr = np.asarray(loo_values, dtype=float).ravel()
+    K = arr.size
+    if K < _MIN_BATCHES:
+        raise ValueError(
+            f"jackknife_ci requires >= {_MIN_BATCHES} values, got {K}"
+        )
+    t = student_t_critical(conf_level, K)
+    var = (K - 1) / K * float(np.sum((arr - arr.mean()) ** 2))
+    se = math.sqrt(max(var, 0.0))
+    return CIEstimate(
+        mean=float(point_estimate),
+        half_width=float(t * se),
+        std=float(se * math.sqrt(K)),
+        n_batches=int(K),
+        conf_level=float(conf_level),
+    )
+
+
+def jackknife_kpi_ci(
+    grid_batches: np.ndarray,
+    kpi_fn: Callable[[np.ndarray], float],
+    full_grid: np.ndarray | None = None,
+    conf_level: float = 0.95,
+) -> CIEstimate:
+    """Full-grid KPI with a delete-one-batch jackknife CI.
+
+    ``grid_batches`` is ``(K, ny, nx)`` raw per-batch accumulations whose sum
+    is the full-run grid.  The point estimate (``CIEstimate.mean``) is
+    ``kpi_fn(full_grid)`` (defaults to ``grid_batches.sum(0)``).  Each
+    leave-one-out grid is ``(total - batch_k) * K / (K - 1)`` so it estimates
+    the same full-run quantity — this keeps scale-dependent KPIs (avg, peak)
+    on the correct scale and avoids the per-batch noise bias of nonlinear
+    KPIs (CV, min/avg, peak/avg) that ``kpi_batches`` + ``batch_mean_ci``
+    suffer from.
+
+    If ``full_grid`` has a different overall scale than ``sum(batches)`` the
+    batches are rescaled to match it.
+    """
+    gb = np.asarray(grid_batches, dtype=float)
+    if gb.ndim < 2:
+        raise ValueError(
+            f"grid_batches must have at least 2 dims, got shape {gb.shape}"
+        )
+    K = gb.shape[0]
+    total = gb.sum(axis=0)
+    if full_grid is None:
+        full = total
+    else:
+        full = np.asarray(full_grid, dtype=float)
+        tsum = float(total.sum())
+        fsum = float(full.sum())
+        if tsum > 0 and fsum > 0 and not math.isclose(tsum, fsum, rel_tol=1e-9):
+            s = fsum / tsum
+            gb = gb * s
+            total = total * s
+    point = float(kpi_fn(full))
+    if K < 2:
+        raise ValueError(f"jackknife_kpi_ci requires >= 2 batches, got {K}")
+    scale = K / (K - 1)
+    loo = np.asarray(
+        [float(kpi_fn((total - gb[k]) * scale)) for k in range(K)],
+        dtype=float,
+    )
+    return jackknife_ci(point, loo, conf_level)
+
+
 __all__ = [
     "CIEstimate",
     "batch_mean_ci",
+    "jackknife_ci",
+    "jackknife_kpi_ci",
     "kpi_batches",
     "per_bin_stderr",
     "student_t_critical",

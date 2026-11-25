@@ -147,14 +147,30 @@ class FarFieldPanel(QWidget):
         self._result = result
         self._refresh_all()
 
+    def clear(self):
+        """Drop the displayed result (e.g. after loading a different project)."""
+        self._sd = None
+        self._result = None
+        self._clear_display()
+
+    def _clear_display(self):
+        for curve in self._curve_items.values():
+            curve.setData([], [])
+        for lbl in self._kpi_labels.values():
+            lbl.setText("—")
+        self._update_buttons()
+
     def _refresh_all(self):
         if self._result is None or self._result.candela_grid is None:
+            self._clear_display()
             return
 
         grid = np.asarray(self._result.candela_grid, dtype=float)
         n_theta, n_phi = grid.shape
         peak = grid.max()
         if peak <= 0:
+            # Empty far-field: do not leave the previous run's curves/KPIs on screen.
+            self._clear_display()
             return
 
         # Normalized grid for plotting (radius = candela / peak)

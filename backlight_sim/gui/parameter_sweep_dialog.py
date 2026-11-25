@@ -106,6 +106,7 @@ def _apply_param(project: Project, key: str, value: float) -> None:
 
 class _SweepThread(QThread):
     step_done    = Signal(int, float, object)   # (step_idx, param_value, SimulationResult)
+    step_failed  = Signal(int, str)             # (step_idx, error message)
     sweep_finished = Signal()
 
     def __init__(self, base_project: Project, param_key: str, values: np.ndarray):
@@ -114,24 +115,38 @@ class _SweepThread(QThread):
         self._key    = param_key
         self._values = values
         self._cancelled = False
+        self._tracer: RayTracer | None = None
 
     def cancel(self):
         self._cancelled = True
+        tracer = self._tracer
+        if tracer is not None:
+            tracer.cancel()   # stop the in-flight trace, not just the next step
 
     def run(self):
-        for i, v in enumerate(self._values):
-            if self._cancelled:
-                break
-            proj = copy.deepcopy(self._base)
-            _apply_param(proj, self._key, float(v))
-            tracer = RayTracer(proj)
-            result = tracer.run()
-            self.step_done.emit(i, float(v), result)
-        self.sweep_finished.emit()
+        try:
+            for i, v in enumerate(self._values):
+                if self._cancelled:
+                    break
+                proj = copy.deepcopy(self._base)
+                _apply_param(proj, self._key, float(v))
+                self._tracer = RayTracer(proj)
+                try:
+                    result = self._tracer.run()
+                except Exception as exc:
+                    self.step_failed.emit(i, f"{type(exc).__name__}: {exc}")
+                    continue
+                if self._cancelled:
+                    break   # partial (cancelled) result -- do not report it
+                self.step_done.emit(i, float(v), result)
+        finally:
+            self._tracer = None
+            self.sweep_finished.emit()   # always re-enable the dialog
 
 
 class _MultiSweepThread(QThread):
     step_done      = Signal(int, float, float, object)  # (idx, val1, val2, result)
+    step_failed    = Signal(int, str)                   # (idx, error message)
     sweep_finished = Signal()
 
     def __init__(self, base_project: Project, key1: str, key2: str,
@@ -142,21 +157,34 @@ class _MultiSweepThread(QThread):
         self._key2 = key2
         self._grid = grid
         self._cancelled = False
+        self._tracer: RayTracer | None = None
 
     def cancel(self):
         self._cancelled = True
+        tracer = self._tracer
+        if tracer is not None:
+            tracer.cancel()
 
     def run(self):
-        for i, (v1, v2) in enumerate(self._grid):
-            if self._cancelled:
-                break
-            proj = copy.deepcopy(self._base)
-            _apply_param(proj, self._key1, float(v1))
-            _apply_param(proj, self._key2, float(v2))
-            tracer = RayTracer(proj)
-            result = tracer.run()
-            self.step_done.emit(i, float(v1), float(v2), result)
-        self.sweep_finished.emit()
+        try:
+            for i, (v1, v2) in enumerate(self._grid):
+                if self._cancelled:
+                    break
+                proj = copy.deepcopy(self._base)
+                _apply_param(proj, self._key1, float(v1))
+                _apply_param(proj, self._key2, float(v2))
+                self._tracer = RayTracer(proj)
+                try:
+                    result = self._tracer.run()
+                except Exception as exc:
+                    self.step_failed.emit(i, f"{type(exc).__name__}: {exc}")
+                    continue
+                if self._cancelled:
+                    break
+                self.step_done.emit(i, float(v1), float(v2), result)
+        finally:
+            self._tracer = None
+            self.sweep_finished.emit()
 
 
 class ParameterSweepDialog(QDialog):
@@ -317,6 +345,7 @@ class ParameterSweepDialog(QDialog):
         # Persistent plot curve + error-bar overlay — updated incrementally.
         self._plot_curve = None
         self._error_bar_item: pg.ErrorBarItem | None = None
+        self._failed_steps: list[str] = []
 
         # ── Close ─────────────────────────────────────────────────────────
         close_row = QHBoxLayout()
@@ -375,6 +404,7 @@ class ParameterSweepDialog(QDialog):
         self._sweep_values.clear()
         self._sweep_values2.clear()
         self._sweep_kpis.clear()
+        self._failed_steps = []
         self._sweep_ci_eff_full.clear()
         self._sweep_ci_u14_full.clear()
         self._sweep_ci_hot_full.clear()
@@ -414,6 +444,7 @@ class ParameterSweepDialog(QDialog):
             self._thread = _MultiSweepThread(
                 copy.deepcopy(self._project), key, key2, grid_values)
             self._thread.step_done.connect(self._on_multi_step_done)
+            self._thread.step_failed.connect(self._on_step_failed)
             self._thread.sweep_finished.connect(self._on_sweep_finished)
             self._thread.start()
             return
@@ -433,6 +464,7 @@ class ParameterSweepDialog(QDialog):
 
         self._thread = _SweepThread(copy.deepcopy(self._project), key, values)
         self._thread.step_done.connect(self._on_step_done)
+        self._thread.step_failed.connect(self._on_step_failed)
         self._thread.sweep_finished.connect(self._on_sweep_finished)
         self._thread.start()
 
@@ -440,6 +472,10 @@ class ParameterSweepDialog(QDialog):
         if self._thread:
             self._thread.cancel()
             self._cancel_btn.setEnabled(False)
+
+    def _on_step_failed(self, idx: int, message: str):
+        self._progress.setValue(idx + 1)
+        self._failed_steps.append(f"step {idx + 1}: {message}")
 
     def _on_step_done(self, idx: int, value: float, result: SimulationResult):
         self._progress.setValue(idx + 1)
@@ -468,8 +504,11 @@ class ParameterSweepDialog(QDialog):
             _fmt_ci(ci_u14, precision=4),
             _fmt_ci(ci_hot, precision=4),
         ]
+        sweep_idx = len(self._sweep_kpis) - 1
         for col, text in enumerate(cells):
-            self._table.setItem(row, col, QTableWidgetItem(text))
+            item = QTableWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, sweep_idx)
+            self._table.setItem(row, col, item)
         self._table.scrollToBottom()
         self._refresh_plot()
 
@@ -545,8 +584,11 @@ class ParameterSweepDialog(QDialog):
             _fmt_ci(ci_u14, precision=4),
             _fmt_ci(ci_hot, precision=4),
         ]
+        sweep_idx = len(self._sweep_kpis) - 1
         for col, text in enumerate(cells):
-            self._table.setItem(row, col, QTableWidgetItem(text))
+            item = QTableWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, sweep_idx)
+            self._table.setItem(row, col, item)
         self._table.scrollToBottom()
         self._refresh_plot()
 
@@ -581,8 +623,12 @@ class ParameterSweepDialog(QDialog):
             return
         gold = QBrush(QColor(255, 215, 0, 80))
         white = QBrush(QColor(255, 255, 255, 0))
+        pareto_set = set(pareto_idx)
         for row in range(self._table.rowCount()):
-            brush = gold if row in pareto_idx else white
+            # Rows may be re-ordered by column sorting: use the stored sweep index.
+            first = self._table.item(row, 0)
+            sweep_idx = first.data(Qt.ItemDataRole.UserRole) if first is not None else None
+            brush = gold if sweep_idx in pareto_set else white
             for col in range(self._table.columnCount()):
                 item = self._table.item(row, col)
                 if item:
@@ -604,12 +650,18 @@ class ParameterSweepDialog(QDialog):
         self._run_btn.setEnabled(True)
         self._cancel_btn.setEnabled(False)
         self._table.setSortingEnabled(True)
+        if self._failed_steps and self.isVisible():
+            QMessageBox.warning(
+                self, "Sweep Steps Failed",
+                f"{len(self._failed_steps)} step(s) failed and were skipped:\n"
+                + "\n".join(self._failed_steps[:10]),
+            )
         # Auto-highlight Pareto if multi-param sweep
         if self._multi_check.isChecked() and self._sweep_kpis:
             self._highlight_pareto()
 
-    def closeEvent(self, event):
-        if self._thread and self._thread.isRunning():
-            self._thread.cancel()
-            self._thread.wait(2000)
-        super().closeEvent(event)
+    def done(self, result: int):
+        # accept()/reject()/Esc/window-X all route through done(): always stop the worker.
+        from backlight_sim.gui.thread_utils import stop_thread
+        stop_thread(self._thread)
+        super().done(result)

@@ -62,7 +62,7 @@ class AddDetectorCommand(ProjectCommand):
         self._refresh()
 
     def undo(self):
-        self._project.detectors = [d for d in self._project.detectors if d.name != self._detector.name]
+        self._project.detectors = [d for d in self._project.detectors if d is not self._detector]
         self._refresh()
 
 
@@ -75,7 +75,7 @@ class DeleteDetectorCommand(ProjectCommand):
         self._index = index
 
     def redo(self):
-        self._project.detectors = [d for d in self._project.detectors if d.name != self._detector.name]
+        self._project.detectors = [d for d in self._project.detectors if d is not self._detector]
         self._refresh()
 
     def undo(self):
@@ -100,7 +100,7 @@ class AddSphereDetectorCommand(ProjectCommand):
 
     def undo(self):
         self._project.sphere_detectors = [
-            d for d in self._project.sphere_detectors if d.name != self._detector.name
+            d for d in self._project.sphere_detectors if d is not self._detector
         ]
         self._refresh()
 
@@ -115,7 +115,7 @@ class DeleteSphereDetectorCommand(ProjectCommand):
 
     def redo(self):
         self._project.sphere_detectors = [
-            d for d in self._project.sphere_detectors if d.name != self._detector.name
+            d for d in self._project.sphere_detectors if d is not self._detector
         ]
         self._refresh()
 
@@ -236,7 +236,7 @@ class AddSolidBodyCommand(ProjectCommand):
 
     def undo(self):
         lst = self._get_list()
-        self._set_list([b for b in lst if b.name != self._body.name])
+        self._set_list([b for b in lst if b is not self._body])
         self._refresh()
 
 
@@ -258,7 +258,7 @@ class DeleteSolidBodyCommand(ProjectCommand):
 
     def redo(self):
         lst = self._get_list()
-        self._set_list([b for b in lst if b.name != self._body.name])
+        self._set_list([b for b in lst if b is not self._body])
         self._refresh()
 
     def undo(self):
@@ -295,3 +295,68 @@ class BatchCommand(QUndoCommand):
     def undo(self):
         for cmd in reversed(self._commands):
             cmd.undo()
+
+
+# ---------------------------------------------------------------------------
+# Rename of dict-keyed entries (materials / optical properties)
+# ---------------------------------------------------------------------------
+
+class RenameKeyedEntryCommand(ProjectCommand):
+    """Rename a material or optical-properties entry and every reference to it.
+
+    ``kind`` is ``"material"`` or ``"optical_properties"``.  Re-keys the project
+    dict (preserving order), sets ``obj.name`` and rewrites all name references
+    (surfaces, solid bodies, per-face overrides, spectral_material_data) so the
+    project stays consistent after save/load.  Undo applies the inverse rename.
+    """
+
+    def __init__(self, project, kind: str, obj, old_name: str, new_name: str, refresh_fn):
+        super().__init__(f"Rename {old_name} \u2192 {new_name}", project, refresh_fn)
+        self._kind = kind
+        self._obj = obj
+        self._old = old_name
+        self._new = new_name
+
+    def redo(self):
+        self._rename(self._old, self._new)
+        self._refresh()
+
+    def undo(self):
+        self._rename(self._new, self._old)
+        self._refresh()
+
+    def _rename(self, a: str, b: str) -> None:
+        p = self._project
+        attr = "materials" if self._kind == "material" else "optical_properties"
+        d = getattr(p, attr)
+        setattr(p, attr, {(b if k == a else k): v for k, v in d.items()})
+        self._obj.name = b
+
+        bodies = (
+            list(getattr(p, "solid_bodies", []))
+            + list(getattr(p, "solid_cylinders", []))
+            + list(getattr(p, "solid_prisms", []))
+        )
+        if self._kind == "material":
+            for s in p.surfaces:
+                if s.material_name == a:
+                    s.material_name = b
+            for body in bodies:
+                if getattr(body, "material_name", None) == a:
+                    body.material_name = b
+        else:
+            for s in p.surfaces:
+                if getattr(s, "optical_properties_name", "") == a:
+                    s.optical_properties_name = b
+            for body in bodies:
+                if getattr(body, "optical_properties_name", "") == a:
+                    body.optical_properties_name = b
+                face_optics = getattr(body, "face_optics", None)
+                if face_optics:
+                    for face_id, name in list(face_optics.items()):
+                        if name == a:
+                            face_optics[face_id] = b
+
+        spec = getattr(p, "spectral_material_data", None)
+        if spec and a in spec and b not in spec:
+            p.spectral_material_data = {(b if k == a else k): v for k, v in spec.items()}

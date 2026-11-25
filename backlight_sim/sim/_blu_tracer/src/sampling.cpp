@@ -2,6 +2,7 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
+#include <utility>
 
 static constexpr double PI = 3.14159265358979323846;
 
@@ -70,13 +71,29 @@ void sample_lambertian(int n, double nx, double ny, double nz,
 
 void sample_angular_distribution(int n,
                                   double dir_x, double dir_y, double dir_z,
-                                  const std::vector<double>& theta_deg,
-                                  const std::vector<double>& intensity,
+                                  const std::vector<double>& theta_deg_in,
+                                  const std::vector<double>& intensity_in,
                                   std::mt19937_64& rng, RayBatch& batch)
 {
-    if (theta_deg.size() < 2 || intensity.size() != theta_deg.size()) {
+    if (theta_deg_in.size() < 2 || intensity_in.size() != theta_deg_in.size()) {
         sample_lambertian(n, dir_x, dir_y, dir_z, rng, batch);
         return;
+    }
+    // Sort (theta, intensity) pairs by theta and clip negative intensities,
+    // matching sampling.py (np.argsort + np.clip). The lower_bound lookup in
+    // interp_deg below requires ascending theta; user-edited profile tables
+    // are not guaranteed to be sorted.
+    std::vector<std::pair<double, double>> pairs(theta_deg_in.size());
+    for (size_t k = 0; k < theta_deg_in.size(); ++k) {
+        pairs[k] = {theta_deg_in[k], std::max(0.0, intensity_in[k])};
+    }
+    std::stable_sort(pairs.begin(), pairs.end(),
+                     [](const std::pair<double, double>& a,
+                        const std::pair<double, double>& b) { return a.first < b.first; });
+    std::vector<double> theta_deg(pairs.size()), intensity(pairs.size());
+    for (size_t k = 0; k < pairs.size(); ++k) {
+        theta_deg[k] = pairs[k].first;
+        intensity[k] = pairs[k].second;
     }
     // Normalize direction
     double nn = std::sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z);
@@ -169,6 +186,26 @@ void reflect_specular(double dx, double dy, double dz,
     rdz = dz - 2.0*dot*nz;
     const double norm = std::sqrt(rdx*rdx + rdy*rdy + rdz*rdz);
     if (norm > 1e-12) { rdx /= norm; rdy /= norm; rdz /= norm; }
+}
+
+void fold_into_hemisphere(double nx, double ny, double nz,
+                          double& dx, double& dy, double& dz)
+{
+    const double dot = dx*nx + dy*ny + dz*nz;
+    if (dot > 0.0) return;
+    const double nn = nx*nx + ny*ny + nz*nz;
+    if (nn < 1e-24) return;
+    // Mirror about the plane with normal n: d' = d - 2(d.n)/(n.n) n  (d'.n = -d.n >= 0)
+    const double k = 2.0*dot/nn;
+    dx -= k*nx;
+    dy -= k*ny;
+    dz -= k*nz;
+    if (dx*nx + dy*ny + dz*nz <= 0.0) {
+        // Exactly tangent: nudge off the surface
+        dx += 1e-9*nx; dy += 1e-9*ny; dz += 1e-9*nz;
+    }
+    const double norm = std::sqrt(dx*dx + dy*dy + dz*dz);
+    if (norm > 1e-12) { dx /= norm; dy /= norm; dz /= norm; }
 }
 
 void scatter_haze_single(double dx, double dy, double dz,

@@ -896,7 +896,11 @@ def test_export_ies_roundtrip():
         profile = load_ies(path)
         assert "theta_deg" in profile
         assert "intensity" in profile
-        assert len(profile["theta_deg"]) == n_theta
+        # LM-63 type C: vertical angles must span 0..180, so the exporter
+        # appends a 180° row to this 0..160 input.
+        assert len(profile["theta_deg"]) == n_theta + 1
+        assert profile["theta_deg"][0] == pytest.approx(0.0)
+        assert profile["theta_deg"][-1] == pytest.approx(180.0)
         # Normalized peak should be 1.0
         assert max(profile["intensity"]) == pytest.approx(1.0)
         # Intensity at theta=0 should be highest (lambertian)
@@ -2323,6 +2327,70 @@ def test_bsdf_transmission_only_with_zero_reflectance():
     assert flux > 100, (
         f"Transmission-only BSDF with reflectance=0.0 should transmit flux, got {flux:.2f}"
     )
+
+
+def test_bsdf_row_albedo_matches_validate_bsdf():
+    """The tracer's absorption uses the same albedo definition validate_bsdf checks."""
+    from backlight_sim.io.bsdf_io import validate_bsdf
+    from backlight_sim.sim.sampling import bsdf_row_albedo
+
+    profile = {
+        "theta_in": [0.0, 30.0],
+        "theta_out": [0.0, 30.0, 60.0, 90.0],
+        "refl_intensity": [[0.2, 0.3, 0.1, 0.0], [0.4, 0.1, 0.1, 0.1]],
+        "trans_intensity": [[0.1, 0.1, 0.0, 0.0], [0.0, 0.2, 0.2, 0.0]],
+    }
+    r, t = bsdf_row_albedo(profile)
+    rad = np.radians(profile["theta_out"])
+    w = np.sin(rad) * np.gradient(rad)
+    expected = (np.asarray(profile["refl_intensity"]) * w).sum(1) + \
+        (np.asarray(profile["trans_intensity"]) * w).sum(1)
+    np.testing.assert_allclose(r + t, expected)
+    assert validate_bsdf(profile)[0]
+    assert np.all(r + t < 1.0)
+
+
+def test_absorbing_bsdf_removes_energy():
+    """An absorbing BSDF (R+T albedo < 1) must remove 1 - albedo of the incident flux.
+
+    Every ray hits the (huge) sheet exactly once and transmits upward, so
+    detector + escaped flux must equal emitted * albedo exactly.
+    """
+    from backlight_sim.core.materials import OpticalProperties
+    from backlight_sim.sim.sampling import bsdf_row_albedo
+
+    row = [0.5, 0.3, 0.1]
+    bsdf_profile = {
+        "theta_in": [0.0, 45.0, 90.0],
+        "theta_out": [0.0, 45.0, 90.0],
+        "refl_intensity": [[0.0, 0.0, 0.0]] * 3,
+        "trans_intensity": [row] * 3,
+    }
+    _, t_alb = bsdf_row_albedo(bsdf_profile)
+    albedo = float(t_alb[0])
+    assert 0.1 < albedo < 0.9
+
+    op = OpticalProperties("abs_bsdf", surface_type="diffuser",
+                           reflectance=0.0, transmittance=1.0,
+                           bsdf_profile_name="abs_bsdf")
+    materials = {"absorber": Material("absorber", surface_type="absorber")}
+    sheet = Rectangle.axis_aligned("sheet", [0, 0, 5], (1e6, 1e6), 2, 1.0, "absorber")
+    sheet.optical_properties_name = "abs_bsdf"
+    src = PointSource("src1", np.array([0.0, 0.0, 0.0]), flux=1000.0,
+                      distribution="lambertian", direction=np.array([0.0, 0.0, 1.0]))
+    detectors = [DetectorSurface.axis_aligned("det", [0, 0, 10], (200, 200), 2, 1.0, (10, 10))]
+    settings = SimulationSettings(rays_per_source=5000, max_bounces=5,
+                                  energy_threshold=1e-9, random_seed=7,
+                                  record_ray_paths=0, uq_batches=0,
+                                  adaptive_sampling=False)
+    proj = Project(name="bsdf_abs", sources=[src], surfaces=[sheet],
+                   materials=materials, optical_properties={"abs_bsdf": op},
+                   detectors=detectors, settings=settings,
+                   bsdf_profiles={"abs_bsdf": bsdf_profile})
+    result = RayTracer(proj).run()
+    out = result.detectors["det"].total_flux + result.escaped_flux
+    assert result.detectors["det"].total_flux > 0
+    assert out == pytest.approx(result.total_emitted_flux * albedo, rel=1e-6)
 
 
 # ------------------------------------------------------------------

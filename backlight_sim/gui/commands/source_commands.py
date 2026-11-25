@@ -18,7 +18,7 @@ class AddSourceCommand(ProjectCommand):
         self._refresh()
 
     def undo(self):
-        self._project.sources = [s for s in self._project.sources if s.name != self._source.name]
+        self._project.sources = [s for s in self._project.sources if s is not self._source]
         self._refresh()
 
 
@@ -31,7 +31,7 @@ class DeleteSourceCommand(ProjectCommand):
         self._index = index
 
     def redo(self):
-        self._project.sources = [s for s in self._project.sources if s.name != self._source.name]
+        self._project.sources = [s for s in self._project.sources if s is not self._source]
         self._refresh()
 
     def undo(self):

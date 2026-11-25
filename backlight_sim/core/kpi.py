@@ -182,22 +182,31 @@ def _per_batch_source_flux(
 def compute_all_kpi_cis(
     result: SimulationResult,
     conf_level: float = 0.95,
+    detector_name: str | None = None,
 ):
     """Return ``dict[str, CIEstimate | None]`` for every scalar KPI.
 
-    Keys covered: ``avg``, ``peak``, ``min``, ``cv``, ``hot``, ``ecr``,
-    ``corner``, ``uni_1_4_min_avg``, ``uni_1_6_min_avg``, ``uni_1_10_min_avg``,
-    ``efficiency_pct``.
+    Keys covered: ``avg``, ``peak``, ``min``, ``cv`` (percent), ``hot``,
+    ``ecr``, ``corner``, ``uni_1_4_min_avg``, ``uni_1_6_min_avg``,
+    ``uni_1_10_min_avg``, ``efficiency_pct``.
+
+    ``detector_name`` selects the detector (default: the first one).
+
+    Each ``CIEstimate.mean`` is the KPI of the *full* detector grid (the same
+    number shown when UQ is off).  The interval is a delete-one-batch
+    jackknife over the K per-batch grids (see
+    :func:`backlight_sim.core.uq.jackknife_kpi_ci`): leave-one-out grids are
+    ``(total - batch_k) * K/(K-1)`` so scale-dependent KPIs stay on the
+    full-run scale and nonlinear KPIs are not biased by per-batch noise.
+
+    Efficiency is ``det.total_flux / total_emitted_flux * 100`` with a
+    jackknife over ``flux_batches`` / per-batch source flux (rays_per_batch
+    aware, checker I5 / threat T-04.03-05).
 
     All values are ``None`` when UQ is off (``n_batches < 4`` or
-    ``grid_batches is None``).  Efficiency uses
-    :func:`_per_batch_source_flux` for unbiased per-batch scaling
-    (checker I5 / threat T-04.03-05).
+    ``grid_batches is None``).
     """
-    # Delayed import avoids a potential circular reference between
-    # ``backlight_sim.core.uq`` and ``backlight_sim.core.kpi`` — core.uq
-    # never imports core.kpi, so this is safe.
-    from backlight_sim.core.uq import batch_mean_ci, kpi_batches
+    from backlight_sim.core.uq import jackknife_ci, jackknife_kpi_ci
 
     keys_default = (
         "avg", "peak", "min", "cv", "hot", "ecr", "corner",
@@ -207,10 +216,16 @@ def compute_all_kpi_cis(
     out: dict = {k: None for k in keys_default}
     if not result.detectors:
         return out
-    det = next(iter(result.detectors.values()))
+    if detector_name is None:
+        det = next(iter(result.detectors.values()))
+    else:
+        det = result.detectors.get(detector_name)
+        if det is None:
+            return out
     gb = det.grid_batches
-    if gb is None or det.n_batches < 4:
+    if gb is None or det.n_batches < 4 or np.asarray(gb).shape[0] < 4:
         return out
+    full = det.grid
 
     def _mean(g: np.ndarray) -> float:
         return float(g.mean())
@@ -229,28 +244,37 @@ def compute_all_kpi_cis(
         m = float(g.mean())
         return float(g.max()) / m if m > 0 else 0.0
 
-    out["avg"] = batch_mean_ci(kpi_batches(gb, _mean), conf_level)
-    out["peak"] = batch_mean_ci(kpi_batches(gb, _max), conf_level)
-    out["min"] = batch_mean_ci(kpi_batches(gb, _min), conf_level)
-    out["cv"] = batch_mean_ci(kpi_batches(gb, _cv), conf_level)
-    out["hot"] = batch_mean_ci(kpi_batches(gb, _hot), conf_level)
-    out["ecr"] = batch_mean_ci(kpi_batches(gb, edge_center_ratio), conf_level)
-    out["corner"] = batch_mean_ci(kpi_batches(gb, corner_ratio), conf_level)
+    def _ci(fn):
+        return jackknife_kpi_ci(gb, fn, full_grid=full, conf_level=conf_level)
+
+    out["avg"] = _ci(_mean)
+    out["peak"] = _ci(_max)
+    out["min"] = _ci(_min)
+    out["cv"] = _ci(_cv)
+    out["hot"] = _ci(_hot)
+    out["ecr"] = _ci(edge_center_ratio)
+    out["corner"] = _ci(corner_ratio)
 
     for label, frac in (("1_4", 0.25), ("1_6", 1.0 / 6.0), ("1_10", 0.1)):
         # Pin `frac` into the lambda default so each iteration binds its own value.
-        vals = kpi_batches(gb, lambda g, f=frac: uniformity_in_center(g, f)[0])
-        out[f"uni_{label}_min_avg"] = batch_mean_ci(vals, conf_level)
+        out[f"uni_{label}_min_avg"] = _ci(
+            lambda g, f=frac: uniformity_in_center(g, f)[0]
+        )
 
     per_batch_src = _per_batch_source_flux(result, det)
     if per_batch_src is not None and det.flux_batches is not None:
-        with np.errstate(divide="ignore", invalid="ignore"):
-            eff_batches = np.where(
-                per_batch_src > 0,
-                np.asarray(det.flux_batches, dtype=float) / per_batch_src * 100.0,
-                0.0,
+        fb = np.asarray(det.flux_batches, dtype=float)
+        if fb.shape == per_batch_src.shape and fb.size >= 4:
+            F, S = float(fb.sum()), float(per_batch_src.sum())
+            loo = []
+            for k in range(fb.size):
+                denom = S - per_batch_src[k]
+                loo.append((F - fb[k]) / denom * 100.0 if denom > 0 else 0.0)
+            point = (
+                float(det.total_flux) / result.total_emitted_flux * 100.0
+                if result.total_emitted_flux > 0 else 0.0
             )
-        out["efficiency_pct"] = batch_mean_ci(eff_batches, conf_level)
+            out["efficiency_pct"] = jackknife_ci(point, loo, conf_level)
 
     return out
 

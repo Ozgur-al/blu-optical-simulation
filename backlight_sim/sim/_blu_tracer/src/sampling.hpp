@@ -36,6 +36,11 @@ void reflect_specular(double dx, double dy, double dz,
                       double nx, double ny, double nz,
                       double& rdx, double& rdy, double& rdz);
 
+// If d points into the surface (d . n <= 0), mirror it about the surface plane
+// so it lies in the hemisphere of the (unit, oriented) normal n. In-place.
+void fold_into_hemisphere(double nx, double ny, double nz,
+                          double& dx, double& dy, double& dz);
+
 // Haze scatter: perturb direction within a cone (half_angle_deg)
 void scatter_haze_single(double dx, double dy, double dz,
                           double half_angle_deg,

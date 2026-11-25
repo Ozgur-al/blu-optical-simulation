@@ -232,3 +232,30 @@ Use each `Session ID` like a lightweight commit message reference.
 ### Validation
 - `py_compile` passed for all changed modules
 - `pytest backlight_sim/tests -q` -> `8 passed`
+
+---
+
+## Session ID: S2026-11-25-01
+**Title:** Phase 5 CR-02 fix + whole-codebase bug sweep
+**Status:** Completed (C++ changes uncompiled — rebuild required)
+
+### What was done
+- **Ensemble:** OAT/Sobol prescribed-offset mode no longer randomly jitters non-overridden cavity params (CR-02 leak). CR-01/CR-03 were already fixed.
+- **Tracer UQ batching:** adaptive early-stop needs >=4 batches and rescales; `total_emitted_flux` summed across chunks; per-chunk scaling via `thermal_derate` (works for current-driven LEDs); far-field candela and RGB grids accumulated across chunks.
+- **Tracer physics/consistency:** detectors terminate rays (Python now matches C++); far-field bins outgoing direction (was mirrored); relative `energy_threshold` (weight < threshold x initial per-ray weight); residual weight at max_bounces -> escaped; Python MP worker replaced by `_run_single` on a one-source project (spectral n(lambda)/R/T, BSDF, UQ, RGB now work in MP); nearest-centre spectral binning; per-normal diffuse reflection; haze folded into the correct hemisphere; BSDF surfaces absorb 1 - (R+T) albedo.
+- **C++ (uncompiled):** relative energy threshold, diffuser honours `is_diffuse` + haze, isotropic fallback for unknown profiles, sorted angular CDF, haze hemisphere fold, zero-size detector guard.
+- **Spectral:** Robertson CCT rewritten (was reversed: 6500 K read as 1611 K).
+- **Core/IO:** KPI CIs use a delete-one-batch jackknife with mean = full-grid KPI; per-detector CIs in report/CSV; CV in percent everywhere; EULUMDAT parser rewritten to spec; IES TILT=INCLUDE + weighted C-plane averaging; LM-63-compliant IES export; tilted-cavity corner gaps closed; 1x1 LED grid; peak-relative far-field beam angles; atomic project save; pre-release version tags; HTML escaping; update notification marshalled to the GUI thread.
+- **GUI:** worker exceptions no longer leave Run disabled; material/optical-property rename re-keys + updates references (undoable), duplicate names rejected; dialogs cancel workers on any close path; app close waits for threads; sim runs on a project copy; project loads blocked mid-run; geometry builder applies only on OK; per-detector CI display; Pareto highlight survives sorting; stale result views cleared on project swap; ensemble WR-02/03/04/05 fixed.
+
+### Files touched
+- `backlight_sim/sim/{tracer,ensemble,sampling,spectral}.py`, `backlight_sim/sim/_blu_tracer/src/*`
+- `backlight_sim/core/{kpi,uq}.py`, `backlight_sim/io/*`, `backlight_sim/golden/{builders,cases}.py`
+- `backlight_sim/gui/*` (+ new `thread_utils.py`), `app.py`, `backlight_sim/update_checker.py`
+- Tests: new `test_tracer_regressions.py`, `test_core_io_fixes.py`, `test_spectral_cct.py`, `test_sampling_fixes.py`, `test_cpp_fixes.py`; updated golden far-field tests, `test_ensemble.py`, `test_tracer.py`
+
+### Validation
+- Python path (C++ stubbed): `pytest backlight_sim/tests` -> 321 passed; 15 failures are all tests requiring the compiled `blu_tracer` extension (not buildable here — no MSVC toolchain).
+- `python -m backlight_sim.golden --report` -> 13/13 cases pass.
+- GUI: offscreen smoke script 21/21.
+- Result values shift vs. older runs (no detector double-counting, residual -> escaped, more bounces traced).

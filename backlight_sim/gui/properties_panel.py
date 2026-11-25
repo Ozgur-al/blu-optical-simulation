@@ -87,6 +87,31 @@ def _push_or_apply_changes(obj, changes, push_cmd_fn, begin_macro_fn,
         changed_signal.emit()
 
 
+def _revert_name_edit(form, obj) -> None:
+    """Put the object's current name back into the form's name field."""
+    blocker = QSignalBlocker(form._name)
+    form._name.setText(obj.name)
+    del blocker
+
+
+def _checked_name(form, obj) -> str | None:
+    """Return the name to apply, rejecting duplicates via the panel's validator.
+
+    Returns None for an empty field.  When the new name is rejected the field
+    is reverted and the object's current name is returned (other edits still
+    apply).
+    """
+    name = form._name.text().strip()
+    if not name:
+        return None
+    if name != obj.name:
+        validator = getattr(form, '_name_validator', None)
+        if validator is not None and not validator(obj, name):
+            _revert_name_edit(form, obj)
+            return obj.name
+    return name
+
+
 _AXIS_MAP = {
     (0, 1.0): (np.array([0, 1, 0], float), np.array([0, 0, 1], float)),
     (0, -1.0): (np.array([0, 1, 0], float), np.array([0, 0, -1], float)),
@@ -260,6 +285,17 @@ class PropertiesPanel(QStackedWidget):
             form._end_macro = end_macro_fn
             form._undo_stack = undo_stack
             form._undo_refresh = refresh_fn
+
+    def set_name_handlers(self, validator, rename_handler):
+        """Install duplicate-name validator and keyed-rename handler on all forms.
+
+        validator(obj, new_name) -> bool; rename_handler(kind, obj, new_name) -> bool.
+        """
+        for i in range(self.count()):
+            form = self.widget(i)
+            if hasattr(form, '_name'):
+                form._name_validator = validator
+                form._rename_handler = rename_handler
 
     def clear_selection(self):
         self._finalize_active_editor()
@@ -513,7 +549,7 @@ class SourceForm(QWidget):
     def _apply(self):
         if self._src is None or self._loading:
             return
-        name = self._name.text().strip()
+        name = _checked_name(self, self._src)
         if not name:
             return
         changes = [
@@ -690,7 +726,7 @@ class SurfaceForm(QWidget):
     def _apply(self):
         if self._surf is None or self._loading:
             return
-        name = self._name.text().strip()
+        name = _checked_name(self, self._surf)
         if not name:
             return
         key = self._FACE_KEYS[self._face.currentIndex()]
@@ -880,9 +916,15 @@ class MaterialForm(QWidget):
     def _apply(self):
         if self._mat is None or self._loading:
             return
-        name = self._name.text().strip()
+        name = _checked_name(self, self._mat)
         if not name:
             return
+        if name != self._mat.name:
+            # Keyed rename: re-key the project dict + all references (undoable).
+            handler = getattr(self, '_rename_handler', None)
+            if handler is None or not handler("material", self._mat, name):
+                _revert_name_edit(self, self._mat)
+            name = self._mat.name
         changes = [
             ('name', name),
             ('surface_type', self._type.currentText()),
@@ -1191,9 +1233,15 @@ class OpticalPropertiesForm(QWidget):
     def _apply(self):
         if self._op is None or self._loading:
             return
-        name = self._name.text().strip()
+        name = _checked_name(self, self._op)
         if not name:
             return
+        if name != self._op.name:
+            # Keyed rename: re-key the project dict + all references (undoable).
+            handler = getattr(self, '_rename_handler', None)
+            if handler is None or not handler("optical_properties", self._op, name):
+                _revert_name_edit(self, self._op)
+            name = self._op.name
         bsdf_text = self._bsdf_combo.currentText()
         changes = [
             ('name', name),
@@ -1353,7 +1401,7 @@ class DetectorForm(QWidget):
     def _apply(self):
         if self._det is None or self._loading:
             return
-        name = self._name.text().strip()
+        name = _checked_name(self, self._det)
         if not name:
             return
         key = self._FACE_KEYS[self._face.currentIndex()]
@@ -1447,7 +1495,7 @@ class SphereDetectorForm(QWidget):
     def _apply(self):
         if self._det is None or self._loading:
             return
-        name = self._name.text().strip()
+        name = _checked_name(self, self._det)
         if not name:
             return
         changes = [
@@ -2181,7 +2229,7 @@ class SolidBoxForm(QWidget):
     def _apply(self):
         if self._box is None or self._loading:
             return
-        name = self._name.text().strip()
+        name = _checked_name(self, self._box)
         if not name:
             return
         changes = [
@@ -2369,7 +2417,7 @@ class SolidCylinderForm(QWidget):
     def _apply(self):
         if self._cyl is None or self._loading:
             return
-        name = self._name.text().strip()
+        name = _checked_name(self, self._cyl)
         if not name:
             return
         axis = np.array([self._ax.value(), self._ay.value(), self._az.value()])
@@ -2509,7 +2557,7 @@ class SolidPrismForm(QWidget):
     def _apply(self):
         if self._prism is None or self._loading:
             return
-        name = self._name.text().strip()
+        name = _checked_name(self, self._prism)
         if not name:
             return
         axis = np.array([self._ax.value(), self._ay.value(), self._az.value()])

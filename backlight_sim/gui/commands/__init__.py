@@ -30,6 +30,7 @@ from backlight_sim.gui.commands.scene_commands import (
     AddSolidBodyCommand,
     DeleteSolidBodyCommand,
     BatchCommand,
+    RenameKeyedEntryCommand,
 )
 
 __all__ = [
@@ -52,4 +53,5 @@ __all__ = [
     "AddSolidBodyCommand",
     "DeleteSolidBodyCommand",
     "BatchCommand",
+    "RenameKeyedEntryCommand",
 ]

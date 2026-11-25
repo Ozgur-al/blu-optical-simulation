@@ -76,6 +76,9 @@ void apply_material(
             if (mat.haze > 0.0) {
                 double sx, sy, sz;
                 scatter_haze_single(rdx, rdy, rdz, mat.haze, rng, sx, sy, sz);
+                // Near grazing incidence the haze cone can dip below the
+                // surface; keep the scattered ray on the reflection side.
+                fold_into_hemisphere(on_x, on_y, on_z, sx, sy, sz);
                 rdx = sx; rdy = sy; rdz = sz;
             }
         }
@@ -100,10 +103,23 @@ void apply_material(
             batch.oz[i] = hit_z + through_z*geom_eps;
             batch.dx[i] = tdx; batch.dy[i] = tdy; batch.dz[i] = tdz;
         } else {
-            // Reflect: Lambertian with weight * reflectance
+            // Reflect with weight * reflectance. Honors is_diffuse like
+            // tracer.py (_reflect_batch(..., mat.is_diffuse)): Lambertian when
+            // diffuse, otherwise specular (+ haze cone, kept on the reflect side).
             batch.weights[i] *= mat.reflectance;
             double rdx, rdy, rdz;
-            sample_lambertian_single(on_x, on_y, on_z, rng, rdx, rdy, rdz);
+            if (mat.is_diffuse) {
+                sample_lambertian_single(on_x, on_y, on_z, rng, rdx, rdy, rdz);
+            } else {
+                reflect_specular(batch.dx[i], batch.dy[i], batch.dz[i],
+                                 on_x, on_y, on_z, rdx, rdy, rdz);
+                if (mat.haze > 0.0) {
+                    double sx, sy, sz;
+                    scatter_haze_single(rdx, rdy, rdz, mat.haze, rng, sx, sy, sz);
+                    fold_into_hemisphere(on_x, on_y, on_z, sx, sy, sz);
+                    rdx = sx; rdy = sy; rdz = sz;
+                }
+            }
             batch.ox[i] = hit_x + on_x*geom_eps;
             batch.oy[i] = hit_y + on_y*geom_eps;
             batch.oz[i] = hit_z + on_z*geom_eps;

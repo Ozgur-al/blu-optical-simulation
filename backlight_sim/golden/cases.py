@@ -154,14 +154,13 @@ def _measure_specular_farfield(project: Project, result) -> GoldenResult:
     n_theta, n_phi = grid.shape
     theta_peak = (peak[0] + 0.5) * np.pi / n_theta
     phi_peak = (peak[1] + 0.5) * 2.0 * np.pi / n_phi
-    # Expected reflected direction (measured as -ray_direction in far-field
-    # convention). For a straight-down ray at incidence theta=30° on a
-    # mirror tilted by 30° about +X, the reflected ray travels at
-    # (0, sin(60°), cos(60°)); its far-field-recorded direction is the
-    # negation of that, giving theta_exp = 180° - 60° = 120°, phi_exp = 270°.
+    # Expected reflected direction (far-field bins the outgoing ray direction).
+    # For a straight-down ray at incidence theta=30° on a mirror tilted by 30°
+    # about +X, the reflected ray travels at (0, sin(60°), cos(60°)), giving
+    # theta_exp = 60°, phi_exp = 90°.
     theta_deg = 30.0
-    theta_exp = float(np.pi - 2.0 * np.radians(theta_deg))
-    phi_exp = float(1.5 * np.pi)
+    theta_exp = float(2.0 * np.radians(theta_deg))
+    phi_exp = float(0.5 * np.pi)
     # Angular separation on the unit sphere.
     def _xyz(th, ph):
         return np.array([
@@ -369,7 +368,7 @@ def _peak_direction_from_sphere(sph_result) -> np.ndarray:
         np.sin(theta_peak) * np.sin(phi_peak),
         np.cos(theta_peak),
     ])
-    return -v / np.linalg.norm(v)
+    return v / np.linalg.norm(v)
 
 
 def _measure_prism(project, result) -> GoldenResult:

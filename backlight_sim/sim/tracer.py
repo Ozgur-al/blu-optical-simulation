@@ -26,6 +26,7 @@ from backlight_sim.sim.sampling import (
     scatter_haze,
     sample_bsdf,
     precompute_bsdf_cdfs,
+    nearest_theta_in_bin,
 )
 from backlight_sim.sim import blu_tracer as _blu_tracer
 from backlight_sim.sim.spectral import (
@@ -89,6 +90,79 @@ def _partition_rays(rays_total: int, K: int) -> list[int]:
     base = int(rays_total) // K
     rem = int(rays_total) - base * K
     return [base + (1 if k < rem else 0) for k in range(K)]
+
+
+# Minimum number of batches before adaptive convergence may stop tracing.
+# With fewer batches the sample variance is too unreliable (2 batches gives a
+# single difference -> zero variance -> instant "convergence").
+_MIN_CONVERGENCE_BATCHES = 4
+
+
+def _batch_mean_ci_pct(values) -> float:
+    """95% CI half-width of the mean of ``values``, as % of that mean.
+
+    Uses the unbiased sample std (ddof=1). Returns 100.0 for < 2 values.
+    """
+    arr = np.asarray(values, dtype=float)
+    if arr.size < 2:
+        return 100.0
+    mean = float(arr.mean())
+    std = float(arr.std(ddof=1))
+    ci = 1.96 * std / np.sqrt(arr.size)
+    return float(ci / max(abs(mean), 1e-12) * 100.0)
+
+
+def _snapshot_accumulators(det_results, sph_results, sb_stats, escaped_flux):
+    """Copy every flux accumulator so a later contribution can be rescaled."""
+    return {
+        "det": {
+            name: (
+                dr.grid.copy(),
+                dr.grid_rgb.copy() if dr.grid_rgb is not None else None,
+                dr.grid_spectral.copy() if dr.grid_spectral is not None else None,
+                float(dr.total_flux),
+            )
+            for name, dr in det_results.items()
+        },
+        "sph": {
+            name: (sr.grid.copy(), float(sr.total_flux))
+            for name, sr in sph_results.items()
+        },
+        "sb": {
+            bn: {fid: dict(fs) for fid, fs in faces.items()}
+            for bn, faces in sb_stats.items()
+        },
+        "escaped": float(escaped_flux),
+    }
+
+
+def _rescale_since_snapshot(snap, det_results, sph_results, sb_stats,
+                            escaped_flux, factor):
+    """Scale everything accumulated since ``snap`` by ``factor`` (in place).
+
+    Hit counts are left untouched (they count rays, not flux). Returns the
+    rescaled escaped flux.
+    """
+    for name, dr in det_results.items():
+        g0, rgb0, spec0, f0 = snap["det"][name]
+        dr.grid = g0 + (dr.grid - g0) * factor
+        if dr.grid_rgb is not None and rgb0 is not None:
+            dr.grid_rgb = rgb0 + (dr.grid_rgb - rgb0) * factor
+        if dr.grid_spectral is not None and spec0 is not None:
+            dr.grid_spectral = spec0 + (dr.grid_spectral - spec0) * factor
+        dr.total_flux = f0 + (dr.total_flux - f0) * factor
+    for name, sr in sph_results.items():
+        g0, f0 = snap["sph"][name]
+        sr.grid = g0 + (sr.grid - g0) * factor
+        sr.total_flux = f0 + (sr.total_flux - f0) * factor
+    for bn, faces in sb_stats.items():
+        for fid, fs in faces.items():
+            base = snap["sb"].get(bn, {}).get(fid, {})
+            for key in ("entering_flux", "exiting_flux"):
+                b = float(base.get(key, 0.0))
+                fs[key] = b + (fs[key] - b) * factor
+    e0 = snap["escaped"]
+    return e0 + (escaped_flux - e0) * factor
 
 
 def _replace_settings(settings, **overrides):
@@ -488,6 +562,24 @@ def _cpp_trace_single_source(project, source_name: str, base_seed: int) -> dict:
     K = _effective_uq_batches(settings)
     project_dict = _serialize_project(project)
 
+    # Per-source flux tolerance (LED bin variation): the C++ extension does not
+    # jitter, so apply one deterministic draw per source here — same semantics
+    # as the single-thread path (one multiplier per source per run).
+    src_obj = next(
+        (s for s in project.sources if s.name == source_name and s.enabled), None
+    )
+    if src_obj is not None and src_obj.flux_tolerance > 0:
+        tol = src_obj.flux_tolerance / 100.0
+        tol_seed = int(
+            hashlib.md5(f"{base_seed}_{source_name}_flux_tolerance".encode()).hexdigest()[:16],
+            16,
+        )
+        tol_mult = 1.0 + np.random.default_rng(tol_seed).uniform(-tol, tol)
+        for src_item in project_dict["sources"]:
+            if src_item["name"] == source_name:
+                src_item["effective_flux"] = float(src_item["effective_flux"]) * tol_mult
+                break
+
     if K == 0:
         # Legacy fast path — single call, no UQ bookkeeping.
         seed_hash = int(
@@ -679,6 +771,8 @@ class RayTracer:
         detectors = self.project.detectors
         sphere_dets = self.project.sphere_detectors
 
+        has_color = any(tuple(s.color_rgb) != (1.0, 1.0, 1.0) for s in sources)
+
         det_results: dict[str, DetectorResult] = {}
         for det in detectors:
             grid = np.zeros((det.resolution[1], det.resolution[0]), dtype=float)
@@ -686,8 +780,13 @@ class RayTracer:
                 np.zeros((det.resolution[1], det.resolution[0], n_spec_bins), dtype=float)
                 if has_spectral and n_spec_bins > 0 else None
             )
+            grid_rgb = (
+                np.zeros((det.resolution[1], det.resolution[0], 3), dtype=float)
+                if has_color else None
+            )
             det_results[det.name] = DetectorResult(
-                detector_name=det.name, grid=grid, grid_spectral=grid_spectral
+                detector_name=det.name, grid=grid, grid_rgb=grid_rgb,
+                grid_spectral=grid_spectral,
             )
 
         # Initialize merged sphere detector results
@@ -774,6 +873,10 @@ class RayTracer:
                 for det_name, sg in result.get("spectral_grids", {}).items():
                     if det_name in det_results and det_results[det_name].grid_spectral is not None:
                         det_results[det_name].grid_spectral += sg
+                # Merge RGB grids (colored sources; Python worker only)
+                for det_name, rg in (result.get("rgb_grids") or {}).items():
+                    if det_name in det_results and det_results[det_name].grid_rgb is not None:
+                        det_results[det_name].grid_rgb += rg
                 # Merge sphere detector grids
                 for sph_name, sph_data in result.get("sph_grids", {}).items():
                     if sph_name in sph_results:
@@ -846,6 +949,7 @@ class RayTracer:
                             grid=dr.grid.copy(),
                             total_hits=dr.total_hits,
                             total_flux=dr.total_flux,
+                            grid_rgb=dr.grid_rgb.copy() if dr.grid_rgb is not None else None,
                             grid_spectral=dr.grid_spectral.copy() if dr.grid_spectral is not None else None,
                         )
                     partial_result_callback(SimulationResult(
@@ -908,7 +1012,9 @@ class RayTracer:
 
     def _run_single(self, sources, progress_callback, convergence_callback=None,
                     _adaptive=None, partial_result_callback=None,
-                    _uq_in_chunk: bool = False):
+                    _uq_in_chunk: bool = False,
+                    _has_color: bool | None = None,
+                    _has_spectral: bool | None = None):
         """Single-thread trace path.
 
         Phase 4 UQ integration (Wave 2)
@@ -933,6 +1039,8 @@ class RayTracer:
                 sources, progress_callback, convergence_callback,
                 _adaptive=_adaptive,
                 partial_result_callback=partial_result_callback,
+                _has_color=_has_color,
+                _has_spectral=_has_spectral,
             )
         # _adaptive defaults to settings.adaptive_sampling unless overridden by caller
         if _adaptive is None:
@@ -945,10 +1053,18 @@ class RayTracer:
         n_record = settings.record_ray_paths
 
         # Check if any source has color (non-white)
-        has_color = any(s.color_rgb != (1.0, 1.0, 1.0) for s in sources)
+        # (_has_color / _has_spectral let MP workers tracing ONE source allocate
+        # the same RGB / spectral grids as the whole-project single-thread run.)
+        has_color = (
+            _has_color if _has_color is not None
+            else any(tuple(s.color_rgb) != (1.0, 1.0, 1.0) for s in sources)
+        )
 
         # Check if any source has non-white SPD
-        has_spectral = any(s.spd != "white" for s in sources)
+        has_spectral = (
+            _has_spectral if _has_spectral is not None
+            else any(s.spd != "white" for s in sources)
+        )
         n_spec_bins = N_SPECTRAL_BINS if has_spectral else 0
         spec_centers = spectral_bin_centers(n_spec_bins) if has_spectral else None
 
@@ -1259,10 +1375,18 @@ class RayTracer:
             check_interval = max(1, settings.check_interval) if _adaptive else n_total
             n_rays_traced = 0
             paths_recorded = False  # path recording happens only in first batch
-            # Per-batch mean flux accumulator for convergence estimation
-            # Snapshot cumulative flux BEFORE this source so we track per-source delta
-            _flux_before_source = sum(dr.total_flux for dr in det_results.values())
-            batch_fluxes: list[float] = []
+            # Per-batch flux (per ray) for convergence estimation. Track the
+            # cumulative detector flux so each batch's own contribution can be
+            # recovered as a delta.
+            _flux_prev = sum(dr.total_flux for dr in det_results.values())
+            batch_fluxes: list[float] = []  # per-ray detector flux of each batch
+            # Snapshot of accumulators before this source, used to rescale the
+            # source's contribution if adaptive sampling stops early.
+            _snapshot = (
+                _snapshot_accumulators(det_results, sph_results, sb_stats, escaped_flux)
+                if _adaptive else None
+            )
+            _stopped_early = False
 
             while n_rays_traced < n_total and not self._cancelled:
                 n = min(check_interval, n_total - n_rays_traced)  # batch size
@@ -1288,6 +1412,7 @@ class RayTracer:
 
                 origins = np.tile(source.position, (n, 1)).copy()
                 weights = np.full(n, eff_flux / n_total)
+                kill_weight = settings.energy_threshold * (eff_flux / n_total)
                 alive = np.ones(n, dtype=bool)
                 # Per-ray refractive index tracking (starts in air, n=1.0)
                 current_n = np.ones(n, dtype=float)
@@ -1433,7 +1558,10 @@ class RayTracer:
                         escaped_flux += float(weights[active_idx[missed]].sum())
                     alive[active_idx[missed]] = False
 
-                    # Detector hits — pass-through: accumulate flux then continue
+                    # Detector hits — accumulate flux, then the ray terminates
+                    # (same semantics as the C++ extension; a pass-through
+                    # detector double-counts rays that cross it twice and
+                    # also books them as escaped).
                     for di, det in enumerate(detectors):
                         mask = (best_type == 1) & (best_obj == di)
                         if not mask.any():
@@ -1448,10 +1576,9 @@ class RayTracer:
                             for local_i, global_i in enumerate(hit_idx):
                                 if global_i < n_rec_active:
                                     active_paths[global_i].append(hit_pts[local_i].copy())
-                        # Advance ray past the detector plane
-                        origins[hit_idx] = hit_pts + directions[hit_idx] * _EPSILON
+                        alive[hit_idx] = False
 
-                    # Sphere detector hits — pass-through: accumulate flux then continue
+                    # Sphere detector hits — accumulate flux, then the ray terminates
                     for sdi, sd in enumerate(sphere_dets):
                         mask = (best_type == 2) & (best_obj == sdi)
                         if not mask.any():
@@ -1467,8 +1594,7 @@ class RayTracer:
                             for local_i, global_i in enumerate(hit_idx):
                                 if global_i < n_rec_active:
                                     active_paths[global_i].append(hit_pts[local_i].copy())
-                        # Advance ray past the sphere surface
-                        origins[hit_idx] = hit_pts + directions[hit_idx] * _EPSILON
+                        alive[hit_idx] = False
 
                     # SolidBox face hits — Fresnel/TIR physics
                     for sfi, sface in enumerate(solid_faces):
@@ -1514,7 +1640,8 @@ class RayTracer:
                                     new_dirs = _reflect_batch(directions[hit_idx], _on,
                                                               face_op.is_diffuse, self.rng)
                                     if face_op.haze > 0 and not face_op.is_diffuse:
-                                        new_dirs = scatter_haze(new_dirs, face_op.haze, self.rng)
+                                        new_dirs = scatter_haze(new_dirs, face_op.haze, self.rng,
+                                                                surface_normals=_on)
                                     origins[hit_idx] = hit_pts + _on * geom_eps
                                     directions[hit_idx] = new_dirs
                                     continue
@@ -1539,6 +1666,9 @@ class RayTracer:
                                         refl_on_fo = _on[reflects_fo]
                                         new_d_fo = _reflect_batch(directions[ri_fo], refl_on_fo,
                                                                    face_op.is_diffuse, self.rng)
+                                        if face_op.haze > 0 and not face_op.is_diffuse:
+                                            new_d_fo = scatter_haze(new_d_fo, face_op.haze, self.rng,
+                                                                    surface_normals=refl_on_fo)
                                         origins[ri_fo] = hit_pts[reflects_fo] + refl_on_fo * geom_eps
                                         directions[ri_fo] = new_d_fo
                                     continue
@@ -1674,7 +1804,8 @@ class RayTracer:
                                     new_dirs = _reflect_batch(directions[hit_idx], on_back,
                                                               _fo.is_diffuse, self.rng)
                                     if _fo.haze > 0 and not _fo.is_diffuse:
-                                        new_dirs = scatter_haze(new_dirs, _fo.haze, self.rng)
+                                        new_dirs = scatter_haze(new_dirs, _fo.haze, self.rng,
+                                                                surface_normals=on_back)
                                     origins[hit_idx] = hit_pts + on_back * geom_eps
                                     directions[hit_idx] = new_dirs
                                     continue
@@ -1698,6 +1829,9 @@ class RayTracer:
                                         _refl_on = on_back[_reflects]
                                         _new_d_r = _reflect_batch(directions[_ri], _refl_on,
                                                                    _fo.is_diffuse, self.rng)
+                                        if _fo.haze > 0 and not _fo.is_diffuse:
+                                            _new_d_r = scatter_haze(_new_d_r, _fo.haze, self.rng,
+                                                                    surface_normals=_refl_on)
                                         origins[_ri] = hit_pts[_reflects] + _refl_on * geom_eps
                                         directions[_ri] = _new_d_r
                                     continue
@@ -1785,7 +1919,8 @@ class RayTracer:
                                     new_dirs = _reflect_batch(directions[hit_idx], on_back,
                                                               _fo.is_diffuse, self.rng)
                                     if _fo.haze > 0 and not _fo.is_diffuse:
-                                        new_dirs = scatter_haze(new_dirs, _fo.haze, self.rng)
+                                        new_dirs = scatter_haze(new_dirs, _fo.haze, self.rng,
+                                                                surface_normals=on_back)
                                     origins[hit_idx] = hit_pts + on_back * geom_eps
                                     directions[hit_idx] = new_dirs
                                     continue
@@ -1809,6 +1944,9 @@ class RayTracer:
                                         _refl_on = on_back[_reflects]
                                         _new_d_r = _reflect_batch(directions[_ri], _refl_on,
                                                                    _fo.is_diffuse, self.rng)
+                                        if _fo.haze > 0 and not _fo.is_diffuse:
+                                            _new_d_r = scatter_haze(_new_d_r, _fo.haze, self.rng,
+                                                                    surface_normals=_refl_on)
                                         origins[_ri] = hit_pts[_reflects] + _refl_on * geom_eps
                                         directions[_ri] = _new_d_r
                                     continue
@@ -1871,10 +2009,15 @@ class RayTracer:
                             bsdf_cdf_cache=bsdf_cdf_cache,
                         )
 
-                    alive[weights < settings.energy_threshold] = False
+                    # Relative energy threshold (matches C++): a ray dies once
+                    # its weight drops below energy_threshold * initial weight.
+                    alive[weights < kill_weight] = False
 
-                # end bounce loop
-                pass
+                # end bounce loop — rays still alive after max_bounces never
+                # terminated; book their residual weight as escaped (matches C++).
+                if not self._cancelled and alive.any():
+                    escaped_flux += float(weights[alive].sum())
+                    alive[:] = False
 
                 # ---- Post-batch: path collection, convergence check ----
                 if batch_n_rec > 0 and not paths_recorded:
@@ -1883,22 +2026,25 @@ class RayTracer:
                     paths_recorded = True
 
                 n_rays_traced += n
-                # Track per-source flux delta (not cumulative across sources)
-                batch_fluxes.append(sum(dr.total_flux for dr in det_results.values()) - _flux_before_source)
+                # This batch's own detector flux (delta of the cumulative total),
+                # normalised per ray so a short final batch is comparable.
+                _flux_now = sum(dr.total_flux for dr in det_results.values())
+                batch_fluxes.append((_flux_now - _flux_prev) / max(n, 1))
+                _flux_prev = _flux_now
 
-                # Convergence check (requires >= 2 batches and adaptive mode)
+                # Convergence check: 95% CI half-width of the mean per-batch
+                # flux, relative to that mean. Early exit needs a minimum
+                # number of batches so the variance estimate is meaningful.
                 if _adaptive:
                     if len(batch_fluxes) >= 2:
-                        mean_f = float(sum(batch_fluxes) / len(batch_fluxes))
-                        var_f = max(0.0, sum((f - mean_f) ** 2 for f in batch_fluxes) / len(batch_fluxes))
-                        std_f = float(var_f ** 0.5)
-                        n_b = len(batch_fluxes)
-                        ci = 1.96 * std_f / max(float(n_b ** 0.5), 1e-12)
-                        cv_pct = ci / max(abs(mean_f), 1e-12) * 100.0
+                        cv_pct = _batch_mean_ci_pct(batch_fluxes)
                         if convergence_callback is not None:
                             convergence_callback(src_idx, n_rays_traced, cv_pct)
-                        if cv_pct <= settings.convergence_cv_target:
+                        if (len(batch_fluxes) >= _MIN_CONVERGENCE_BATCHES
+                                and n_rays_traced < n_total
+                                and cv_pct <= settings.convergence_cv_target):
                             # Converged — stop early
+                            _stopped_early = True
                             break
                     else:
                         # First batch only — report 100% CV (not yet converged)
@@ -1908,8 +2054,14 @@ class RayTracer:
 
                 # end while (adaptive batch loop)
 
-                # n is the last batch_size; use n_total for progress
-                n = n_total  # restore for progress tracking
+            # Early adaptive stop: each ray carried eff_flux / n_total, but only
+            # n_rays_traced rays were emitted. Rescale this source's
+            # contribution so it represents the full source flux.
+            if _stopped_early and 0 < n_rays_traced < n_total:
+                escaped_flux = _rescale_since_snapshot(
+                    _snapshot, det_results, sph_results, sb_stats,
+                    escaped_flux, n_total / n_rays_traced,
+                )
 
             # Collect paths for this source
             if record:
@@ -1959,6 +2111,7 @@ class RayTracer:
     def _run_uq_batched(
         self, sources, progress_callback, convergence_callback=None,
         _adaptive=None, partial_result_callback=None,
+        _has_color=None, _has_spectral=None,
     ) -> SimulationResult:
         """Execute the single-thread trace K times with per-batch seeded RNG.
 
@@ -1969,12 +2122,16 @@ class RayTracer:
         the detector grids / hits / flux / spectral grids are accumulated and
         stacked onto the final :class:`DetectorResult`.
 
+        Flux bookkeeping: each chunk emits ``effective_flux * rays_k / rays_total``
+        per source, applied via ``thermal_derate`` (a pure multiplier of
+        ``effective_flux``; scaling ``flux`` would be ignored for
+        current-driven LEDs).  ``total_emitted_flux`` is summed over chunks.
+
         Adaptive sampling convergence is evaluated only at chunk boundaries
-        (CONTEXT D-01 / W1): each inner ``_run_single`` call runs to
-        completion for its chunk (``_adaptive=False``) and the predicate is
-        tested between chunks.  If the predicate reports "converged" at
-        ``k'<K``, the outer loop short-circuits and ``n_batches=k'`` is
-        reported on the result.
+        (CONTEXT D-01 / W1) on the per-ray detector flux of each chunk, and
+        may stop the loop only after ``_MIN_CONVERGENCE_BATCHES`` chunks.  On
+        an early stop every flux quantity is rescaled by
+        ``rays_total / rays_traced`` so it represents the full source flux.
         """
         original_settings = self.project.settings
         K_requested = _effective_uq_batches(original_settings)
@@ -2000,16 +2157,9 @@ class RayTracer:
         rays_per_batch_list: list[int] = []
 
         cum_result: SimulationResult | None = None
-        last_grid_totals: dict[str, np.ndarray] = {}
-        last_grid_spectral_totals: dict[str, np.ndarray | None] = {}
-        last_hits_totals: dict[str, int] = {}
-        last_flux_totals: dict[str, float] = {}
-        last_sph_grid_totals: dict[str, np.ndarray] = {}
-        last_sph_hits_totals: dict[str, int] = {}
-        last_sph_flux_totals: dict[str, float] = {}
-
-        n_batches_effective = 0
-        batch_total_fluxes: list[float] = []
+        emitted_sum = 0.0
+        batch_flux_per_ray: list[float] = []
+        stopped_early = False
 
         for k in range(K_requested):
             if self._cancelled:
@@ -2018,7 +2168,6 @@ class RayTracer:
             if rays_this_batch <= 0:
                 continue
 
-            chunk_settings_backup = self.project.settings
             patched = _replace_settings(
                 original_settings,
                 rays_per_source=rays_this_batch,
@@ -2029,29 +2178,29 @@ class RayTracer:
             self.project.settings = patched
             self.rng = np.random.default_rng(patched.random_seed)
 
-            # Scale each source's `flux` by (rays_this_batch / rays_total) so
-            # that per-ray weight (= eff_flux / rays_per_source) accumulates
-            # to the correct per-source total across all K chunks.
-            # Weight-per-ray in chunk = (flux * scale) / rays_this_batch;
-            #   chunk sum                 = flux * scale;
-            #   sum over K chunks         = flux * (sum scale) = flux.
+            # Each chunk emits effective_flux * rays_this_batch / rays_total so
+            # the K chunks sum to effective_flux. thermal_derate multiplies
+            # effective_flux in every mode (flux- or current-driven).
             scale = rays_this_batch / max(rays_total, 1)
-            original_fluxes = [src.flux for src in sources]
+            original_derates = [src.thermal_derate for src in sources]
             for src in sources:
-                src.flux = src.flux * scale
+                src.thermal_derate = src.thermal_derate * scale
 
             try:
                 chunk_result = self._run_single(
-                    sources, progress_callback, convergence_callback,
+                    sources, progress_callback, None,
                     _adaptive=False,
                     partial_result_callback=None,
                     _uq_in_chunk=True,
+                    _has_color=_has_color,
+                    _has_spectral=_has_spectral,
                 )
             finally:
-                self.project.settings = chunk_settings_backup
-                # Restore original source flux values
-                for src, orig in zip(sources, original_fluxes):
-                    src.flux = orig
+                self.project.settings = original_settings
+                for src, orig in zip(sources, original_derates):
+                    src.thermal_derate = orig
+
+            emitted_sum += float(chunk_result.total_emitted_flux)
 
             if cum_result is None:
                 cum_result = SimulationResult(
@@ -2072,15 +2221,11 @@ class RayTracer:
                             grid=sr.grid.copy(),
                             total_hits=sr.total_hits,
                             total_flux=sr.total_flux,
-                            candela_grid=(
-                                sr.candela_grid.copy()
-                                if sr.candela_grid is not None else None
-                            ),
                         )
                         for name, sr in chunk_result.sphere_detectors.items()
                     },
                     ray_paths=list(chunk_result.ray_paths),
-                    total_emitted_flux=chunk_result.total_emitted_flux,
+                    total_emitted_flux=0.0,  # set after the loop
                     escaped_flux=chunk_result.escaped_flux,
                     source_count=chunk_result.source_count,
                     solid_body_stats={
@@ -2088,54 +2233,28 @@ class RayTracer:
                         for bn, face_map in chunk_result.solid_body_stats.items()
                     },
                 )
-                for name, dr in chunk_result.detectors.items():
-                    per_batch_grids.setdefault(name, []).append(dr.grid.copy())
-                    per_batch_hits.setdefault(name, []).append(int(dr.total_hits))
-                    per_batch_flux.setdefault(name, []).append(float(dr.total_flux))
-                    if include_spectral and dr.grid_spectral is not None:
-                        per_batch_spectral.setdefault(name, []).append(dr.grid_spectral.copy())
-                    last_grid_totals[name] = dr.grid.copy()
-                    last_grid_spectral_totals[name] = (
-                        dr.grid_spectral.copy() if dr.grid_spectral is not None else None
-                    )
-                    last_hits_totals[name] = int(dr.total_hits)
-                    last_flux_totals[name] = float(dr.total_flux)
-                for name, sr in chunk_result.sphere_detectors.items():
-                    per_batch_sph_grids.setdefault(name, []).append(sr.grid.copy())
-                    per_batch_sph_hits.setdefault(name, []).append(int(sr.total_hits))
-                    per_batch_sph_flux.setdefault(name, []).append(float(sr.total_flux))
-                    last_sph_grid_totals[name] = sr.grid.copy()
-                    last_sph_hits_totals[name] = int(sr.total_hits)
-                    last_sph_flux_totals[name] = float(sr.total_flux)
             else:
-                # chunk_result holds only THIS chunk's contribution (not cumulative).
-                # Per-batch = chunk_result directly; cum_result is the running sum.
                 for name, dr in chunk_result.detectors.items():
                     cur = cum_result.detectors[name]
-                    per_batch_grids[name].append(dr.grid.copy())
-                    per_batch_hits[name].append(int(dr.total_hits))
-                    per_batch_flux[name].append(float(dr.total_flux))
-                    if include_spectral and dr.grid_spectral is not None:
-                        per_batch_spectral.setdefault(name, []).append(dr.grid_spectral.copy())
                     cur.grid = cur.grid + dr.grid
                     cur.total_hits = int(cur.total_hits) + int(dr.total_hits)
                     cur.total_flux = float(cur.total_flux) + float(dr.total_flux)
+                    if dr.grid_rgb is not None:
+                        cur.grid_rgb = (
+                            cur.grid_rgb + dr.grid_rgb if cur.grid_rgb is not None
+                            else dr.grid_rgb.copy()
+                        )
                     if dr.grid_spectral is not None:
-                        if cur.grid_spectral is not None:
-                            cur.grid_spectral = cur.grid_spectral + dr.grid_spectral
-                        else:
-                            cur.grid_spectral = dr.grid_spectral.copy()
+                        cur.grid_spectral = (
+                            cur.grid_spectral + dr.grid_spectral
+                            if cur.grid_spectral is not None
+                            else dr.grid_spectral.copy()
+                        )
                 for name, sr in chunk_result.sphere_detectors.items():
                     cur_s = cum_result.sphere_detectors[name]
-                    per_batch_sph_grids[name].append(sr.grid.copy())
-                    per_batch_sph_hits[name].append(int(sr.total_hits))
-                    per_batch_sph_flux[name].append(float(sr.total_flux))
                     cur_s.grid = cur_s.grid + sr.grid
                     cur_s.total_hits = int(cur_s.total_hits) + int(sr.total_hits)
                     cur_s.total_flux = float(cur_s.total_flux) + float(sr.total_flux)
-                    if sr.candela_grid is not None:
-                        # candela is computed on grid totals, not summed; take latest chunk's
-                        cur_s.candela_grid = sr.candela_grid.copy()
                 cum_result.escaped_flux = cum_result.escaped_flux + chunk_result.escaped_flux
                 for bn, face_map in chunk_result.solid_body_stats.items():
                     dst = cum_result.solid_body_stats.setdefault(bn, {})
@@ -2147,29 +2266,25 @@ class RayTracer:
                         cur_f["exiting_flux"] += float(fstats.get("exiting_flux", 0.0))
                 cum_result.source_count = chunk_result.source_count
 
+            # Per-batch snapshots (chunk_result holds only THIS chunk)
+            for name, dr in chunk_result.detectors.items():
+                per_batch_grids.setdefault(name, []).append(dr.grid.copy())
+                per_batch_hits.setdefault(name, []).append(int(dr.total_hits))
+                per_batch_flux.setdefault(name, []).append(float(dr.total_flux))
+                if include_spectral and dr.grid_spectral is not None:
+                    per_batch_spectral.setdefault(name, []).append(dr.grid_spectral.copy())
+            for name, sr in chunk_result.sphere_detectors.items():
+                per_batch_sph_grids.setdefault(name, []).append(sr.grid.copy())
+                per_batch_sph_hits.setdefault(name, []).append(int(sr.total_hits))
+                per_batch_sph_flux.setdefault(name, []).append(float(sr.total_flux))
+
             rays_per_batch_list.append(rays_this_batch)
-            n_batches_effective += 1
 
-            # Chunk-boundary: notify convergence_callback and evaluate adaptive
-            total_flux_now = sum(dr.total_flux for dr in cum_result.detectors.values())
-            batch_total_fluxes.append(total_flux_now)
-
-            # Compute cv_pct for both callback and early-exit check
-            if len(batch_total_fluxes) >= 2:
-                diffs = [
-                    batch_total_fluxes[i] - batch_total_fluxes[i - 1]
-                    for i in range(1, len(batch_total_fluxes))
-                ]
-                mean_diff = sum(diffs) / len(diffs) if diffs else 0.0
-                var_diff = (
-                    sum((d - mean_diff) ** 2 for d in diffs) / len(diffs)
-                    if diffs else 0.0
-                )
-                std_diff = float(var_diff ** 0.5)
-                ci = 1.96 * std_diff / max(float(len(diffs) ** 0.5), 1e-12)
-                cv_pct = ci / max(abs(mean_diff), 1e-12) * 100.0
-            else:
-                cv_pct = 100.0
+            # Chunk-boundary convergence: CI of the mean per-ray detector flux
+            # across the chunks traced so far.
+            chunk_flux = sum(dr.total_flux for dr in chunk_result.detectors.values())
+            batch_flux_per_ray.append(chunk_flux / rays_this_batch)
+            cv_pct = _batch_mean_ci_pct(batch_flux_per_ray)
 
             if convergence_callback is not None and uq_adaptive_enabled:
                 # Only emit convergence callbacks when adaptive mode is enabled,
@@ -2179,42 +2294,75 @@ class RayTracer:
 
             if (
                 uq_adaptive_enabled
-                and len(batch_total_fluxes) >= 2
+                and len(batch_flux_per_ray) >= _MIN_CONVERGENCE_BATCHES
                 and cv_pct <= original_settings.convergence_cv_target
                 and (k + 1) < K_requested
             ):
+                stopped_early = True
                 break
 
         if cum_result is None:
             return SimulationResult(total_emitted_flux=0.0, source_count=len(sources))
 
+        n_batches_effective = len(rays_per_batch_list)
+        rays_traced = sum(rays_per_batch_list)
+        factor = 1.0
+        if stopped_early and 0 < rays_traced < rays_total:
+            # Each chunk carried rays_k / rays_total of the source flux but only
+            # rays_traced of rays_total rays were emitted. Rescale so totals and
+            # per-batch values represent the full source flux (kpi.py derives
+            # per-batch source flux as total_emitted * rpb_k / sum(rpb)).
+            factor = rays_total / rays_traced
+            for dr in cum_result.detectors.values():
+                dr.grid = dr.grid * factor
+                dr.total_flux = float(dr.total_flux) * factor
+                if dr.grid_rgb is not None:
+                    dr.grid_rgb = dr.grid_rgb * factor
+                if dr.grid_spectral is not None:
+                    dr.grid_spectral = dr.grid_spectral * factor
+            for sr in cum_result.sphere_detectors.values():
+                sr.grid = sr.grid * factor
+                sr.total_flux = float(sr.total_flux) * factor
+            cum_result.escaped_flux = float(cum_result.escaped_flux) * factor
+            for face_map in cum_result.solid_body_stats.values():
+                for fstats in face_map.values():
+                    fstats["entering_flux"] = float(fstats["entering_flux"]) * factor
+                    fstats["exiting_flux"] = float(fstats["exiting_flux"]) * factor
+        cum_result.total_emitted_flux = emitted_sum * factor
+
         for name, dr in cum_result.detectors.items():
             grids = per_batch_grids.get(name, [])
             if grids:
-                dr.grid_batches = np.stack(grids, axis=0)
+                dr.grid_batches = np.stack(grids, axis=0) * factor
                 dr.hits_batches = np.asarray(per_batch_hits[name], dtype=int)
-                dr.flux_batches = np.asarray(per_batch_flux[name], dtype=float)
+                dr.flux_batches = np.asarray(per_batch_flux[name], dtype=float) * factor
                 dr.rays_per_batch = list(rays_per_batch_list)
                 dr.n_batches = int(dr.grid_batches.shape[0])
                 specs = per_batch_spectral.get(name, [])
                 if include_spectral and specs:
-                    dr.grid_spectral_batches = np.stack(specs, axis=0)
+                    dr.grid_spectral_batches = np.stack(specs, axis=0) * factor
                 else:
                     dr.grid_spectral_batches = None
         for name, sr in cum_result.sphere_detectors.items():
             sph_grids = per_batch_sph_grids.get(name, [])
             if sph_grids:
                 # Sphere UQ: attach via attributes (Wave 3 UI picks them up).
-                setattr(sr, "grid_batches", np.stack(sph_grids, axis=0))
+                setattr(sr, "grid_batches", np.stack(sph_grids, axis=0) * factor)
                 setattr(sr, "hits_batches", np.asarray(per_batch_sph_hits[name], dtype=int))
-                setattr(sr, "flux_batches", np.asarray(per_batch_sph_flux[name], dtype=float))
+                setattr(sr, "flux_batches", np.asarray(per_batch_sph_flux[name], dtype=float) * factor)
                 setattr(sr, "rays_per_batch", list(rays_per_batch_list))
                 setattr(sr, "n_batches", int(len(sph_grids)))
+
+        # Far-field candela must come from the CUMULATIVE grid (each chunk's
+        # candela_grid only reflects that chunk's share of the flux).
+        for sd in self.project.sphere_detectors:
+            if sd.mode == "far_field" and sd.name in cum_result.sphere_detectors:
+                compute_farfield_candela(sd, cum_result.sphere_detectors[sd.name])
 
         if 0 < n_batches_effective < 4:
             cum_result.uq_warnings.append(
                 f"UQ CI undefined: only {n_batches_effective} batches completed "
-                "before adaptive convergence; need >=4 for Student-t. Skip CI "
+                "before the run stopped; need >=4 for Student-t. Skip CI "
                 "computation for affected detectors."
             )
 
@@ -2306,10 +2454,9 @@ class RayTracer:
                 trans_total = cdfs["trans_total"]  # (M,)
                 cos_i = np.clip(np.einsum("ij,ij->i", -directions[hit_idx], on), 0.0, 1.0)
                 theta_i_deg = np.degrees(np.arccos(cos_i))
-                bin_idx = np.clip(
-                    np.searchsorted(theta_in_vals, theta_i_deg, side="right") - 1,
-                    0, len(theta_in_vals) - 1
-                )
+                # Same nearest-row rule sample_bsdf uses, so the R/T split and
+                # the sampled lobe come from the same theta_in row.
+                bin_idx = nearest_theta_in_bin(theta_in_vals, theta_i_deg)
                 r_total_per_ray = refl_total[bin_idx]
                 t_total_per_ray = trans_total[bin_idx]
                 rt_sum = r_total_per_ray + t_total_per_ray
@@ -2319,6 +2466,11 @@ class RayTracer:
                 p_refl = np.where(rt_sum > 0, r_total_per_ray / np.maximum(rt_sum, 1e-12), 1.0)
                 reflects_bsdf = roll < p_refl
                 transmits_bsdf = ~reflects_bsdf
+                # The R/T roll only picks the lobe; the surface still absorbs
+                # 1 - (R + T) of the incident energy (same albedo definition as
+                # io.bsdf_io.validate_bsdf). Apply it as a weight multiplier.
+                albedo = cdfs["refl_albedo"][bin_idx] + cdfs["trans_albedo"][bin_idx]
+                weights[hit_idx] *= albedo
                 if reflects_bsdf.any():
                     ri = hit_idx[reflects_bsdf]
                     inc = directions[ri]
@@ -2362,7 +2514,8 @@ class RayTracer:
                     weights[hit_idx] *= mat.reflectance
                 new_dirs = _reflect_batch(directions[hit_idx], on, mat.is_diffuse, self.rng)
                 if mat.haze > 0 and not mat.is_diffuse:
-                    new_dirs = scatter_haze(new_dirs, mat.haze, self.rng)
+                    new_dirs = scatter_haze(new_dirs, mat.haze, self.rng,
+                                            surface_normals=on)
                 origins[hit_idx] = hit_pts + on * _EPSILON
                 directions[hit_idx] = new_dirs
 
@@ -2395,868 +2548,111 @@ class RayTracer:
                         weights[ri] *= mat.reflectance
                     refl_on = on[reflects]
                     new_dirs = _reflect_batch(directions[ri], refl_on, mat.is_diffuse, self.rng)
+                    if mat.haze > 0 and not mat.is_diffuse:
+                        new_dirs = scatter_haze(new_dirs, mat.haze, self.rng,
+                                                surface_normals=refl_on)
                     origins[ri] = hit_pts[reflects] + refl_on * _EPSILON
                     directions[ri] = new_dirs
 
 
 def _trace_single_source(project, source_name, base_seed):
-    """Top-level function for multiprocessing: trace one source.
+    """Top-level function for multiprocessing: trace one source (Python path).
 
-    Returns a dict with detector grid data, escaped flux, and solid_body_stats.
+    Runs the single-thread engine (:meth:`RayTracer._run_single`) on a
+    one-source view of the project so the MP path has exactly the same
+    physics as the single-thread path (spectral n(lambda) / spectral R/T,
+    BSDF, face optics, detector termination, relative energy threshold,
+    RGB + spectral grids, UQ batching) instead of a hand-maintained copy of
+    the bounce loop.
+
+    The per-source seed is ``md5(f"{base_seed}_{source_name}")``; with UQ on,
+    each chunk is then seeded from that per-source seed, so sources stay
+    statistically independent across workers.
+
+    Returns a dict with detector grid data, escaped flux, solid_body_stats,
+    optional RGB / spectral grids and (when ``uq_batches > 0``) the per-batch
+    payload consumed by ``_run_multiprocess``.
     """
-    import hashlib
-    # Derive a unique seed per source
-    seed_hash = int(hashlib.md5(f"{base_seed}_{source_name}".encode()).hexdigest()[:8], 16)
-    rng = np.random.default_rng(seed_hash)
+    import copy
 
-    source = next(s for s in project.sources if s.name == source_name and s.enabled)
-    settings = project.settings
-    surfaces = project.surfaces
-    detectors = project.detectors
-    sphere_dets = project.sphere_detectors
-    materials = project.materials
-    distributions = project.angular_distributions
+    enabled = [s for s in project.sources if s.enabled]
+    source = next(s for s in enabled if s.name == source_name)
+    has_color = any(tuple(s.color_rgb) != (1.0, 1.0, 1.0) for s in enabled)
+    has_spectral = any(s.spd != "white" for s in enabled)
 
-    det_grids = {}
-    for det in detectors:
-        det_grids[det.name] = {
-            "grid": np.zeros((det.resolution[1], det.resolution[0]), dtype=float),
-            "hits": 0,
-            "flux": 0.0,
-        }
+    seed_hash = int(
+        hashlib.md5(f"{base_seed}_{source_name}".encode()).hexdigest()[:8], 16
+    ) & 0x7FFFFFFF
 
-    # Initialize sphere detector grids for this source
-    sph_grids: dict[str, dict] = {}
-    for sd in sphere_dets:
-        n_phi, n_theta = sd.resolution
-        sph_grids[sd.name] = {
-            "grid": np.zeros((n_theta, n_phi), dtype=float),
-            "hits": 0,
-            "flux": 0.0,
-        }
+    proj = copy.copy(project)
+    proj.settings = _replace_settings(
+        project.settings,
+        random_seed=seed_hash,
+        record_ray_paths=0,
+        adaptive_sampling=False,
+    )
+    tracer = RayTracer(proj)
+    res = tracer._run_single(
+        [source], None, None,
+        _adaptive=False,
+        partial_result_callback=None,
+        _has_color=has_color,
+        _has_spectral=has_spectral,
+    )
 
-    # Expand SolidBox objects into face Rectangles
-    solid_faces = []
-    solid_face_map = {}  # face_rect_name -> (box, face_id, box_n, geom_eps)
-    for box in project.solid_bodies:
-        mat = materials.get(box.material_name)
-        box_n = mat.refractive_index if mat is not None else 1.0
-        geom_eps = max(_EPSILON, min(box.dimensions) * 1e-4)
-        for face in box.get_faces():
-            solid_faces.append(face)
-            face_id = face.name.split("::", 1)[1]
-            solid_face_map[face.name] = (box, face_id, box_n, geom_eps)
-
-    # Initialize solid_body_stats accumulator
-    sb_stats = {}
-    for box in project.solid_bodies:
-        sb_stats[box.name] = {
-            fid: {"entering_flux": 0.0, "exiting_flux": 0.0}
-            for fid in FACE_NAMES
-        }
-
-    # Expand SolidCylinder objects into face-like objects and build lookup
-    cyl_faces = []
-    cyl_face_map = {}
-    for cyl in getattr(project, "solid_cylinders", []):
-        mat = materials.get(cyl.material_name)
-        cyl_n = mat.refractive_index if mat is not None else 1.0
-        geom_eps = max(_EPSILON, min(cyl.radius, cyl.length / 2.0) * 1e-4)
-        for face in cyl.get_faces():
-            cyl_faces.append(face)
-            face_id = face.name.split("::", 1)[1]
-            cyl_face_map[face.name] = (cyl, face_id, cyl_n, geom_eps)
-        sb_stats[cyl.name] = {
-            fid: {"entering_flux": 0.0, "exiting_flux": 0.0}
-            for fid in ("top_cap", "bottom_cap", "side")
-        }
-
-    # Expand SolidPrism objects into face-like objects and build lookup
-    prism_faces = []
-    prism_face_map = {}
-    for prism in getattr(project, "solid_prisms", []):
-        mat = materials.get(prism.material_name)
-        prism_n = mat.refractive_index if mat is not None else 1.0
-        geom_eps = max(_EPSILON, min(prism.circumscribed_radius, prism.length / 2.0) * 1e-4)
-        for face in prism.get_faces():
-            prism_faces.append(face)
-            face_id = face.name.split("::", 1)[1]
-            prism_face_map[face.name] = (prism, face_id, prism_n, geom_eps)
-        all_face_ids = ["cap_top", "cap_bottom"] + [f"side_{i}" for i in range(prism.n_sides)]
-        sb_stats[prism.name] = {
-            fid: {"entering_flux": 0.0, "exiting_flux": 0.0}
-            for fid in all_face_ids
-        }
-
-    n = settings.rays_per_source
-    eff_flux = source.effective_flux
-    if source.flux_tolerance > 0:
-        tol = source.flux_tolerance / 100.0
-        eff_flux *= (1.0 + rng.uniform(-tol, tol))
-
-    # Emit rays
-    if source.distribution == "lambertian":
-        directions = sample_lambertian(n, source.direction, rng)
-    elif source.distribution == "isotropic":
-        directions = sample_isotropic(n, rng)
-    else:
-        profile = distributions.get(source.distribution)
-        if profile and "theta_deg" in profile and "intensity" in profile:
-            directions = sample_angular_distribution(
-                n, source.direction,
-                np.asarray(profile["theta_deg"], dtype=float),
-                np.asarray(profile["intensity"], dtype=float),
-                rng,
-            )
-        else:
-            directions = sample_isotropic(n, rng)
-
-    origins = np.tile(source.position, (n, 1)).copy()
-    weights = np.full(n, eff_flux / n)
-    alive = np.ones(n, dtype=bool)
-    current_n = np.ones(n, dtype=float)
-    n_stack = np.ones((n, _N_STACK_MAX), dtype=float)
-    n_depth = np.zeros(n, dtype=int)
-    escaped_flux = 0.0
-
-    # Sample wavelengths per ray if this source has a non-white SPD (spectral mode)
-    has_spectral_mp = source.spd != "white"
-    n_spec_bins_mp = N_SPECTRAL_BINS if has_spectral_mp else 0
-    if has_spectral_mp:
-        wavelengths_mp = sample_wavelengths(
-            n, source.spd, rng,
-            spd_profiles=getattr(project, "spd_profiles", None) or None,
-        )
-    else:
-        wavelengths_mp = None
-
-    # Add spectral_grid slot to each detector grid dict (None when not spectral)
-    for det in detectors:
-        det_grids[det.name]["spectral_grid"] = (
-            np.zeros((det.resolution[1], det.resolution[0], n_spec_bins_mp), dtype=float)
-            if has_spectral_mp else None
-        )
-
-    # Pre-compute BSDF CDFs for all profiles in the project
-    bsdf_cdf_cache_mp: dict[str, dict] = {}
-    for bsdf_nm, bsdf_prof in (getattr(project, "bsdf_profiles", {}) or {}).items():
-        bsdf_cdf_cache_mp[bsdf_nm] = precompute_bsdf_cdfs(bsdf_prof)
-
-    # BVH setup for MP path
-    # BVH activation threshold: total geometry (planes + cyl + prism faces) >= _BVH_THRESHOLD
-    n_all_planes_mp = len(surfaces) + len(solid_faces)
-    n_total_geom_mp = n_all_planes_mp + len(cyl_faces) + len(prism_faces)
-    use_bvh_mp = n_total_geom_mp >= _BVH_THRESHOLD
-    bvh_bounds_mp = bvh_meta_mp = bvh_n_nodes_mp = None
-    bvh_normals_mp = bvh_centers_mp = bvh_u_mp = bvh_v_mp = bvh_hw_mp = bvh_hh_mp = None
-    n_surf_planes_mp = len(surfaces)
-    cyl_aabbs_mp: np.ndarray | None = None
-    prism_aabbs_mp: np.ndarray | None = None
-
-    if use_bvh_mp and n_all_planes_mp > 0:
-        all_plane_normals_mp = np.empty((n_all_planes_mp, 3), dtype=np.float64)
-        all_plane_centers_mp = np.empty((n_all_planes_mp, 3), dtype=np.float64)
-        all_plane_u_mp       = np.empty((n_all_planes_mp, 3), dtype=np.float64)
-        all_plane_v_mp       = np.empty((n_all_planes_mp, 3), dtype=np.float64)
-        all_plane_hw_mp      = np.empty(n_all_planes_mp, dtype=np.float64)
-        all_plane_hh_mp      = np.empty(n_all_planes_mp, dtype=np.float64)
-        for i, surf in enumerate(surfaces):
-            all_plane_normals_mp[i] = surf.normal
-            all_plane_centers_mp[i] = surf.center
-            all_plane_u_mp[i]       = surf.u_axis
-            all_plane_v_mp[i]       = surf.v_axis
-            all_plane_hw_mp[i]      = surf.size[0] / 2.0
-            all_plane_hh_mp[i]      = surf.size[1] / 2.0
-        for i, sface in enumerate(solid_faces):
-            j = n_surf_planes_mp + i
-            all_plane_normals_mp[j] = sface.normal
-            all_plane_centers_mp[j] = sface.center
-            all_plane_u_mp[j]       = sface.u_axis
-            all_plane_v_mp[j]       = sface.v_axis
-            all_plane_hw_mp[j]      = sface.size[0] / 2.0
-            all_plane_hh_mp[j]      = sface.size[1] / 2.0
-        aabbs_mp = compute_surface_aabbs(
-            all_plane_normals_mp, all_plane_centers_mp,
-            all_plane_u_mp, all_plane_v_mp, all_plane_hw_mp, all_plane_hh_mp,
-        )
-        bvh_bounds_mp, bvh_meta_mp, bvh_n_nodes_mp = build_bvh_flat(aabbs_mp)
-        bvh_normals_mp = all_plane_normals_mp
-        bvh_centers_mp = all_plane_centers_mp
-        bvh_u_mp       = all_plane_u_mp
-        bvh_v_mp       = all_plane_v_mp
-        bvh_hw_mp      = all_plane_hw_mp
-        bvh_hh_mp      = all_plane_hh_mp
-
-    # Pre-compute conservative AABBs for cylinder/prism faces (MP path broad-phase)
-    if use_bvh_mp and cyl_faces:
-        cyl_aabb_list_mp = []
-        for cface in cyl_faces:
-            c = np.asarray(cface.center, dtype=np.float64)
-            if isinstance(cface, CylinderCap):
-                r = float(cface.radius)
-                cyl_aabb_list_mp.append([c[0]-r, c[0]+r, c[1]-r, c[1]+r, c[2]-r, c[2]+r])
-            else:
-                r = float(cface.radius)
-                hl = float(cface.length) / 2.0
-                extent = r + hl
-                cyl_aabb_list_mp.append([c[0]-extent, c[0]+extent,
-                                         c[1]-extent, c[1]+extent,
-                                         c[2]-extent, c[2]+extent])
-        cyl_aabbs_mp = np.array(cyl_aabb_list_mp, dtype=np.float64)
-
-    if use_bvh_mp and prism_faces:
-        prism_aabb_list_mp = []
-        for pface in prism_faces:
-            c = np.asarray(pface.center, dtype=np.float64)
-            if hasattr(pface, 'vertices') and pface.vertices is not None:
-                verts = np.asarray(pface.vertices, dtype=np.float64)
-                lo = verts.min(axis=0); hi = verts.max(axis=0)
-                prism_aabb_list_mp.append([lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]])
-            elif hasattr(pface, 'circumscribed_radius'):
-                r = float(pface.circumscribed_radius)
-                prism_aabb_list_mp.append([c[0]-r, c[0]+r, c[1]-r, c[1]+r, c[2]-r, c[2]+r])
-            else:
-                hw_pf = pface.size[0] / 2.0
-                hh_pf = pface.size[1] / 2.0
-                corners = np.array([
-                    c + hw_pf * pface.u_axis + hh_pf * pface.v_axis,
-                    c + hw_pf * pface.u_axis - hh_pf * pface.v_axis,
-                    c - hw_pf * pface.u_axis + hh_pf * pface.v_axis,
-                    c - hw_pf * pface.u_axis - hh_pf * pface.v_axis,
-                ])
-                lo = corners.min(axis=0); hi = corners.max(axis=0)
-                prism_aabb_list_mp.append([lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]])
-        prism_aabbs_mp = np.array(prism_aabb_list_mp, dtype=np.float64)
-
-    for _bounce in range(settings.max_bounces):
-        if not alive.any():
-            break
-
-        active_idx = np.where(alive)[0]
-        active_origins = origins[active_idx]
-        active_dirs = directions[active_idx]
-        n_active = len(active_idx)
-
-        best_t = np.full(n_active, np.inf)
-        best_type = np.full(n_active, -1, dtype=int)
-        best_obj = np.full(n_active, -1, dtype=int)
-
-        if use_bvh_mp:
-            bvh_t_mp, bvh_idx_mp = traverse_bvh_batch(
-                np.ascontiguousarray(active_origins, dtype=np.float64),
-                np.ascontiguousarray(active_dirs,   dtype=np.float64),
-                bvh_bounds_mp, bvh_meta_mp, bvh_n_nodes_mp,
-                bvh_normals_mp, bvh_centers_mp, bvh_u_mp, bvh_v_mp, bvh_hw_mp, bvh_hh_mp,
-                _EPSILON,
-            )
-            hit_mask_mp = bvh_idx_mp >= 0
-            for ri in np.where(hit_mask_mp)[0]:
-                idx = int(bvh_idx_mp[ri])
-                t_val = float(bvh_t_mp[ri])
-                if t_val < best_t[ri]:
-                    best_t[ri] = t_val
-                    if idx < n_surf_planes_mp:
-                        best_type[ri] = 0
-                        best_obj[ri] = idx
-                    else:
-                        best_type[ri] = 3
-                        best_obj[ri] = idx - n_surf_planes_mp
-        else:
-            for si, surf in enumerate(surfaces):
-                t = _intersect_plane_accel(active_origins, active_dirs, surf.normal, surf.center,
-                                           surf.u_axis, surf.v_axis, surf.size)
-                closer = t < best_t
-                best_t[closer] = t[closer]
-                best_type[closer] = 0
-                best_obj[closer] = si
-
-            # SolidBox face intersections (type 3)
-            for sfi, sface in enumerate(solid_faces):
-                t = _intersect_plane_accel(active_origins, active_dirs,
-                                           sface.normal, sface.center,
-                                           sface.u_axis, sface.v_axis, sface.size)
-                closer = t < best_t
-                best_t[closer] = t[closer]
-                best_type[closer] = 3
-                best_obj[closer] = sfi
-
-        # SolidCylinder face intersections (type 4) — AABB pre-filter when BVH active
-        cyl_candidates_mp = (
-            _aabb_ray_candidates(active_origins, active_dirs, cyl_aabbs_mp)
-            if use_bvh_mp and cyl_aabbs_mp is not None
-            else range(len(cyl_faces))
-        )
-        for cfi in cyl_candidates_mp:
-            cface = cyl_faces[cfi]
-            if isinstance(cface, CylinderCap):
-                t = _intersect_rays_disc(
-                    active_origins, active_dirs,
-                    cface.center, cface.normal, cface.radius,
-                )
-            else:  # CylinderSide
-                t = _intersect_rays_cylinder_side(
-                    active_origins, active_dirs,
-                    cface.center, cface.axis, cface.radius, cface.length / 2.0,
-                )
-            closer = t < best_t
-            best_t[closer] = t[closer]
-            best_type[closer] = 4
-            best_obj[closer] = cfi
-
-        # SolidPrism face intersections (type 5) — AABB pre-filter when BVH active
-        prism_candidates_mp = (
-            _aabb_ray_candidates(active_origins, active_dirs, prism_aabbs_mp)
-            if use_bvh_mp and prism_aabbs_mp is not None
-            else range(len(prism_faces))
-        )
-        for pfi in prism_candidates_mp:
-            pface = prism_faces[pfi]
-            if isinstance(pface, PrismCap):
-                t = _intersect_prism_cap(active_origins, active_dirs, pface)
-            else:  # Rectangle side face
-                t = _intersect_plane_accel(
-                    active_origins, active_dirs,
-                    pface.normal, pface.center,
-                    pface.u_axis, pface.v_axis, pface.size,
-                )
-            closer = t < best_t
-            best_t[closer] = t[closer]
-            best_type[closer] = 5
-            best_obj[closer] = pfi
-
-        # Detectors always tested separately
-        for di, det in enumerate(detectors):
-            t = _intersect_plane_accel(active_origins, active_dirs, det.normal, det.center,
-                                       det.u_axis, det.v_axis, det.size)
-            closer = t < best_t
-            best_t[closer] = t[closer]
-            best_type[closer] = 1
-            best_obj[closer] = di
-
-        # Sphere detectors tested separately (type 2)
-        for sdi, sd in enumerate(sphere_dets):
-            t = _intersect_sphere_accel(active_origins, active_dirs, sd.center, sd.radius)
-            closer = t < best_t
-            best_t[closer] = t[closer]
-            best_type[closer] = 2
-            best_obj[closer] = sdi
-
-        missed = best_t == np.inf
-        if missed.any():
-            escaped_flux += float(weights[active_idx[missed]].sum())
-        alive[active_idx[missed]] = False
-
-        for di, det in enumerate(detectors):
-            mask = (best_type == 1) & (best_obj == di)
-            if not mask.any():
-                continue
-            hit_idx = active_idx[mask]
-            hit_pts = origins[hit_idx] + best_t[mask, None] * directions[hit_idx]
-            # Inline accumulation
-            local = hit_pts - det.center
-            u = local @ det.u_axis
-            v = local @ det.v_axis
-            hw, hh = det.size[0] / 2.0, det.size[1] / 2.0
-            nx, ny = det.resolution
-            ix = np.clip(((u + hw) / det.size[0] * nx).astype(int), 0, nx - 1)
-            iy = np.clip(((v + hh) / det.size[1] * ny).astype(int), 0, ny - 1)
-            hw_arr = weights[hit_idx]
-            accumulate_grid_jit(det_grids[det.name]["grid"], iy, ix, hw_arr)
-            det_grids[det.name]["hits"] += len(hw_arr)
-            det_grids[det.name]["flux"] += float(hw_arr.sum())
-            # Spectral grid accumulation for MP path
-            sg = det_grids[det.name].get("spectral_grid")
-            if sg is not None and wavelengths_mp is not None:
-                bin_idx = np.clip(
-                    ((wavelengths_mp[hit_idx] - LAMBDA_MIN) / (LAMBDA_MAX - LAMBDA_MIN)
-                     * n_spec_bins_mp).astype(int),
-                    0, n_spec_bins_mp - 1,
-                )
-                np.add.at(sg, (iy, ix, bin_idx), hw_arr)
-            # Pass-through: advance ray past the detector plane
-            origins[hit_idx] = hit_pts + directions[hit_idx] * _EPSILON
-
-        # Sphere detector hits — pass-through (accumulate flux then continue)
-        for sdi, sd in enumerate(sphere_dets):
-            mask = (best_type == 2) & (best_obj == sdi)
-            if not mask.any():
-                continue
-            hit_idx = active_idx[mask]
-            hit_pts = origins[hit_idx] + best_t[mask, None] * directions[hit_idx]
-            if sd.mode == "far_field":
-                # Inline far-field accumulation using outgoing direction
-                d_out = -directions[hit_idx]
-                r_norm = np.linalg.norm(d_out, axis=1, keepdims=True)
-                r_norm = np.maximum(r_norm, 1e-12)
-                d_norm = d_out / r_norm
-                theta = np.arccos(np.clip(d_norm[:, 2], -1.0, 1.0))
-                phi = np.arctan2(d_norm[:, 1], d_norm[:, 0])
-                phi = np.where(phi < 0, phi + 2.0 * np.pi, phi)
-                n_phi_sd, n_theta_sd = sd.resolution
-                i_theta = np.clip((theta / np.pi * n_theta_sd).astype(int), 0, n_theta_sd - 1)
-                i_phi = np.clip((phi / (2.0 * np.pi) * n_phi_sd).astype(int), 0, n_phi_sd - 1)
-                accumulate_sphere_jit(sph_grids[sd.name]["grid"], i_theta, i_phi, weights[hit_idx])
-            else:
-                # Near-field: accumulate by position
-                d_pos = hit_pts - sd.center
-                r_pos = np.linalg.norm(d_pos, axis=1, keepdims=True)
-                r_pos = np.maximum(r_pos, 1e-12)
-                d_norm_pos = d_pos / r_pos
-                theta_pos = np.arccos(np.clip(d_norm_pos[:, 2], -1.0, 1.0))
-                phi_pos = np.arctan2(d_norm_pos[:, 1], d_norm_pos[:, 0])
-                phi_pos = np.where(phi_pos < 0, phi_pos + 2.0 * np.pi, phi_pos)
-                n_phi_sd, n_theta_sd = sd.resolution
-                i_theta = np.clip((theta_pos / np.pi * n_theta_sd).astype(int), 0, n_theta_sd - 1)
-                i_phi = np.clip((phi_pos / (2.0 * np.pi) * n_phi_sd).astype(int), 0, n_phi_sd - 1)
-                accumulate_sphere_jit(sph_grids[sd.name]["grid"], i_theta, i_phi, weights[hit_idx])
-            sph_grids[sd.name]["hits"] += len(hit_idx)
-            sph_grids[sd.name]["flux"] += float(weights[hit_idx].sum())
-            # Pass-through: advance ray past the sphere
-            origins[hit_idx] = hit_pts + directions[hit_idx] * _EPSILON
-
-        # SolidBox face hits — Fresnel/TIR physics
-        for sfi, sface in enumerate(solid_faces):
-            mask = (best_type == 3) & (best_obj == sfi)
-            if not mask.any():
-                continue
-            hit_idx = active_idx[mask]
-            t_vals = best_t[mask]
-            hit_pts = origins[hit_idx] + t_vals[:, None] * directions[hit_idx]
-            face_normal = sface.normal
-
-            box, face_id, box_n, geom_eps = solid_face_map[sface.name]
-
-            # --- face_optics override in MP path ---
-            face_op_name_mp = getattr(sface, "optical_properties_name", "")
-            if face_op_name_mp:
-                face_op_mp = project.optical_properties.get(face_op_name_mp)
-                if face_op_mp is not None and face_op_mp.surface_type in ("reflector", "absorber", "diffuser"):
-                    _dot_dn_mp = np.einsum("ij,j->i", directions[hit_idx], face_normal)
-                    _flip_mp = _dot_dn_mp > 0
-                    _on_mp = np.where(_flip_mp[:, None], -face_normal, face_normal)
-                    _entering_mp = _dot_dn_mp < 0
-                    for local_i, global_i in enumerate(hit_idx):
-                        w = float(weights[global_i])
-                        if _entering_mp[local_i]:
-                            sb_stats[box.name][face_id]["entering_flux"] += w
-                        else:
-                            sb_stats[box.name][face_id]["exiting_flux"] += w
-                    if face_op_mp.surface_type == "absorber":
-                        alive[hit_idx] = False
-                        continue
-                    elif face_op_mp.surface_type == "reflector":
-                        weights[hit_idx] *= face_op_mp.reflectance
-                        new_dirs_mp = _reflect_batch(directions[hit_idx], _on_mp,
-                                                     face_op_mp.is_diffuse, rng)
-                        if face_op_mp.haze > 0 and not face_op_mp.is_diffuse:
-                            new_dirs_mp = scatter_haze(new_dirs_mp, face_op_mp.haze, rng)
-                        origins[hit_idx] = hit_pts + _on_mp * geom_eps
-                        directions[hit_idx] = new_dirs_mp
-                        continue
-                    elif face_op_mp.surface_type == "diffuser":
-                        n_rays_fo_mp = len(hit_idx)
-                        roll_fo_mp = rng.uniform(size=n_rays_fo_mp)
-                        transmits_fo_mp = roll_fo_mp < face_op_mp.transmittance
-                        if transmits_fo_mp.any():
-                            ti_fo_mp = hit_idx[transmits_fo_mp]
-                            through_n_fo_mp = -_on_mp[transmits_fo_mp]
-                            origins[ti_fo_mp] = hit_pts[transmits_fo_mp] + through_n_fo_mp * geom_eps
-                            # Per-ray Lambertian to handle mixed-side hits correctly
-                            _n_tr_mp = int(transmits_fo_mp.sum())
-                            _new_d_mp = np.empty((_n_tr_mp, 3))
-                            for _j in range(_n_tr_mp):
-                                _new_d_mp[_j] = sample_lambertian(1, through_n_fo_mp[_j], rng)[0]
-                            directions[ti_fo_mp] = _new_d_mp
-                        reflects_fo_mp = ~transmits_fo_mp
-                        if reflects_fo_mp.any():
-                            ri_fo_mp = hit_idx[reflects_fo_mp]
-                            weights[ri_fo_mp] *= face_op_mp.reflectance
-                            refl_on_fo_mp = _on_mp[reflects_fo_mp]
-                            new_d_fo_mp = _reflect_batch(directions[ri_fo_mp], refl_on_fo_mp,
-                                                          face_op_mp.is_diffuse, rng)
-                            origins[ri_fo_mp] = hit_pts[reflects_fo_mp] + refl_on_fo_mp * geom_eps
-                            directions[ri_fo_mp] = new_d_fo_mp
-                        continue
-            # --- end face_optics override in MP path ---
-
-            dot_dn = np.einsum("ij,j->i", directions[hit_idx], face_normal)
-            entering = dot_dn < 0
-
-            # on_into: normal pointing INTO the new medium.
-            # Entering: on_into = -face_normal (box interior side)
-            # Exiting: on_into = +face_normal (air side)
-            on_into = np.where(entering[:, None], -face_normal, face_normal)
-            on_back = -on_into   # points toward incoming ray (old medium)
-
-            n1_arr = current_n[hit_idx].copy()
-            exit_n = n_stack[hit_idx, np.maximum(n_depth[hit_idx] - 1, 0)]
-            n2_arr = np.where(entering, box_n, exit_n)
-
-            cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
-            R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
-
-            roll = rng.random(len(hit_idx))
-            reflects = roll < R_arr
-            refracts = ~reflects
-
-            # Flux accounting
-            for local_i, global_i in enumerate(hit_idx):
-                fid = face_id
-                w = float(weights[global_i])
-                if entering[local_i]:
-                    sb_stats[box.name][fid]["entering_flux"] += w
-                else:
-                    sb_stats[box.name][fid]["exiting_flux"] += w
-
-            # Refracted rays
-            if refracts.any():
-                ri = hit_idx[refracts]
-                on_r = on_into[refracts]
-                n1_r = n1_arr[refracts]
-                n2_r = n2_arr[refracts]
-                new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
-                current_n[ri] = n2_r
-                _n_stack_update(n_depth, n_stack, ri, entering[refracts], n1_r)
-                origins[ri] = hit_pts[refracts] + on_r * geom_eps
-                directions[ri] = new_dirs
-
-            # Reflected rays
-            if reflects.any():
-                rfl_i = hit_idx[reflects]
-                on_b = on_back[reflects]
-                d_rfl = directions[rfl_i]
-                dot_vals = np.einsum("ij,ij->i", d_rfl, on_b)[:, None]
-                new_dirs = d_rfl - 2.0 * dot_vals * on_b
-                norms = np.linalg.norm(new_dirs, axis=1, keepdims=True)
-                new_dirs = new_dirs / np.maximum(norms, 1e-12)
-                origins[rfl_i] = hit_pts[reflects] + on_b * geom_eps
-                directions[rfl_i] = new_dirs
-
-        # SolidCylinder face hits (type 4) -- Fresnel/TIR physics
-        for cfi, cface in enumerate(cyl_faces):
-            mask = (best_type == 4) & (best_obj == cfi)
-            if not mask.any():
-                continue
-            hit_idx = active_idx[mask]
-            t_vals = best_t[mask]
-            hit_pts = origins[hit_idx] + t_vals[:, None] * directions[hit_idx]
-            cyl, face_id, cyl_n, geom_eps = cyl_face_map[cface.name]
-            if isinstance(cface, CylinderSide):
-                cyl_axis = cface.axis
-                diff = hit_pts - cyl.center
-                proj = np.einsum("ij,j->i", diff, cyl_axis)
-                radial = diff - proj[:, None] * cyl_axis
-                r_norms = np.linalg.norm(radial, axis=1, keepdims=True)
-                face_normals = radial / np.maximum(r_norms, 1e-12)
-                dot_dn = np.einsum("ij,ij->i", directions[hit_idx], face_normals)
-                entering = dot_dn < 0
-                on_into = np.where(entering[:, None], -face_normals, face_normals)
-            else:
-                face_normal = cface.normal
-                dot_dn = np.einsum("ij,j->i", directions[hit_idx], face_normal)
-                entering = dot_dn < 0
-                on_into = np.where(entering[:, None], -face_normal, face_normal)
-            on_back = -on_into
-            # --- face_optics override: per-face optical property ---
-            _fo_name = getattr(cface, "optical_properties_name", "")
-            if _fo_name:
-                _fo = project.optical_properties.get(_fo_name)
-                if _fo is not None and _fo.surface_type in ("reflector", "absorber", "diffuser"):
-                    for local_i, global_i in enumerate(hit_idx):
-                        w = float(weights[global_i])
-                        if entering[local_i]:
-                            sb_stats[cyl.name][face_id]["entering_flux"] += w
-                        else:
-                            sb_stats[cyl.name][face_id]["exiting_flux"] += w
-                    if _fo.surface_type == "absorber":
-                        alive[hit_idx] = False
-                        continue
-                    elif _fo.surface_type == "reflector":
-                        weights[hit_idx] *= _fo.reflectance
-                        new_dirs = _reflect_batch(directions[hit_idx], on_back,
-                                                  _fo.is_diffuse, rng)
-                        if _fo.haze > 0 and not _fo.is_diffuse:
-                            new_dirs = scatter_haze(new_dirs, _fo.haze, rng)
-                        origins[hit_idx] = hit_pts + on_back * geom_eps
-                        directions[hit_idx] = new_dirs
-                        continue
-                    elif _fo.surface_type == "diffuser":
-                        _n_fo = len(hit_idx)
-                        _roll_fo = rng.uniform(size=_n_fo)
-                        _transmits = _roll_fo < _fo.transmittance
-                        if _transmits.any():
-                            _ti = hit_idx[_transmits]
-                            _through_n = on_into[_transmits]
-                            origins[_ti] = hit_pts[_transmits] + _through_n * geom_eps
-                            _n_tr = int(_transmits.sum())
-                            _new_d = np.empty((_n_tr, 3))
-                            for _j in range(_n_tr):
-                                _new_d[_j] = sample_lambertian(1, _through_n[_j], rng)[0]
-                            directions[_ti] = _new_d
-                        _reflects = ~_transmits
-                        if _reflects.any():
-                            _ri = hit_idx[_reflects]
-                            weights[_ri] *= _fo.reflectance
-                            _refl_on = on_back[_reflects]
-                            _new_d_r = _reflect_batch(directions[_ri], _refl_on,
-                                                       _fo.is_diffuse, rng)
-                            origins[_ri] = hit_pts[_reflects] + _refl_on * geom_eps
-                            directions[_ri] = _new_d_r
-                        continue
-            n1_arr = current_n[hit_idx].copy()
-            exit_n = n_stack[hit_idx, np.maximum(n_depth[hit_idx] - 1, 0)]
-            n2_arr = np.where(entering, cyl_n, exit_n)
-            cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
-            R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
-            roll = rng.random(len(hit_idx))
-            reflects = roll < R_arr
-            refracts = ~reflects
-            for local_i, global_i in enumerate(hit_idx):
-                w = float(weights[global_i])
-                if entering[local_i]:
-                    sb_stats[cyl.name][face_id]["entering_flux"] += w
-                else:
-                    sb_stats[cyl.name][face_id]["exiting_flux"] += w
-            if refracts.any():
-                ri = hit_idx[refracts]
-                on_r = on_into[refracts]
-                n1_r = n1_arr[refracts]
-                n2_r = n2_arr[refracts]
-                new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
-                current_n[ri] = n2_r
-                _n_stack_update(n_depth, n_stack, ri, entering[refracts], n1_r)
-                origins[ri] = hit_pts[refracts] + on_r * geom_eps
-                directions[ri] = new_dirs
-            if reflects.any():
-                rfl_i = hit_idx[reflects]
-                on_b = on_back[reflects]
-                d_rfl = directions[rfl_i]
-                dot_vals = np.einsum("ij,ij->i", d_rfl, on_b)[:, None]
-                new_dirs = d_rfl - 2.0 * dot_vals * on_b
-                norms_r = np.linalg.norm(new_dirs, axis=1, keepdims=True)
-                new_dirs = new_dirs / np.maximum(norms_r, 1e-12)
-                origins[rfl_i] = hit_pts[reflects] + on_b * geom_eps
-                directions[rfl_i] = new_dirs
-
-        # SolidPrism face hits (type 5) -- Fresnel/TIR physics
-        for pfi, pface in enumerate(prism_faces):
-            mask = (best_type == 5) & (best_obj == pfi)
-            if not mask.any():
-                continue
-            hit_idx = active_idx[mask]
-            t_vals = best_t[mask]
-            hit_pts = origins[hit_idx] + t_vals[:, None] * directions[hit_idx]
-            prism, face_id, prism_n, geom_eps = prism_face_map[pface.name]
-            face_normal = pface.normal
-            dot_dn = np.einsum("ij,j->i", directions[hit_idx], face_normal)
-            entering = dot_dn < 0
-            on_into = np.where(entering[:, None], -face_normal, face_normal)
-            on_back = -on_into
-            # --- face_optics override: per-face optical property ---
-            _fo_name = getattr(pface, "optical_properties_name", "")
-            if _fo_name:
-                _fo = project.optical_properties.get(_fo_name)
-                if _fo is not None and _fo.surface_type in ("reflector", "absorber", "diffuser"):
-                    for local_i, global_i in enumerate(hit_idx):
-                        w = float(weights[global_i])
-                        if entering[local_i]:
-                            sb_stats[prism.name][face_id]["entering_flux"] += w
-                        else:
-                            sb_stats[prism.name][face_id]["exiting_flux"] += w
-                    if _fo.surface_type == "absorber":
-                        alive[hit_idx] = False
-                        continue
-                    elif _fo.surface_type == "reflector":
-                        weights[hit_idx] *= _fo.reflectance
-                        new_dirs = _reflect_batch(directions[hit_idx], on_back,
-                                                  _fo.is_diffuse, rng)
-                        if _fo.haze > 0 and not _fo.is_diffuse:
-                            new_dirs = scatter_haze(new_dirs, _fo.haze, rng)
-                        origins[hit_idx] = hit_pts + on_back * geom_eps
-                        directions[hit_idx] = new_dirs
-                        continue
-                    elif _fo.surface_type == "diffuser":
-                        _n_fo = len(hit_idx)
-                        _roll_fo = rng.uniform(size=_n_fo)
-                        _transmits = _roll_fo < _fo.transmittance
-                        if _transmits.any():
-                            _ti = hit_idx[_transmits]
-                            _through_n = on_into[_transmits]
-                            origins[_ti] = hit_pts[_transmits] + _through_n * geom_eps
-                            _n_tr = int(_transmits.sum())
-                            _new_d = np.empty((_n_tr, 3))
-                            for _j in range(_n_tr):
-                                _new_d[_j] = sample_lambertian(1, _through_n[_j], rng)[0]
-                            directions[_ti] = _new_d
-                        _reflects = ~_transmits
-                        if _reflects.any():
-                            _ri = hit_idx[_reflects]
-                            weights[_ri] *= _fo.reflectance
-                            _refl_on = on_back[_reflects]
-                            _new_d_r = _reflect_batch(directions[_ri], _refl_on,
-                                                       _fo.is_diffuse, rng)
-                            origins[_ri] = hit_pts[_reflects] + _refl_on * geom_eps
-                            directions[_ri] = _new_d_r
-                        continue
-            n1_arr = current_n[hit_idx].copy()
-            exit_n = n_stack[hit_idx, np.maximum(n_depth[hit_idx] - 1, 0)]
-            n2_arr = np.where(entering, prism_n, exit_n)
-            cos_i_arr = np.clip(np.einsum("ij,ij->i", directions[hit_idx], on_into), 0.0, 1.0)
-            R_arr = _fresnel_unpolarized(cos_i_arr, n1_arr, n2_arr)
-            roll = rng.random(len(hit_idx))
-            reflects = roll < R_arr
-            refracts = ~reflects
-            for local_i, global_i in enumerate(hit_idx):
-                w = float(weights[global_i])
-                if entering[local_i]:
-                    sb_stats[prism.name][face_id]["entering_flux"] += w
-                else:
-                    sb_stats[prism.name][face_id]["exiting_flux"] += w
-            if refracts.any():
-                ri = hit_idx[refracts]
-                on_r = on_into[refracts]
-                n1_r = n1_arr[refracts]
-                n2_r = n2_arr[refracts]
-                new_dirs = _refract_snell(directions[ri], on_r, n1_r, n2_r)
-                current_n[ri] = n2_r
-                _n_stack_update(n_depth, n_stack, ri, entering[refracts], n1_r)
-                origins[ri] = hit_pts[refracts] + on_r * geom_eps
-                directions[ri] = new_dirs
-            if reflects.any():
-                rfl_i = hit_idx[reflects]
-                on_b = on_back[reflects]
-                d_rfl = directions[rfl_i]
-                dot_vals = np.einsum("ij,ij->i", d_rfl, on_b)[:, None]
-                new_dirs = d_rfl - 2.0 * dot_vals * on_b
-                norms_r = np.linalg.norm(new_dirs, axis=1, keepdims=True)
-                new_dirs = new_dirs / np.maximum(norms_r, 1e-12)
-                origins[rfl_i] = hit_pts[reflects] + on_b * geom_eps
-                directions[rfl_i] = new_dirs
-
-        # Surface hits (simplified — no path recording in MP mode)
-        surf_hit_mask = (best_type == 0) & ~missed
-        if surf_hit_mask.any():
-            for si, surf in enumerate(surfaces):
-                smask = surf_hit_mask & (best_obj == si)
-                if not smask.any():
-                    continue
-                hit_idx = active_idx[smask]
-                t_vals = best_t[smask]
-                hit_pts = origins[hit_idx] + t_vals[:, None] * directions[hit_idx]
-                normal = surf.normal
-                # Resolve optical properties (optical_properties_name takes priority)
-                mat = None
-                if getattr(surf, 'optical_properties_name', ''):
-                    mat = project.optical_properties.get(surf.optical_properties_name)
-                if mat is None:
-                    mat = materials.get(surf.material_name)
-                if mat is None or mat.surface_type == "absorber":
-                    alive[hit_idx] = False
-                    continue
-                dot = np.einsum("ij,j->i", directions[hit_idx], normal)
-                flip = dot > 0
-                on = np.where(flip[:, None], -normal, normal)
-                # Spectral R/T lookup (before BSDF dispatch).
-                # NOTE: spectral+MP is guarded at run() entry; wavelengths are always None here.
-                # When spectral+MP support is added, wire wavelength interpolation here
-                # (see _bounce_surfaces lines 1125-1141 for the single-thread implementation).
-                optics_name_mp = getattr(surf, 'optical_properties_name', '') or surf.material_name
-                spec_data_mp = None
-                r_vals_mp = None
-                # BSDF dispatch
-                bsdf_name_mp = getattr(mat, 'bsdf_profile_name', '')
-                if bsdf_name_mp and bsdf_cdf_cache_mp.get(bsdf_name_mp) is not None:
-                    bsdf_prof_mp = (getattr(project, 'bsdf_profiles', {}) or {}).get(bsdf_name_mp, {})
-                    cdfs_mp = bsdf_cdf_cache_mp[bsdf_name_mp]
-                    # Determine R/T probability from BSDF angular distribution
-                    theta_in_vals_mp = cdfs_mp['theta_in']
-                    refl_total_mp = cdfs_mp['refl_total']
-                    trans_total_mp = cdfs_mp['trans_total']
-                    cos_i_mp = np.clip(np.einsum('ij,ij->i', -directions[hit_idx], on), 0.0, 1.0)
-                    theta_i_deg_mp = np.degrees(np.arccos(cos_i_mp))
-                    bin_idx_mp = np.clip(
-                        np.searchsorted(theta_in_vals_mp, theta_i_deg_mp, side='right') - 1,
-                        0, len(theta_in_vals_mp) - 1
-                    )
-                    r_total_mp = refl_total_mp[bin_idx_mp]
-                    t_total_mp = trans_total_mp[bin_idx_mp]
-                    rt_sum_mp = r_total_mp + t_total_mp
-                    roll_mp = rng.random(len(hit_idx))
-                    p_refl_mp = np.where(rt_sum_mp > 0, r_total_mp / np.maximum(rt_sum_mp, 1e-12), 1.0)
-                    refl_bsdf_mp = roll_mp < p_refl_mp
-                    trans_bsdf_mp = ~refl_bsdf_mp
-                    if refl_bsdf_mp.any():
-                        ri = hit_idx[refl_bsdf_mp]
-                        on_r = on[refl_bsdf_mp]
-                        flip_r = flip[refl_bsdf_mp]
-                        new_dirs = np.empty_like(directions[ri])
-                        for side_val, side_n in [(False, normal), (True, -normal)]:
-                            sm = flip_r == side_val
-                            if not sm.any():
-                                continue
-                            new_dirs[sm] = sample_bsdf(int(sm.sum()), directions[ri][sm], side_n, bsdf_prof_mp, 'reflect', rng, cdfs=cdfs_mp)
-                        origins[ri] = hit_pts[refl_bsdf_mp] + on_r * _EPSILON
-                        directions[ri] = new_dirs
-                    if trans_bsdf_mp.any():
-                        ti2 = hit_idx[trans_bsdf_mp]
-                        on_t = on[trans_bsdf_mp]
-                        flip_t = flip[trans_bsdf_mp]
-                        new_dirs = np.empty_like(directions[ti2])
-                        for side_val, side_n in [(False, normal), (True, -normal)]:
-                            sm = flip_t == side_val
-                            if not sm.any():
-                                continue
-                            new_dirs[sm] = sample_bsdf(int(sm.sum()), directions[ti2][sm], side_n, bsdf_prof_mp, 'transmit', rng, cdfs=cdfs_mp)
-                        through_n = -on_t
-                        origins[ti2] = hit_pts[trans_bsdf_mp] + through_n * _EPSILON
-                        directions[ti2] = new_dirs
-                    continue
-                if mat.surface_type == "reflector":
-                    weights[hit_idx] *= mat.reflectance
-                    new_dirs = _reflect_batch(directions[hit_idx], on, mat.is_diffuse, rng)
-                    if mat.haze > 0 and not mat.is_diffuse:
-                        new_dirs = scatter_haze(new_dirs, mat.haze, rng)
-                    origins[hit_idx] = hit_pts + on * _EPSILON
-                    directions[hit_idx] = new_dirs
-                elif mat.surface_type == "diffuser":
-                    n_rays = len(hit_idx)
-                    roll = rng.uniform(size=n_rays)
-                    transmits = roll < mat.transmittance
-                    if transmits.any():
-                        ti = hit_idx[transmits]
-                        through_n = -on[transmits]
-                        flip_t = flip[transmits]
-                        new_d = np.empty((int(transmits.sum()), 3))
-                        for side_val, side_n in [(False, -normal), (True, normal)]:
-                            sm = flip_t == side_val
-                            if not sm.any():
-                                continue
-                            new_d[sm] = sample_lambertian(int(sm.sum()), side_n, rng)
-                        origins[ti] = hit_pts[transmits] + through_n * _EPSILON
-                        directions[ti] = new_d
-                    reflects = ~transmits
-                    if reflects.any():
-                        ri = hit_idx[reflects]
-                        weights[ri] *= mat.reflectance
-                        refl_on = on[reflects]
-                        new_d = _reflect_batch(directions[ri], refl_on, mat.is_diffuse, rng)
-                        origins[ri] = hit_pts[reflects] + refl_on * _EPSILON
-                        directions[ri] = new_d
-
-        alive[weights < settings.energy_threshold] = False
-
-    spectral_grids = {
-        det_name: dg["spectral_grid"]
-        for det_name, dg in det_grids.items()
-        if dg.get("spectral_grid") is not None
+    out = {
+        "grids": {
+            name: {"grid": dr.grid, "hits": int(dr.total_hits), "flux": float(dr.total_flux)}
+            for name, dr in res.detectors.items()
+        },
+        "spectral_grids": {
+            name: dr.grid_spectral
+            for name, dr in res.detectors.items()
+            if dr.grid_spectral is not None
+        },
+        "rgb_grids": {
+            name: dr.grid_rgb
+            for name, dr in res.detectors.items()
+            if dr.grid_rgb is not None
+        },
+        "escaped": float(res.escaped_flux),
+        "sb_stats": res.solid_body_stats,
+        "sph_grids": {
+            name: {"grid": sr.grid, "hits": int(sr.total_hits), "flux": float(sr.total_flux)}
+            for name, sr in res.sphere_detectors.items()
+        },
+        "grids_batches": None,
+        "hits_batches": None,
+        "flux_batches": None,
+        "rays_per_batch": None,
+        "n_batches": 0,
     }
-    return {
-        "grids": det_grids,
-        "spectral_grids": spectral_grids,
-        "escaped": escaped_flux,
-        "sb_stats": sb_stats,
-        "sph_grids": sph_grids,
+
+    det_batches = {
+        name: dr for name, dr in res.detectors.items()
+        if getattr(dr, "grid_batches", None) is not None
     }
+    sph_batches = {
+        name: sr for name, sr in res.sphere_detectors.items()
+        if getattr(sr, "grid_batches", None) is not None
+    }
+    if det_batches or sph_batches:
+        rpb = None
+        for dr in list(det_batches.values()) + list(sph_batches.values()):
+            rpb = getattr(dr, "rays_per_batch", None)
+            if rpb is not None:
+                break
+        out.update({
+            "grids_batches": {n: {"grid": dr.grid_batches} for n, dr in det_batches.items()},
+            "hits_batches": {n: np.asarray(dr.hits_batches, dtype=int) for n, dr in det_batches.items()},
+            "flux_batches": {n: np.asarray(dr.flux_batches, dtype=float) for n, dr in det_batches.items()},
+            "sph_grids_batches": {n: {"grid": sr.grid_batches} for n, sr in sph_batches.items()},
+            "sph_hits_batches": {n: np.asarray(sr.hits_batches, dtype=int) for n, sr in sph_batches.items()},
+            "sph_flux_batches": {n: np.asarray(sr.flux_batches, dtype=float) for n, sr in sph_batches.items()},
+            "rays_per_batch": list(rpb) if rpb is not None else None,
+            "n_batches": len(rpb) if rpb is not None else 0,
+        })
+    return out
 
 
 def _aabb_ray_candidates(origins, directions, aabbs):
@@ -3294,16 +2690,18 @@ def _reflect_batch(dirs, oriented_normals, is_diffuse, rng):
     """Reflect or scatter an array of rays. oriented_normals is (n,3)."""
     n = len(dirs)
     if is_diffuse:
-        out = np.empty_like(dirs)
-        # Split by unique normals (flat surfaces have at most 2)
         ref = oriented_normals[0]
         same = np.all(oriented_normals == ref, axis=1)
         if same.all():
-            out = sample_diffuse_reflection(n, ref, rng)
-        else:
-            out[same] = sample_diffuse_reflection(int(same.sum()), ref, rng)
-            other = ~same
-            out[other] = sample_diffuse_reflection(int(other.sum()), oriented_normals[other][0], rng)
+            return sample_diffuse_reflection(n, ref, rng)
+        # Group by distinct normal: flat faces have at most 2 (one per side),
+        # curved faces (cylinder side) have one per ray.
+        out = np.empty_like(dirs)
+        uniq, inverse = np.unique(oriented_normals, axis=0, return_inverse=True)
+        inverse = np.asarray(inverse).reshape(-1)
+        for gi in range(len(uniq)):
+            gm = inverse == gi
+            out[gm] = sample_diffuse_reflection(int(gm.sum()), uniq[gi], rng)
         return out
     else:
         # Per-ray specular reflection: d - 2(d·n)n
@@ -3501,11 +2899,12 @@ def _accumulate_sphere_farfield(sd: "SphereDetector", result: "SphereDetectorRes
                                 directions_at_hit: np.ndarray, hit_weights: np.ndarray):
     """Bin ray directions into (theta, phi) grid for far-field accumulation.
 
-    Uses the ray direction at the moment of sphere intersection (negated to give
-    the outgoing direction from the luminaire region).
+    Uses the ray direction at the moment of sphere intersection. A ray leaving
+    the luminaire region hits the enclosing sphere from the inside while
+    travelling outward, so its direction at the hit IS the emission direction
+    (a source aimed at +Z peaks at theta=0).
     """
-    # Negate: rays travel toward the sphere; outgoing direction = -ray_direction
-    d = -directions_at_hit                        # (M, 3) outgoing directions
+    d = np.asarray(directions_at_hit, dtype=float)  # (M, 3) outgoing directions
     r = np.linalg.norm(d, axis=1, keepdims=True)
     r = np.maximum(r, 1e-12)
     d_norm = d / r
@@ -3538,6 +2937,19 @@ def compute_farfield_candela(sd: "SphereDetector", result: "SphereDetectorResult
     result.candela_grid = result.grid / solid_angle_per_bin[:, None]
 
 
+def _spectral_bin_index(wavelengths: np.ndarray, n_bins: int) -> np.ndarray:
+    """Map wavelengths to the index of the NEAREST ``spectral_bin_centers`` entry.
+
+    Centers are ``linspace(LAMBDA_MIN, LAMBDA_MAX, n_bins)``, so bin ``b`` covers
+    ``[c_b - step/2, c_b + step/2)``. Out-of-range wavelengths clip to the end bins.
+    """
+    if n_bins <= 1:
+        return np.zeros(len(wavelengths), dtype=int)
+    step = (LAMBDA_MAX - LAMBDA_MIN) / (n_bins - 1)
+    idx = np.floor((np.asarray(wavelengths, dtype=float) - LAMBDA_MIN) / step + 0.5)
+    return np.clip(idx.astype(int), 0, n_bins - 1)
+
+
 def _accumulate(det: DetectorSurface, result: DetectorResult,
                 hit_pts: np.ndarray, hit_weights: np.ndarray,
                 color_rgb: tuple[float, float, float] | None = None,
@@ -3566,8 +2978,7 @@ def _accumulate(det: DetectorSurface, result: DetectorResult,
     # Accumulate spectral bins
     if wavelengths is not None and spec_centers is not None and result.grid_spectral is not None:
         n_bins = len(spec_centers)
-        bin_width = (LAMBDA_MAX - LAMBDA_MIN) / max(n_bins - 1, 1)
-        i_bin = np.clip(((wavelengths - LAMBDA_MIN) / bin_width).astype(int), 0, n_bins - 1)
+        i_bin = _spectral_bin_index(wavelengths, n_bins)
         for b in range(n_bins):
             bmask = i_bin == b
             if bmask.any():

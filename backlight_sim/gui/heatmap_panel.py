@@ -21,8 +21,7 @@ from backlight_sim.core.kpi import (
 )
 from backlight_sim.core.uq import (
     CIEstimate,
-    batch_mean_ci,
-    kpi_batches,
+    jackknife_kpi_ci,
     per_bin_stderr,
 )
 from backlight_sim.gui.widgets.collapsible_section import CollapsibleSection
@@ -401,7 +400,8 @@ class HeatmapPanel(QWidget):
         self._last_u14: float = 0.0
         # Cached per-batch KPI arrays for UQ rendering (recomputed per result).
         # Empty dict when UQ is off; keys match `compute_all_kpi_cis()` output.
-        self._cached_kpi_batches: dict[str, np.ndarray] = {}
+        self._cached_cis: dict[str, CIEstimate | None] = {}
+        self._ci_cache: dict[tuple[str, float], dict[str, CIEstimate | None]] = {}
         self._last_hot: float = 1.0
 
     # ------------------------------------------------------------------
@@ -444,12 +444,19 @@ class HeatmapPanel(QWidget):
 
     def update_results(self, sim_result: SimulationResult):
         self._sim_result = sim_result
+        # Keep the user's detector choice across live-preview / final updates.
+        prev = self._selector.currentText()
+        self._selector.blockSignals(True)
         self._selector.clear()
         self._selector.addItems(list(sim_result.detectors.keys()))
+        if prev in sim_result.detectors:
+            self._selector.setCurrentText(prev)
+        self._selector.blockSignals(False)
 
-        # Cache per-batch KPI arrays for UQ rendering (feeds confidence-level
-        # dropdown recomputation path without re-running the tracer).
-        self._cached_kpi_batches = self._compute_all_kpi_batches(sim_result)
+        # Jackknife CIs are computed per (detector, confidence level) in
+        # _show_result -- they must belong to the detector being displayed.
+        self._cached_cis = {}
+        self._ci_cache = {}
 
         # Show UQ warnings (may be zero, one, or two strings).
         warnings = getattr(sim_result, "uq_warnings", []) or []
@@ -463,7 +470,10 @@ class HeatmapPanel(QWidget):
             self._uq_warning_label.setVisible(False)
 
         if sim_result.detectors:
-            self._show_result(sim_result.detectors[next(iter(sim_result.detectors))])
+            name = self._selector.currentText()
+            if name not in sim_result.detectors:
+                name = next(iter(sim_result.detectors))
+            self._show_result(sim_result.detectors[name])
 
     # ------------------------------------------------------------------
     # Phase 4 UQ helpers
@@ -480,35 +490,54 @@ class HeatmapPanel(QWidget):
         if self._current_result is not None:
             self._show_result(self._current_result)
 
-    def _compute_all_kpi_batches(
+    def _kpi_cis_for(self, det: DetectorResult) -> dict[str, CIEstimate | None]:
+        """Jackknife CIs for *det* at the current confidence level (cached)."""
+        if self._sim_result is None:
+            return {}
+        name = getattr(det, "detector_name", None)
+        if name not in self._sim_result.detectors:
+            name = next((n for n, d in self._sim_result.detectors.items() if d is det), None)
+        if name is None:
+            return {}
+        conf = self._current_conf_level()
+        key = (name, conf)
+        if key not in self._ci_cache:
+            self._ci_cache[key] = self._compute_all_kpi_cis(self._sim_result, name, conf)
+        return self._ci_cache[key]
+
+    def _compute_all_kpi_cis(
         self,
         result: SimulationResult,
-    ) -> dict[str, np.ndarray]:
-        """Return per-batch KPI arrays for UQ-aware label rendering.
+        detector_name: str,
+        conf: float,
+    ) -> dict[str, CIEstimate | None]:
+        """Return heatmap-keyed CIEstimates for one detector.
 
-        Empty dict when UQ is off or batches < 4 (dropdown then falls through to
-        legacy point-estimate formatting).  Efficiency uses rays_per_batch for
-        unbiased scaling (checker I5).
+        Uses core.kpi.compute_all_kpi_cis (delete-one-batch jackknife, mean =
+        full-grid KPI; CV in percent).  KPIs the core helper does not cover
+        (RMSE/avg, MAD/avg, min/max uniformity) use core.uq.jackknife_kpi_ci
+        directly.  Empty dict when UQ is off (n_batches < 4).
         """
-        out: dict[str, np.ndarray] = {}
-        if not result.detectors:
-            return out
-        det = next(iter(result.detectors.values()))
-        gb = det.grid_batches
-        if gb is None or det.n_batches < 4:
-            return out
+        det = result.detectors.get(detector_name)
+        if det is None or det.grid_batches is None or det.n_batches < 4:
+            return {}
+        core = compute_all_kpi_cis(result, conf_level=conf, detector_name=detector_name)
+        out: dict[str, CIEstimate | None] = {
+            k: core.get(k) for k in ("avg", "peak", "min", "cv", "hot", "ecr", "corner")
+        }
+        out["eff"] = core.get("efficiency_pct")
+        for label, _frac in _FRACTIONS:
+            out[f"uni_{label}_min_avg"] = core.get(f"uni_{label.replace('/', '_')}_min_avg")
 
-        out["avg"] = kpi_batches(gb, lambda g: float(g.mean()))
-        out["peak"] = kpi_batches(gb, lambda g: float(g.max()))
-        out["min"] = kpi_batches(gb, lambda g: float(g.min()))
-        out["cv"] = kpi_batches(
-            gb, lambda g: (float(g.std()) / float(g.mean()) * 100.0) if g.mean() > 0 else 0.0
-        )
-        out["hot"] = kpi_batches(
-            gb, lambda g: (float(g.max()) / float(g.mean())) if g.mean() > 0 else 0.0
-        )
-        out["ecr"] = kpi_batches(gb, _edge_center_ratio)
-        out["corner"] = kpi_batches(gb, _corner_ratio)
+        gb = np.asarray(det.grid_batches)
+        full = det.grid
+
+        def _jk(fn):
+            try:
+                return jackknife_kpi_ci(gb, fn, full_grid=full, conf_level=conf)
+            except ValueError:
+                return None
+
         # RMSE/avg and MAD/avg against uniform reference (std/avg and mean|g-avg|/avg).
         def _rmse_norm(g: np.ndarray) -> float:
             m = float(g.mean())
@@ -518,40 +547,17 @@ class HeatmapPanel(QWidget):
             m = float(g.mean())
             return float(np.mean(np.abs(g - m))) / m if m > 0 else 0.0
 
-        out["rmse"] = kpi_batches(gb, _rmse_norm)
-        out["mad"] = kpi_batches(gb, _mad_norm)
-
+        out["rmse"] = _jk(_rmse_norm)
+        out["mad"] = _jk(_mad_norm)
         for label, frac in _FRACTIONS:
-            key_avg = f"uni_{label}_min_avg"
-            key_max = f"uni_{label}_min_max"
-            out[key_avg] = kpi_batches(
-                gb, lambda g, f=frac: _uniformity_in_center(g, f)[0]
+            out[f"uni_{label}_min_max"] = _jk(
+                lambda g, f=frac: _uniformity_in_center(g, f)[1]
             )
-            out[key_max] = kpi_batches(
-                gb, lambda g, f=frac: _uniformity_in_center(g, f)[1]
-            )
-
-        # Efficiency (per-batch) — use rays_per_batch for unbiased scaling.
-        per_batch_src = _per_batch_source_flux(result, det)
-        if per_batch_src is not None and det.flux_batches is not None:
-            with np.errstate(divide="ignore", invalid="ignore"):
-                eff = np.where(
-                    per_batch_src > 0,
-                    np.asarray(det.flux_batches, dtype=float) / per_batch_src * 100.0,
-                    0.0,
-                )
-            out["eff"] = eff
         return out
 
     def _ci_or_none(self, key: str) -> CIEstimate | None:
-        """Return CIEstimate for the cached KPI batches under *key*, or None."""
-        vals = self._cached_kpi_batches.get(key)
-        if vals is None or len(vals) < 4:
-            return None
-        try:
-            return batch_mean_ci(vals, conf_level=self._current_conf_level())
-        except ValueError:
-            return None
+        """Return the cached CIEstimate for *key* (displayed detector), or None."""
+        return self._cached_cis.get(key)
 
     def _on_detector_changed(self, name: str):
         if self._sim_result and name in self._sim_result.detectors:
@@ -563,6 +569,7 @@ class HeatmapPanel(QWidget):
 
     def _show_result(self, result: DetectorResult):
         self._current_result = result
+        self._cached_cis = self._kpi_cis_for(result)
         grid = result.grid
         if grid.size == 0:
             return
@@ -646,7 +653,7 @@ class HeatmapPanel(QWidget):
         peak = float(grid.max())
         mn   = float(grid.min())
         std  = float(grid.std())
-        cv   = std / avg if avg > 0 else 0.0
+        cv   = std / avg * 100.0 if avg > 0 else 0.0   # percent (matches the per-batch CI)
         hot  = peak / avg if avg > 0 else 0.0
         ecr  = _edge_center_ratio(grid)
 
@@ -675,9 +682,9 @@ class HeatmapPanel(QWidget):
         if ci_cv is not None:
             self._lbl_cv.setText(ci_cv.format(precision=3, unit="%"))
         else:
-            self._lbl_cv.setText(f"{cv:.3f}")
+            self._lbl_cv.setText(f"{cv:.1f} %")
         self._lbl_cv.setStyleSheet(
-            "font-family: monospace; " + _threshold_color(cv, 0.10, 0.20, higher_is_better=False))
+            "font-family: monospace; " + _threshold_color(cv, 10.0, 20.0, higher_is_better=False))
 
         ci_hot = self._ci_or_none("hot")
         if ci_hot is not None:
@@ -950,6 +957,8 @@ class HeatmapPanel(QWidget):
         self._selector.clear()
         self._sim_result = None
         self._current_result = None
+        self._cached_cis = {}
+        self._ci_cache = {}
         self._last_eff_pct = 0.0
         self._last_u14 = 0.0
         self._last_hot = 1.0
@@ -1004,7 +1013,7 @@ class HeatmapPanel(QWidget):
         peak = float(grid.max())
         mn   = float(grid.min())
         std  = float(grid.std())
-        cv   = std / avg if avg > 0 else 0.0
+        cv   = std / avg * 100.0 if avg > 0 else 0.0   # percent, like the CI columns
         hot  = peak / avg if avg > 0 else 0.0
         ecr  = _edge_center_ratio(grid)
 
@@ -1024,16 +1033,12 @@ class HeatmapPanel(QWidget):
             "mean", "half_width", "std", "lower", "upper",
             "n_batches", "conf_level",
         ]
-        conf = self._current_conf_level()
-        kb = self._cached_kpi_batches
+        # Jackknife CIs of the exported (= displayed) detector at the current level.
+        cis = self._kpi_cis_for(r)
 
         def _ci_cells(key: str) -> list[str]:
-            vals = kb.get(key)
-            if vals is None or len(vals) < 4:
-                return ["", "", "", "", "", "", ""]
-            try:
-                ci = batch_mean_ci(vals, conf_level=conf)
-            except ValueError:
+            ci = cis.get(key)
+            if ci is None:
                 return ["", "", "", "", "", "", ""]
             return [
                 f"{ci.mean:.6g}",

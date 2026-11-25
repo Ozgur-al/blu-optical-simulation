@@ -76,23 +76,38 @@ def main():
     splash.close()
 
     # 6. Check for updates (non-blocking, after window is visible)
+    from PySide6.QtCore import QObject, Signal, Slot, Qt as _Qt
     from backlight_sim.update_checker import check_for_update_async
+
+    class _UpdateNotifier(QObject):
+        # Emitted from the checker's plain Python thread.  The receiver (this
+        # QObject) lives in the GUI thread, so the queued connection runs the
+        # slot on the GUI thread.  (QTimer.singleShot called from a non-Qt
+        # thread has no event loop to fire in, so the old code never showed.)
+        update_available = Signal(object)
+
+        def __init__(self, parent):
+            super().__init__(parent)
+            self.update_available.connect(
+                self._show, _Qt.ConnectionType.QueuedConnection
+            )
+
+        @Slot(object)
+        def _show(self, info):
+            """Show a non-modal update notification in the status bar."""
+            msg = (
+                f"Update available: v{info.latest_version} "
+                f"(current: v{info.current_version})"
+            )
+            if hasattr(window, "statusBar"):
+                window.statusBar().showMessage(msg, 15000)  # 15 seconds
+
+    notifier = _UpdateNotifier(window)  # parented: lives in the GUI thread
 
     def _on_update_check(info):
         """Called from background thread when update check completes."""
         if info.available:
-            # Use QTimer.singleShot to safely show notification from main thread
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: _show_update_notification(window, info))
-
-    def _show_update_notification(parent, info):
-        """Show a non-modal update notification in the status bar."""
-        msg = (
-            f"Update available: v{info.latest_version} "
-            f"(current: v{info.current_version})"
-        )
-        if hasattr(parent, "statusBar"):
-            parent.statusBar().showMessage(msg, 15000)  # Show for 15 seconds
+            notifier.update_available.emit(info)
 
     check_for_update_async(_on_update_check)
 

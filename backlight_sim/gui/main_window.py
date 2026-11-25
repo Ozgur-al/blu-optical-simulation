@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import datetime
 import numpy as np
 import pyqtgraph as pg
@@ -22,6 +23,7 @@ from backlight_sim.gui.commands import (
     AddMaterialCommand, DeleteMaterialCommand,
     AddOpticalPropertiesCommand, DeleteOpticalPropertiesCommand,
     AddSolidBodyCommand, DeleteSolidBodyCommand,
+    RenameKeyedEntryCommand,
 )
 
 from backlight_sim.core.project_model import Project
@@ -77,17 +79,22 @@ class SimulationThread(QThread):
     convergence    = Signal(int, int, float)   # (src_idx, n_rays, cv_pct)
     partial_result = Signal(object)            # SimulationResult snapshot
     finished_sim   = Signal(object)
+    failed_sim     = Signal(str)               # error message when the tracer raises
 
     def __init__(self, project: Project):
         super().__init__()
         self.tracer = RayTracer(project)
 
     def run(self):
-        result = self.tracer.run(
-            progress_callback=self.progress.emit,
-            convergence_callback=self.convergence.emit,
-            partial_result_callback=self.partial_result.emit,
-        )
+        try:
+            result = self.tracer.run(
+                progress_callback=self.progress.emit,
+                convergence_callback=self.convergence.emit,
+                partial_result_callback=self.partial_result.emit,
+            )
+        except Exception as exc:  # never leave the GUI stuck in "running" state
+            self.failed_sim.emit(f"{type(exc).__name__}: {exc}")
+            return
         self.finished_sim.emit(result)
 
     def cancel(self):
@@ -105,6 +112,7 @@ class MainWindow(QMainWindow):
         self._init_default_materials()
         merge_default_profiles(self._project)
         self._sim_thread = None
+        self._sim_project = None  # snapshot traced by the running/last sim
         self._counter = {"Sources": 0, "Surfaces": 0, "Materials": 0, "Optical Properties": 0, "Detectors": 0, "Sphere Detectors": 0, "Solid Bodies": 0}
         # Convergence plot data: src_idx -> (rays_list, cv_list)
         self._conv_data: dict[int, tuple[list, list]] = {}
@@ -113,6 +121,7 @@ class MainWindow(QMainWindow):
         self._last_save_path = None
         self._selected_group = None
         self._selected_name = None
+        self._selected_obj = None
         self._dirty = False
         self._variants: dict[str, "Project"] = {}
         self._variants_menu = None
@@ -723,8 +732,30 @@ class MainWindow(QMainWindow):
             if ret != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-            self._sim_thread.cancel()
         if not self._maybe_save():
+            event.ignore()
+            return
+        if self._sim_thread and self._sim_thread.isRunning():
+            # Cancel and wait so the QThread is never destroyed while running.
+            self.statusBar().showMessage("Stopping simulation before exit...")
+            self._sim_thread.cancel()
+            if not self._sim_thread.wait(10000):
+                QMessageBox.warning(
+                    self, "Simulation Still Running",
+                    "The simulation did not stop within 10 s. "
+                    "Please wait a moment and close again.",
+                )
+                event.ignore()
+                return
+        # Worker threads of closed sweep/ensemble/comparison dialogs that were
+        # still mid-trace when their dialog closed.
+        from backlight_sim.gui.thread_utils import wait_lingering_threads
+        if not wait_lingering_threads(10000):
+            QMessageBox.warning(
+                self, "Background Run Still Active",
+                "A background sweep/ensemble run did not stop within 10 s. "
+                "Please wait a moment and close again.",
+            )
             event.ignore()
             return
         self._save_layout()
@@ -748,6 +779,7 @@ class MainWindow(QMainWindow):
     def _clear_selected_object(self):
         self._selected_group = None
         self._selected_name = None
+        self._selected_obj = None
         self._viewport.clear_selection(redraw=False)
 
     def _selected_object_center(self):
@@ -776,9 +808,28 @@ class MainWindow(QMainWindow):
         self._mark_dirty()
         self._refresh_all()
 
-    def _new_project(self):
+    def _reset_result_views(self):
+        """Clear every result panel so no stale results outlive a project swap."""
+        self._sim_project = None
+        self._heatmap.clear()
+        self._plot_tab.clear()
+        self._convergence_tab.clear()
+        self._receiver_3d.clear()
+        self._far_field_panel.clear()
+        self._spectral_panel.clear_result()
+        self._viewport.clear_farfield_lobe()
+        self._viewport.clear_ray_paths()
+
+    def _sim_busy(self) -> bool:
+        """Warn and return True when a simulation is running (blocks project swaps)."""
         if self._sim_thread and self._sim_thread.isRunning():
-            QMessageBox.warning(self, "Busy", "Stop the simulation first."); return
+            QMessageBox.warning(self, "Busy", "Stop the simulation first.")
+            return True
+        return False
+
+    def _new_project(self):
+        if self._sim_busy():
+            return
         if not self._maybe_save():
             return
         self._dirty = False
@@ -794,14 +845,13 @@ class MainWindow(QMainWindow):
         self._spectral_panel.set_project(self._project)
         self._bsdf_panel.set_project(self._project)
         self._properties.clear_selection()
-        self._heatmap.clear()
-        self._plot_tab.clear()
-        self._convergence_tab.clear()
-        self._viewport.clear_ray_paths()
+        self._reset_result_views()
         self._refresh_all()
         self.setWindowTitle("Blu Optical Simulation - Untitled")
 
     def _open_project(self):
+        if self._sim_busy():
+            return
         if not self._maybe_save():
             return
         path, _ = QFileDialog.getOpenFileName(
@@ -821,8 +871,7 @@ class MainWindow(QMainWindow):
             self._spectral_panel.set_project(self._project)
             self._bsdf_panel.set_project(self._project)
             self._properties.clear_selection()
-            self._heatmap.clear()
-            self._viewport.clear_ray_paths()
+            self._reset_result_views()
             self._refresh_all()
             self.setWindowTitle(f"Blu Optical Simulation - {self._project.name}")
         except Exception as exc:
@@ -852,6 +901,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Error", str(exc))
 
     def _load_preset(self, factory):
+        if self._sim_busy():
+            return
         if QMessageBox.question(
             self, "Load Preset",
             "This will replace the current project. Continue?",
@@ -869,8 +920,7 @@ class MainWindow(QMainWindow):
         self._spectral_panel.set_project(self._project)
         self._bsdf_panel.set_project(self._project)
         self._properties.clear_selection()
-        self._heatmap.clear()
-        self._viewport.clear_ray_paths()
+        self._reset_result_views()
         self._refresh_all()
         self.setWindowTitle(f"Blu Optical Simulation - {self._project.name}")
 
@@ -878,6 +928,11 @@ class MainWindow(QMainWindow):
         from backlight_sim.gui.geometry_builder import GeometryBuilderDialog
         dlg = GeometryBuilderDialog(self._project, self)
         if dlg.exec():
+            # Apply the built working copy in place (panels keep the same Project
+            # object).  Bulk rebuild is not undoable: drop commands that reference
+            # replaced objects/indices.
+            self._project.__dict__.update(dlg.built_project().__dict__)
+            self._undo_stack.clear()
             self._mark_dirty()
             self._clear_selected_object()
             self._properties.clear_selection()
@@ -885,15 +940,46 @@ class MainWindow(QMainWindow):
 
     def _refresh_all(self):
         self._refresh_timer.stop()  # cancel pending debounced refresh
+        self._sync_selected_name()
         self._tree.refresh(self._project)
         self._viewport.set_selected(self._selected_group, self._selected_name, redraw=False)
         self._viewport.refresh(self._project)
         self._viewport.update_hud_scene(self._project)
         self._ang_dist.refresh()
 
+    def _lookup_object(self, group, name):
+        """Return the project object for a (group, name) tree key, or None."""
+        p = self._project
+        lists = {
+            "Sources": p.sources,
+            "Surfaces": p.surfaces,
+            "Detectors": p.detectors,
+            "Sphere Detectors": p.sphere_detectors,
+            "Solid Bodies:box": getattr(p, "solid_bodies", []),
+            "Solid Bodies:cylinder": getattr(p, "solid_cylinders", []),
+            "Solid Bodies:prism": getattr(p, "solid_prisms", []),
+        }
+        if group in lists:
+            return next((o for o in lists[group] if o.name == name), None)
+        if group == "Materials":
+            return p.materials.get(name)
+        if group == "Optical Properties":
+            return p.optical_properties.get(name)
+        return None
+
+    def _sync_selected_name(self):
+        """Follow renames: keep _selected_name in step with the selected object."""
+        obj = getattr(self, "_selected_obj", None)
+        if obj is None or not self._selected_name or "::" in self._selected_name:
+            return
+        new_name = getattr(obj, "name", None)
+        if new_name and new_name != self._selected_name:
+            self._selected_name = new_name
+
     def _on_object_selected(self, group, name):
         self._selected_group = group
         self._selected_name = name
+        self._selected_obj = self._lookup_object(group, name)
         self._viewport.set_selected(group, name)
         if group == "Sources":
             obj = next((s for s in self._project.sources if s.name == name), None)
@@ -979,6 +1065,40 @@ class MainWindow(QMainWindow):
             self._end_property_macro,
             self._refresh_for_property_edit,
         )
+        self._properties.set_name_handlers(self._validate_rename, self._rename_keyed_entry)
+
+    def _validate_rename(self, obj, new_name: str) -> bool:
+        """Reject a rename that would duplicate another object's name in its group."""
+        p = self._project
+        groups = [
+            list(p.sources), list(p.surfaces), list(p.detectors),
+            list(p.sphere_detectors),
+            list(getattr(p, "solid_bodies", [])) + list(getattr(p, "solid_cylinders", []))
+            + list(getattr(p, "solid_prisms", [])),
+            list(p.materials.values()), list(p.optical_properties.values()),
+        ]
+        for members in groups:
+            if any(o is obj for o in members):
+                if any(o is not obj and o.name == new_name for o in members):
+                    self.statusBar().showMessage(
+                        f"Name '{new_name}' is already in use — rename reverted.", 5000)
+                    return False
+                return True
+        return True
+
+    def _rename_keyed_entry(self, kind: str, obj, new_name: str) -> bool:
+        """Rename a material / optical-properties entry, re-keying all references."""
+        d = self._project.materials if kind == "material" else self._project.optical_properties
+        old_name = next((k for k, v in d.items() if v is obj), obj.name)
+        if new_name in d and d[new_name] is not obj:
+            self.statusBar().showMessage(
+                f"Name '{new_name}' is already in use — rename reverted.", 5000)
+            return False
+        self._push_property_command(RenameKeyedEntryCommand(
+            self._project, kind, obj, old_name, new_name, self._refresh_for_property_edit))
+        if self._selected_obj is obj:
+            self._selected_name = new_name
+        return True
 
     def _push_property_command(self, cmd):
         """Push a property command with flag guard to suppress form reload."""
@@ -1007,6 +1127,7 @@ class MainWindow(QMainWindow):
 
     def _reload_current_form(self):
         """Re-populate the properties panel for the current selection."""
+        self._sync_selected_name()
         if self._selected_group and self._selected_name:
             self._on_object_selected(self._selected_group, self._selected_name)
         elif self._properties.currentWidget() is self._properties._settingsform:
@@ -1231,6 +1352,8 @@ class MainWindow(QMainWindow):
         v = self._variants.get(name)
         if v is None:
             return
+        if self._sim_busy():
+            return
         if QMessageBox.question(
             self, "Load Variant",
             f"Load variant '{name}'?\nUnsaved changes to the current project will be lost.",
@@ -1249,8 +1372,7 @@ class MainWindow(QMainWindow):
         self._spectral_panel.set_project(self._project)
         self._bsdf_panel.set_project(self._project)
         self._properties.clear_selection()
-        self._heatmap.clear()
-        self._viewport.clear_ray_paths()
+        self._reset_result_views()
         self._refresh_all()
         self.setWindowTitle(f"Blu Optical Simulation - {self._project.name} [variant: {name}]")
         self._log(f"Loaded variant: '{name}'")
@@ -1273,12 +1395,12 @@ class MainWindow(QMainWindow):
 
     _MAX_HISTORY = 20
 
-    def _snapshot_history(self):
-        """Save a timestamped deep-copy of the current project to history."""
-        import copy
+    def _snapshot_history(self, project=None):
+        """Save a timestamped deep-copy of *project* (default: current) to history."""
         from datetime import datetime
         label = datetime.now().strftime("%H:%M:%S")
-        self._history.insert(0, (label, copy.deepcopy(self._project)))
+        src = project if project is not None else self._project
+        self._history.insert(0, (label, copy.deepcopy(src)))
         if len(self._history) > self._MAX_HISTORY:
             self._history = self._history[: self._MAX_HISTORY]
         self._refresh_history_menu()
@@ -1300,6 +1422,8 @@ class MainWindow(QMainWindow):
         snap = next((p for lbl, p in self._history if lbl == label), None)
         if snap is None:
             return
+        if self._sim_busy():
+            return
         if QMessageBox.question(
             self, "Restore from History",
             f"Restore project snapshot '{label}'?\nCurrent unsaved changes will be lost.",
@@ -1318,8 +1442,7 @@ class MainWindow(QMainWindow):
         self._spectral_panel.set_project(self._project)
         self._bsdf_panel.set_project(self._project)
         self._properties.clear_selection()
-        self._heatmap.clear()
-        self._viewport.clear_ray_paths()
+        self._reset_result_views()
         self._refresh_all()
         self.setWindowTitle(f"Blu Optical Simulation - {self._project.name} [history: {label}]")
         self._log(f"Restored history snapshot: {label}")
@@ -1391,11 +1514,14 @@ class MainWindow(QMainWindow):
             y=cv_target, pen=pg.mkPen("r", style=pg.QtCore.Qt.PenStyle.DashLine)
         )
 
-        self._sim_thread = SimulationThread(self._project)
+        # Trace a snapshot so edits made while the sim runs cannot race the tracer.
+        self._sim_project = copy.deepcopy(self._project)
+        self._sim_thread = SimulationThread(self._sim_project)
         self._sim_thread.progress.connect(self._on_sim_progress)
         self._sim_thread.convergence.connect(self._on_convergence_update)
         self._sim_thread.partial_result.connect(self._on_partial_result)
         self._sim_thread.finished_sim.connect(self._on_sim_finished)
+        self._sim_thread.failed_sim.connect(self._on_sim_failed)
         self._sim_thread.start()
 
         # Inform user if live preview is disabled due to multiprocessing
@@ -1418,6 +1544,15 @@ class MainWindow(QMainWindow):
         """Update heatmap with partial simulation results for live preview."""
         self._heatmap.update_results(result)
 
+    def _on_sim_failed(self, message: str):
+        """Restore the idle UI state when the tracer raised."""
+        self._progress.setVisible(False)
+        self._set_run_enabled(True)
+        self._cancel_btn.setEnabled(False)
+        self._viewport.show_hud_sim(False)
+        self.statusBar().showMessage(f"Simulation failed: {message}", 10000)
+        self._log(f"Simulation failed — {message}")
+
     def _on_sim_finished(self, result):
         self._progress.setVisible(False)
         self._set_run_enabled(True)
@@ -1432,7 +1567,8 @@ class MainWindow(QMainWindow):
 
         # Update far-field panel if any far-field sphere detector has results
         showed_farfield = False
-        for sd in self._project.sphere_detectors:
+        sim_project = self._sim_project if self._sim_project is not None else self._project
+        for sd in sim_project.sphere_detectors:
             if getattr(sd, "mode", "near_field") == "far_field":
                 sd_result = result.sphere_detectors.get(sd.name) if hasattr(result, "sphere_detectors") else None
                 if sd_result is not None and getattr(sd_result, "candela_grid", None) is not None:
@@ -1466,15 +1602,16 @@ class MainWindow(QMainWindow):
         else:
             self._log("Simulation complete.")
 
-        self._snapshot_history()
+        self._snapshot_history(sim_project)
 
     def _on_convergence_update(self, src_idx: int, n_rays: int, cv_pct: float):
         """Update the live convergence plot with a new data point from the tracer."""
         if src_idx not in self._conv_data:
             self._conv_data[src_idx] = ([], [])
+            sim_sources = (self._sim_project or self._project).sources
             src_name = (
-                self._project.sources[src_idx].name
-                if src_idx < len(self._project.sources)
+                sim_sources[src_idx].name
+                if src_idx < len(sim_sources)
                 else f"Source {src_idx}"
             )
             colors = ["y", "c", "g", "m", "w", "r", "b"]

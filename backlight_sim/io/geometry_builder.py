@@ -78,6 +78,13 @@ def build_cavity(
     wall_h_y = d / max(cos_ty, 1e-9)
     d_out_x = d * tan_tx / 2.0
     d_out_y = d * tan_ty / 2.0
+    # Close the corner seams: with flared walls the opening at height z is
+    # (w + 2 z tan_tx) x (h + 2 z tan_ty), so each wall is widened along its
+    # u-axis to the full top-edge span.  The extra strip of each wall lies
+    # behind the adjacent wall (outside the cavity), so it never shadows the
+    # interior; it only closes the triangular gaps plain rectangles leave.
+    side_len_y = h + 2.0 * d * tan_ty   # Left/Right walls (u along Y)
+    side_len_x = w + 2.0 * d * tan_tx   # Front/Back walls (u along X)
 
     project.surfaces.append(
         Rectangle(
@@ -85,7 +92,7 @@ def build_cavity(
             center=np.array([half_w + d_out_x, 0.0, d / 2.0]),
             u_axis=np.array([0.0, 1.0, 0.0]),
             v_axis=np.array([sin_tx, 0.0, cos_tx]),
-            size=(h, wall_h_x),
+            size=(side_len_y, wall_h_x),
             material_name=wall_material,
         )
     )
@@ -96,7 +103,7 @@ def build_cavity(
             center=np.array([-(half_w + d_out_x), 0.0, d / 2.0]),
             u_axis=np.array([0.0, -1.0, 0.0]),
             v_axis=np.array([-sin_tx, 0.0, cos_tx]),
-            size=(h, wall_h_x),
+            size=(side_len_y, wall_h_x),
             material_name=wall_material,
         )
     )
@@ -107,7 +114,7 @@ def build_cavity(
             center=np.array([0.0, half_h + d_out_y, d / 2.0]),
             u_axis=np.array([-1.0, 0.0, 0.0]),
             v_axis=np.array([0.0, sin_ty, cos_ty]),
-            size=(w, wall_h_y),
+            size=(side_len_x, wall_h_y),
             material_name=wall_material,
         )
     )
@@ -118,7 +125,7 @@ def build_cavity(
             center=np.array([0.0, -(half_h + d_out_y), d / 2.0]),
             u_axis=np.array([1.0, 0.0, 0.0]),
             v_axis=np.array([0.0, -sin_ty, cos_ty]),
-            size=(w, wall_h_y),
+            size=(side_len_x, wall_h_y),
             material_name=wall_material,
         )
     )
@@ -206,23 +213,17 @@ def build_led_grid(
 ) -> int:
     """Create a uniform LED grid and add PointSources to *project*.
 
-    If count_x and count_y are given, pitch_x and pitch_y are ignored and
-    computed so that that many LEDs fit with the given edge offsets:
-    pitch = (span - 2*offset) / max(count - 1, 1).
+    Per axis: if count_x / count_y is given (>= 1) the pitch on that axis is
+    ignored and exactly that many LEDs are spread evenly between the edge
+    offsets (a count of 1 places a single centred LED).
 
     Returns the number of LEDs created.
     """
     if replace_existing:
         project.sources.clear()
 
-    if count_x is not None and count_y is not None and count_x >= 1 and count_y >= 1:
-        span_x = width - 2.0 * edge_offset_x
-        span_y = height - 2.0 * edge_offset_y
-        pitch_x = span_x / max(count_x - 1, 1) if span_x > 0 else pitch_x
-        pitch_y = span_y / max(count_y - 1, 1) if span_y > 0 else pitch_y
-
-    xs = _grid_positions(-width / 2, width / 2, pitch_x, edge_offset_x)
-    ys = _grid_positions(-height / 2, height / 2, pitch_y, edge_offset_y)
+    xs = _axis_positions(-width / 2, width / 2, pitch_x, edge_offset_x, count_x)
+    ys = _axis_positions(-height / 2, height / 2, pitch_y, edge_offset_y, count_y)
 
     count = 0
     for row, y in enumerate(ys):
@@ -240,6 +241,25 @@ def build_led_grid(
                 )
             )
     return count
+
+
+def _axis_positions(
+    lo: float, hi: float, pitch: float, edge_offset: float, count: int | None,
+) -> list[float]:
+    """Positions along one axis.
+
+    Count mode (``count >= 1``): exactly ``count`` LEDs evenly spread between
+    ``lo + edge_offset`` and ``hi - edge_offset``; a single LED is centred.
+    Falls back to pitch mode when ``count`` is None/<1 or the span is <= 0
+    with more than one LED requested.
+    """
+    if count is not None and count >= 1:
+        if count == 1:
+            return [(lo + hi) / 2.0]
+        span = (hi - edge_offset) - (lo + edge_offset)
+        if span > 0:
+            return [float(v) for v in np.linspace(lo + edge_offset, hi - edge_offset, count)]
+    return _grid_positions(lo, hi, pitch, edge_offset)
 
 
 def _grid_positions(lo: float, hi: float, pitch: float, edge_offset: float) -> list[float]:

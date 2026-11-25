@@ -197,19 +197,20 @@ def generate_html_report(
     """Write a self-contained HTML report to *path*."""
     lines: list[str] = []
 
-    # Shared CI lookup (rays_per_batch-aware efficiency scaling — checker I5).
-    kpi_ci_dict = compute_all_kpi_cis(result, conf_level=0.95)
-    errorbar_src = _errorbar_chart_data_uri(kpi_ci_dict)
-
     # Collect KPIs per detector
     det_sections = []
     for det_name, dr in result.detectors.items():
+        # Per-detector CI lookup (rays_per_batch-aware efficiency — checker I5).
+        kpi_ci_dict = compute_all_kpi_cis(
+            result, conf_level=0.95, detector_name=det_name
+        )
+        errorbar_src = _errorbar_chart_data_uri(kpi_ci_dict)
         grid = dr.grid
         avg = float(grid.mean())
         peak = float(grid.max())
         mn = float(grid.min())
         std = float(grid.std())
-        cv = std / avg if avg > 0 else 0.0
+        cv = std / avg * 100.0 if avg > 0 else 0.0  # percent (matches CI)
         hot = peak / avg if avg > 0 else 0.0
         ecr = _edge_center_ratio(grid)
         corner = _corner_ratio(grid)
@@ -331,7 +332,7 @@ def generate_html_report(
         ci_corner = kpi_ci_dict.get("corner")
 
         det_sections.append(f"""
-        <h2>Detector: {det_name}</h2>
+        <h2>Detector: {_escape(str(det_name))}</h2>
         {img_html}
         <h3>Grid Statistics</h3>
         <table>
@@ -339,7 +340,7 @@ def generate_html_report(
             <tr><td>Peak</td><td>{_fmt_ci_cell(ci_peak, f'{peak:.6g}')}</td></tr>
             <tr><td>Min</td><td>{_fmt_ci_cell(ci_min, f'{mn:.6g}')}</td></tr>
             <tr><td>Std Dev</td><td>{std:.6g}</td></tr>
-            <tr><td>CV</td><td>{_fmt_ci_cell(ci_cv, f'{cv:.4f}')}</td></tr>
+            <tr><td>CV</td><td>{_fmt_ci_cell(ci_cv, f'{cv:.2f} %', unit=' %')}</td></tr>
             <tr><td>Hotspot (peak/avg)</td><td>{_fmt_ci_cell(ci_hot, f'{hot:.4f}')}</td></tr>
             <tr><td>Edge/Center</td><td>{_fmt_ci_cell(ci_ecr, f'{ecr:.4f}')}</td></tr>
             <tr><td>Corner/avg</td><td>{_fmt_ci_cell(ci_corner, f'{corner:.4f}')}</td></tr>
@@ -361,7 +362,7 @@ def generate_html_report(
     uq_warnings_html = ""
     warnings_list = getattr(result, "uq_warnings", []) or []
     if warnings_list:
-        items = "".join(f"<li>{w}</li>" for w in warnings_list)
+        items = "".join(f"<li>{_escape(str(w))}</li>" for w in warnings_list)
         uq_warnings_html = (
             f'<div class="warning"><h3>UQ warnings</h3><ul>{items}</ul></div>'
         )
@@ -371,7 +372,7 @@ def generate_html_report(
 <html>
 <head>
 <meta charset="utf-8">
-<title>Simulation Report — {project.name}</title>
+<title>Simulation Report — {_escape(str(project.name))}</title>
 <style>
     body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
            max-width: 900px; margin: 2em auto; padding: 0 1em; color: #222; }}
@@ -386,7 +387,7 @@ def generate_html_report(
 </style>
 </head>
 <body>
-<h1>Simulation Report: {project.name}</h1>
+<h1>Simulation Report: {_escape(str(project.name))}</h1>
 <p class="meta">
     Sources: {len([s for s in project.sources if s.enabled])} |
     Surfaces: {len(project.surfaces)} |

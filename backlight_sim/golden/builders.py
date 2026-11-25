@@ -199,10 +199,10 @@ def build_integrating_cavity_project(
 def build_lambertian_emitter_project(rays: int = 500_000) -> Project:
     """Single Lambertian emitter in free space with one far-field sphere detector.
 
-    Source direction is ``(0, 0, -1)`` so the cosine-law peak aligns with the
-    candela grid's theta=0 bin (north pole). See notes in
-    ``tracer.py::_accumulate_sphere_farfield`` (``d = -direction``): a ray
-    travelling in ``-Z`` is recorded at ``theta = arccos(+1) = 0``.
+    Source direction is ``(0, 0, +1)`` so the cosine-law peak aligns with the
+    candela grid's theta=0 bin (north pole). The far-field detector bins the
+    outgoing ray direction: a ray travelling in ``+Z`` is recorded at
+    ``theta = arccos(+1) = 0``.
     """
     # Need at least 1 bounce iteration for the sphere detector intersection
     # block to run (see tracer.py:991 bounce loop). Sphere detectors are
@@ -213,7 +213,7 @@ def build_lambertian_emitter_project(rays: int = 500_000) -> Project:
         position=np.array([0.0, 0.0, 0.0]),
         flux=1000.0,
         distribution="lambertian",
-        direction=np.array([0.0, 0.0, -1.0]),
+        direction=np.array([0.0, 0.0, 1.0]),
         flux_tolerance=0.0,
     ))
     project.sphere_detectors.append(SphereDetector(

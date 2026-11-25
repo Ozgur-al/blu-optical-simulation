@@ -84,8 +84,12 @@ static void accumulate_grid(
     const double lz = hit_z - cz;
     const double u_c = lx*ux + ly*uy + lz*uz;
     const double v_c = lx*vx + ly*vy + lz*vz;
-    int ix = (int)std::floor((u_c / (2.0*half_w) + 0.5) * accum.nx);
-    int iy = (int)std::floor((v_c / (2.0*half_h) + 0.5) * accum.ny);
+    // Degenerate (zero / negative / non-finite) extents would give u/0 = NaN,
+    // and casting NaN to int is undefined behaviour. Bin such axes to index 0.
+    const double fx = (half_w > 0.0) ? (u_c / (2.0*half_w) + 0.5) * accum.nx : 0.0;
+    const double fy = (half_h > 0.0) ? (v_c / (2.0*half_h) + 0.5) * accum.ny : 0.0;
+    int ix = std::isfinite(fx) ? (int)std::floor(std::max(-1.0, std::min(fx, (double)accum.nx))) : 0;
+    int iy = std::isfinite(fy) ? (int)std::floor(std::max(-1.0, std::min(fy, (double)accum.ny))) : 0;
     if (ix < 0) ix = 0; else if (ix >= accum.nx) ix = accum.nx - 1;
     if (iy < 0) iy = 0; else if (iy >= accum.ny) iy = accum.ny - 1;
     accum.grid[(size_t)iy * (size_t)accum.nx + (size_t)ix] += weight;
@@ -201,8 +205,9 @@ static py::dict run_bounce_loop(
                 n_rays, source.dir_x, source.dir_y, source.dir_z,
                 it->second.theta_deg, it->second.intensity, rng, batch);
         } else {
-            // Unknown profile — fall back to Lambertian (matches Python)
-            sample_lambertian(n_rays, source.dir_x, source.dir_y, source.dir_z, rng, batch);
+            // Unknown profile — fall back to isotropic (matches tracer.py
+            // _run_single / _trace_single_source and CLAUDE.md).
+            sample_isotropic(n_rays, rng, batch);
         }
     }
 
@@ -340,9 +345,14 @@ static py::dict run_bounce_loop(
                 surf.geom_eps, rng);
         }
 
-        // Energy threshold kill
+        // Energy threshold kill. The threshold is RELATIVE to the ray's initial
+        // weight (weight_per_ray = effective_flux / n_rays), so a ray dies once
+        // it carries less than `energy_threshold` of its emitted energy. An
+        // absolute comparison made survival depend on rays_per_source (e.g.
+        // 100 lm / 100k rays = 1e-3 per ray died after its first R<1 bounce).
+        const double kill_weight = energy_threshold * weight_per_ray;
         for (int i = 0; i < n_rays; ++i) {
-            if (batch.alive[i] && batch.weights[i] < energy_threshold) {
+            if (batch.alive[i] && batch.weights[i] < kill_weight) {
                 batch.alive[i] = false;
             }
         }

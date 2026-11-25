@@ -18,7 +18,7 @@ class AddSurfaceCommand(ProjectCommand):
         self._refresh()
 
     def undo(self):
-        self._project.surfaces = [s for s in self._project.surfaces if s.name != self._surface.name]
+        self._project.surfaces = [s for s in self._project.surfaces if s is not self._surface]
         self._refresh()
 
 
@@ -31,7 +31,7 @@ class DeleteSurfaceCommand(ProjectCommand):
         self._index = index
 
     def redo(self):
-        self._project.surfaces = [s for s in self._project.surfaces if s.name != self._surface.name]
+        self._project.surfaces = [s for s in self._project.surfaces if s is not self._surface]
         self._refresh()
 
     def undo(self):

@@ -64,15 +64,13 @@ def test_specular_angle_python_farfield(make_specular_mirror_scene,
     theta_peak = (peak[0] + 0.5) * np.pi / n_theta
     phi_peak = (peak[1] + 0.5) * 2.0 * np.pi / n_phi
 
-    # Expected reflected direction in far-field convention.
+    # Expected reflected direction. Far-field bins the outgoing ray direction.
     # Mirror normal = (0, sin theta, cos theta); incoming ray = (0, 0, -1).
-    # Reflected = (0, sin 2theta, cos 2theta). Far-field records -ray_dir,
-    # so the sphere-grid direction at peak should equal the NEGATED reflected
-    # direction: (0, -sin 2theta, -cos 2theta), giving
-    #   theta_ff = arccos(-cos 2theta) = pi - 2 theta
-    #   phi_ff   = arctan2(-sin 2theta, 0) = -pi/2 → 3pi/2 after wrap
-    theta_exp = float(np.pi - 2.0 * np.radians(theta_deg))
-    phi_exp = 1.5 * np.pi
+    # Reflected = (0, sin 2theta, cos 2theta), giving
+    #   theta_ff = 2 theta
+    #   phi_ff   = arctan2(sin 2theta, 0) = pi/2
+    theta_exp = float(2.0 * np.radians(theta_deg))
+    phi_exp = 0.5 * np.pi
 
     cos_ang = float(np.clip(
         np.dot(_unit_xyz(theta_peak, phi_peak),

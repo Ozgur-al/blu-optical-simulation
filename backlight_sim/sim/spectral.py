@@ -349,50 +349,45 @@ def uv_per_pixel(xyz: np.ndarray) -> np.ndarray:
     return np.stack([u, v], axis=-1)
 
 
-# Robertson (1968) CCT isotherm table: (u, v, reciprocal_mired, slope)
-# CCTs from 1000 K to ~50000 K (reciprocal megaKelvins = mired).
-# Source: Robertson (1968) as reproduced in Wyszecki & Stiles "Color Science".
+# Robertson (1968) isotherm table, as reproduced in Wyszecki & Stiles,
+# "Color Science" 2nd ed., Table 1(3.11).  Columns:
+#   reciprocal megakelvin (mired), u_i, v_i (CIE 1960 UCS), isotherm slope t_i
 _ROBERTSON_TABLE = np.array([
-    # u_i,      v_i,      t_i (10^6/K),  d_i (slope)
-    [0.18006,  0.26352,  -0.24341,   0],   # boundary row for interpolation
-    [0.18066,  0.26589,  -0.24341,   0],
-    [0.18133,  0.26846,  -0.23764,   0],
-    [0.18208,  0.27119,  -0.20219,   0],
-    [0.18293,  0.27407,  -0.13338,   0],
-    [0.18388,  0.27709,  -0.04905,   0],
-    [0.18494,  0.28021,   0.04343,   0],
-    [0.18611,  0.28342,   0.13650,   0],
-    [0.18740,  0.28668,   0.22855,   0],
-    [0.18880,  0.28997,   0.31803,   0],
-    [0.19032,  0.29326,   0.40580,   0],
-    [0.19462,  0.30141,   0.59071,   0],
-    [0.19962,  0.30921,   0.73437,   0],
-    [0.20525,  0.31647,   0.85445,   0],
-    [0.21142,  0.32312,   0.95588,   0],
-    [0.21807,  0.32909,   1.04370,   0],
-    [0.22511,  0.33439,   1.12140,   0],
-    [0.23247,  0.33904,   1.19030,   0],
-    [0.24010,  0.34308,   1.25560,   0],
-    [0.24792,  0.34655,   1.31220,   0],
-    [0.25591,  0.34951,   1.36380,   0],
-    [0.26400,  0.35200,   1.41310,   0],
-    [0.27218,  0.35407,   1.46040,   0],
-    [0.28039,  0.35577,   1.50570,   0],
-    [0.28863,  0.35714,   1.54990,   0],
-    [0.29685,  0.35823,   1.59360,   0],
-    [0.30505,  0.35907,   1.63770,   0],
-    [0.31320,  0.35968,   1.68440,   0],
-    [0.32129,  0.36011,   1.73710,   0],
-    [0.32931,  0.36038,   1.80200,   0],
-    [0.33724,  0.36051,   1.88710,   0],
+    [  0.0, 0.18006, 0.26352,   -0.24341],
+    [ 10.0, 0.18066, 0.26589,   -0.25479],
+    [ 20.0, 0.18133, 0.26846,   -0.26876],
+    [ 30.0, 0.18208, 0.27119,   -0.28539],
+    [ 40.0, 0.18293, 0.27407,   -0.30470],
+    [ 50.0, 0.18388, 0.27709,   -0.32675],
+    [ 60.0, 0.18494, 0.28021,   -0.35156],
+    [ 70.0, 0.18611, 0.28342,   -0.37915],
+    [ 80.0, 0.18740, 0.28668,   -0.40955],
+    [ 90.0, 0.18880, 0.28997,   -0.44278],
+    [100.0, 0.19032, 0.29326,   -0.47888],
+    [125.0, 0.19462, 0.30141,   -0.58204],
+    [150.0, 0.19962, 0.30921,   -0.70471],
+    [175.0, 0.20525, 0.31647,   -0.84901],
+    [200.0, 0.21142, 0.32312,   -1.0182],
+    [225.0, 0.21807, 0.32909,   -1.2168],
+    [250.0, 0.22511, 0.33439,   -1.4512],
+    [275.0, 0.23247, 0.33904,   -1.7298],
+    [300.0, 0.24010, 0.34308,   -2.0637],
+    [325.0, 0.24792, 0.34655,   -2.4681],
+    [350.0, 0.25591, 0.34951,   -2.9641],
+    [375.0, 0.26400, 0.35200,   -3.5814],
+    [400.0, 0.27218, 0.35407,   -4.3633],
+    [425.0, 0.28039, 0.35577,   -5.3762],
+    [450.0, 0.28863, 0.35714,   -6.7262],
+    [475.0, 0.29685, 0.35823,   -8.5955],
+    [500.0, 0.30505, 0.35907,  -11.324],
+    [525.0, 0.31320, 0.35968,  -15.628],
+    [550.0, 0.32129, 0.36011,  -23.325],
+    [575.0, 0.32931, 0.36038,  -40.770],
+    [600.0, 0.33724, 0.36051, -116.45],
 ], dtype=float)
 
-# Robertson CCT values in Kelvin corresponding to each row
-_ROBERTSON_CCT_K = np.array([
-    1000, 1050, 1100, 1150, 1200, 1250, 1300, 1350, 1400, 1450, 1500,
-    1600, 1700, 1800, 1900, 2000, 2100, 2200, 2300, 2400, 2500,
-    2600, 2700, 2800, 2900, 3000, 3100, 3200, 3300, 3400, 3500,
-], dtype=float)
+_CCT_MIN_K = 1000.0
+_CCT_MAX_K = 25000.0
 
 
 def cct_robertson(xy: np.ndarray) -> np.ndarray:
@@ -406,80 +401,56 @@ def cct_robertson(xy: np.ndarray) -> np.ndarray:
     Returns
     -------
     np.ndarray, shape (...)
-        CCT in Kelvin. NaN for dark pixels (Y < 1e-10).
-        Values are clamped to [1000, 25000] K.
+        CCT in Kelvin, clamped to [1000, 25000] K. NaN for non-finite or
+        degenerate chromaticities.  Points outside the table range (hotter
+        than ~infinite K or cooler than ~1667 K) clamp to the nearest end.
     """
+    xy = np.asarray(xy, dtype=float)
     x = xy[..., 0]
     y = xy[..., 1]
 
-    # Convert to CIE 1960 UCS (u, v) for Robertson isotherms
-    # u = 4x / (-2x + 12y + 3),  v = 6y / (-2x + 12y + 3)
+    # CIE 1931 xy -> CIE 1960 UCS (u, v)
     denom = -2.0 * x + 12.0 * y + 3.0
-    denom_safe = np.where(denom != 0, denom, 1.0)
-    u = 4.0 * x / denom_safe
-    v = 6.0 * y / denom_safe
+    ok = np.isfinite(denom) & (denom != 0)
+    denom_safe = np.where(ok, denom, 1.0)
+    u = (4.0 * x / denom_safe).ravel()
+    v = (6.0 * y / denom_safe).ravel()
+    ok = ok.ravel() & np.isfinite(u) & np.isfinite(v)
 
-    orig_shape = u.shape
-    u_flat = u.ravel()
-    v_flat = v.ravel()
-    n_pts = u_flat.shape[0]
+    mired = _ROBERTSON_TABLE[:, 0]
+    u_i = _ROBERTSON_TABLE[:, 1]
+    v_i = _ROBERTSON_TABLE[:, 2]
+    t_i = _ROBERTSON_TABLE[:, 3]
 
-    # Robertson table: u_i, v_i, slope_i (t_i is in col 2, slope in col 3)
-    # We use 30 entries (skip first sentinel row for computation)
-    tbl = _ROBERTSON_TABLE  # shape (31, 4)
-    u_r = tbl[:, 0]
-    v_r = tbl[:, 1]
-    # Compute slopes from adjacent points
-    # slope = (v[i+1] - v[i]) / (u[i+1] - u[i])  for each isotherm
-    slopes = np.zeros(len(tbl), dtype=float)
-    for i in range(len(tbl) - 1):
-        du = u_r[i + 1] - u_r[i]
-        if abs(du) > 1e-10:
-            slopes[i] = (v_r[i + 1] - v_r[i]) / du
+    # Signed distance from each point to each isotherm: (n_pts, 31).
+    # d < 0 on the high-CCT (low-mired) side of an isotherm, d > 0 on the
+    # low-CCT (high-mired) side.
+    d = ((v[:, None] - v_i[None, :]) - t_i[None, :] * (u[:, None] - u_i[None, :])) \
+        / np.sqrt(1.0 + t_i[None, :] ** 2)
+
+    cct = np.full(u.shape[0], np.nan)
+    n_rows = len(mired)
+    for pt in np.nonzero(ok)[0]:
+        dp = d[pt]
+        # First isotherm pair bracketing the point (sign change)
+        crossing = np.nonzero(
+            (dp[:-1] >= 0.0) != (dp[1:] >= 0.0)
+        )[0]
+        if crossing.size:
+            i = int(crossing[0])
+            d0, d1 = dp[i], dp[i + 1]
+            frac = d0 / (d0 - d1) if d0 != d1 else 0.0
+            m = mired[i] + (mired[i + 1] - mired[i]) * frac
+            cct_val = 1e6 / m if m > 0 else _CCT_MAX_K
+        elif dp[-1] >= 0.0:
+            # Low-CCT side of every isotherm -> cooler than the 600-mired end
+            cct_val = 1e6 / mired[n_rows - 1]
         else:
-            slopes[i] = 1e6
-    slopes[-1] = slopes[-2]
+            # High-CCT side of every isotherm -> hotter than the 0-mired end
+            cct_val = _CCT_MAX_K
+        cct[pt] = float(np.clip(cct_val, _CCT_MIN_K, _CCT_MAX_K))
 
-    cct_flat = np.full(n_pts, np.nan)
-
-    for pt in range(n_pts):
-        up = u_flat[pt]
-        vp = v_flat[pt]
-        # Skip dark pixels
-        if not (np.isfinite(up) and np.isfinite(vp)):
-            continue
-
-        # Compute Robertson distance d_i = (vp - v_i) - slope_i * (up - u_i)
-        d = (vp - v_r) - slopes * (up - u_r)
-
-        # Find first sign change
-        found = False
-        for i in range(len(d) - 1):
-            if np.isnan(d[i]) or np.isnan(d[i + 1]):
-                continue
-            if d[i] * d[i + 1] <= 0:
-                # Interpolate between isotherm i and i+1
-                di = abs(d[i])
-                di1 = abs(d[i + 1])
-                total = di + di1
-                if total < 1e-12:
-                    cct_val = _ROBERTSON_CCT_K[i]
-                else:
-                    # Interpolate in reciprocal Mired space
-                    t_i = 1e6 / _ROBERTSON_CCT_K[i]
-                    t_i1 = 1e6 / _ROBERTSON_CCT_K[min(i + 1, len(_ROBERTSON_CCT_K) - 1)]
-                    t_interp = t_i + (t_i1 - t_i) * di / total
-                    cct_val = 1e6 / t_interp if t_interp > 0 else _ROBERTSON_CCT_K[i]
-                cct_flat[pt] = float(np.clip(cct_val, 1000.0, 25000.0))
-                found = True
-                break
-
-        if not found:
-            # Use closest endpoint
-            closest = int(np.argmin(np.abs(d)))
-            cct_flat[pt] = float(np.clip(_ROBERTSON_CCT_K[min(closest, len(_ROBERTSON_CCT_K) - 1)], 1000.0, 25000.0))
-
-    return cct_flat.reshape(orig_shape)
+    return cct.reshape(np.shape(x))
 
 
 def compute_color_kpis(

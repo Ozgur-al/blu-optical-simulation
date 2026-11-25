@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
@@ -54,7 +56,9 @@ class GeometryBuilderDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Geometry Builder")
         self.setMinimumWidth(480)
-        self._project = project
+        # Build into a working copy; the caller applies it only on accept so a
+        # cancelled dialog (incl. after "Build LGP Scene") leaves the project untouched.
+        self._project = copy.deepcopy(project)
         self._built_lgp = False
 
         # Debounce timer for LED count preview (coalesces rapid spinbox edits)
@@ -261,6 +265,10 @@ class GeometryBuilderDialog(QDialog):
 
         root.addStretch()
         return container
+
+    def built_project(self) -> Project:
+        """Return the working-copy project with the built geometry (valid after accept)."""
+        return self._project
 
     def _on_lgp_mat_changed(self, idx: int):
         if idx == 0:  # PMMA preset

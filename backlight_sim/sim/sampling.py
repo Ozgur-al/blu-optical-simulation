@@ -116,13 +116,52 @@ def reflect_specular(directions: np.ndarray, normal: np.ndarray) -> np.ndarray:
     return directions - 2.0 * dot[:, None] * normal[None, :]
 
 
-def scatter_haze(directions: np.ndarray, half_angle_deg: float, rng: np.random.Generator) -> np.ndarray:
+def scatter_haze(
+    directions: np.ndarray,
+    half_angle_deg: float,
+    rng: np.random.Generator,
+    surface_normals: np.ndarray | None = None,
+) -> np.ndarray:
     """Perturb each direction within a cone of half_angle_deg.
 
     Uniform distribution within the cone. Returns (n, 3) unit vectors.
+
+    surface_normals : optional (3,) or (n, 3) array of oriented normals that
+        point into the hemisphere the scattered ray must stay in (i.e. the
+        reflection side).  When given, any perturbed direction that ends up
+        pointing into the surface (d . n <= 0) is mirrored about the surface
+        plane back into the correct hemisphere.
     """
     if half_angle_deg <= 0:
         return directions
+    result = _scatter_haze_cone(directions, half_angle_deg, rng)
+    if surface_normals is not None:
+        result = _fold_into_hemisphere(result, surface_normals)
+    return result
+
+
+def _fold_into_hemisphere(dirs: np.ndarray, normals: np.ndarray) -> np.ndarray:
+    """Mirror directions with d . n <= 0 about the plane with normal n."""
+    normals = np.asarray(normals, dtype=float)
+    if normals.ndim == 1:
+        normals = np.broadcast_to(normals, dirs.shape)
+    dot = np.einsum("ij,ij->i", dirs, normals)
+    bad = dot <= 0.0
+    if bad.any():
+        dirs = dirs.copy()
+        # d' = d - 2 (d.n) n ; tiny push for exactly-tangent rays
+        dirs[bad] = dirs[bad] - 2.0 * dot[bad, None] * normals[bad]
+        still = np.einsum("ij,ij->i", dirs[bad], normals[bad]) <= 0.0
+        if still.any():
+            idx = np.nonzero(bad)[0][still]
+            dirs[idx] = dirs[idx] + 1e-9 * normals[idx]
+        dirs[bad] /= np.linalg.norm(dirs[bad], axis=1, keepdims=True)
+    return dirs
+
+
+def _scatter_haze_cone(directions: np.ndarray, half_angle_deg: float,
+                       rng: np.random.Generator) -> np.ndarray:
+    """Uniform-in-solid-angle perturbation within a cone (no hemisphere check)."""
     n = len(directions)
     max_theta = np.radians(half_angle_deg)
     # Uniform within cone: cos(theta) in [cos(max_theta), 1]
@@ -143,6 +182,31 @@ def scatter_haze(directions: np.ndarray, half_angle_deg: float, rng: np.random.G
                       sin_theta[i] * np.sin(phi[i]) * b +
                       cos_theta[i] * d)
     return result
+
+
+def bsdf_row_albedo(bsdf_profile: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Return per-theta_in-row (reflect, transmit) albedo of a BSDF profile.
+
+    Uses the same sin-weighted integral over theta_out as
+    ``io.bsdf_io.validate_bsdf`` (which rejects rows whose sum exceeds 1), so
+    ``1 - (R + T)`` is the fraction the surface absorbs. Values are clipped to
+    >= 0 and the sum is capped at 1 so the tracer can never create energy.
+    """
+    refl = np.maximum(np.asarray(bsdf_profile["refl_intensity"], dtype=float), 0.0)
+    trans = np.maximum(np.asarray(bsdf_profile["trans_intensity"], dtype=float), 0.0)
+    theta_out = np.asarray(bsdf_profile.get("theta_out", []), dtype=float)
+    if refl.ndim == 2 and theta_out.ndim == 1 and theta_out.size >= 2 \
+            and theta_out.size == refl.shape[1]:
+        rad = np.radians(theta_out)
+        weight = np.sin(rad) * np.gradient(rad)
+        r_alb = (refl * weight).sum(axis=1)
+        t_alb = (trans * weight).sum(axis=1)
+    else:
+        r_alb = refl.reshape(refl.shape[0], -1).sum(axis=1)
+        t_alb = trans.reshape(trans.shape[0], -1).sum(axis=1)
+    total = r_alb + t_alb
+    scale = np.where(total > 1.0, 1.0 / np.maximum(total, 1e-300), 1.0)
+    return r_alb * scale, t_alb * scale
 
 
 def precompute_bsdf_cdfs(bsdf_profile: dict) -> dict:
@@ -215,11 +279,15 @@ def precompute_bsdf_cdfs(bsdf_profile: dict) -> dict:
         else:
             trans_cdf[i] = np.linspace(0.0, 1.0, N_GRID)  # fallback: uniform
 
+    refl_albedo, trans_albedo = bsdf_row_albedo(bsdf_profile)
+
     return {
         "theta_in": theta_in,
         "theta_out_grid": grid,
         "refl_cdf": refl_cdf,
         "trans_cdf": trans_cdf,
+        "refl_albedo": refl_albedo,
+        "trans_albedo": trans_albedo,
         "refl_total": refl_total,
         "trans_total": trans_total,
     }
@@ -283,8 +351,7 @@ def sample_bsdf(
     theta_i_deg = np.degrees(np.arccos(cos_i))  # (n,)
 
     # Find nearest theta_in bin per ray
-    bin_idx = np.searchsorted(theta_in_vals, theta_i_deg, side="right") - 1
-    bin_idx = np.clip(bin_idx, 0, M - 1)
+    bin_idx = nearest_theta_in_bin(theta_in_vals, theta_i_deg)
 
     # Sample theta_out via CDF inversion per ray
     u = rng.uniform(0.0, 1.0, size=n)
@@ -323,6 +390,22 @@ def sample_bsdf(
     norms = np.linalg.norm(directions, axis=1, keepdims=True)
     norms = np.maximum(norms, 1e-12)
     return directions / norms
+
+
+def nearest_theta_in_bin(theta_in_vals: np.ndarray, theta_deg: np.ndarray) -> np.ndarray:
+    """Index of the nearest entry in sorted ``theta_in_vals`` for each angle.
+
+    Ties (exact midpoint) resolve to the lower bin.
+    """
+    theta_in_vals = np.asarray(theta_in_vals, dtype=float)
+    theta_deg = np.asarray(theta_deg, dtype=float)
+    M = len(theta_in_vals)
+    if M <= 1:
+        return np.zeros(theta_deg.shape, dtype=int)
+    hi = np.clip(np.searchsorted(theta_in_vals, theta_deg, side="left"), 1, M - 1)
+    lo = hi - 1
+    pick_hi = np.abs(theta_in_vals[hi] - theta_deg) < np.abs(theta_deg - theta_in_vals[lo])
+    return np.where(pick_hi, hi, lo)
 
 
 def _build_basis(normal: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
