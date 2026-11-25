@@ -128,6 +128,16 @@ def test_dialog_active_area_mode_builds_plate_and_detector(dialog):
     xs = sorted({s.position[0] for s in p.sources})
     assert xs[0] == pytest.approx(-54.0 + 9.0)
     assert p.detectors[0].size == pytest.approx((100.0, 50.0))
+    # Default emitting surface = whole LED top face (3 x 3 package).
+    assert all(src.emitter_size == (3.0, 3.0) for src in p.sources)
+
+
+def test_dialog_custom_emitting_area(dialog):
+    dialog._emit_mode.setCurrentIndex(1)
+    dialog._emit_x.setValue(1.2)
+    dialog._emit_y.setValue(0.6)
+    dialog._on_accept()
+    assert {s.emitter_size for s in dialog.built_project().sources} == {(1.2, 0.6)}
 
 
 def test_dialog_blocks_diffuser_above_detector(dialog):

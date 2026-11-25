@@ -183,6 +183,16 @@ static py::dict run_bounce_loop(
     batch.ox.assign(n_rays, source.px);
     batch.oy.assign(n_rays, source.py);
     batch.oz.assign(n_rays, source.pz);
+    if (source.ex > 0.0 || source.ey > 0.0) {
+        // Area emitter: uniform start points over the emitting rectangle.
+        std::uniform_real_distribution<double> half(-0.5, 0.5);
+        for (int i = 0; i < n_rays; ++i) {
+            const double a = half(rng) * source.ex, b = half(rng) * source.ey;
+            batch.ox[i] += a * source.ux + b * source.vx;
+            batch.oy[i] += a * source.uy + b * source.vy;
+            batch.oz[i] += a * source.uz + b * source.vz;
+        }
+    }
     batch.dx.assign(n_rays, 0.0);
     batch.dy.assign(n_rays, 0.0);
     batch.dz.assign(n_rays, 0.0);
@@ -434,6 +444,14 @@ py::dict trace_source(py::dict project_dict, std::string source_name, int seed) 
         source.effective_flux = src["effective_flux"].cast<double>();
         source.distribution = src["distribution"].cast<std::string>();
         source.enabled = true;
+        if (src.contains("emitter_size")) {
+            auto es = src["emitter_size"].cast<py::list>();
+            auto eu = list_to_arr3(src["emitter_u"]);
+            auto ev = list_to_arr3(src["emitter_v"]);
+            source.ex = es[0].cast<double>(); source.ey = es[1].cast<double>();
+            source.ux = eu[0]; source.uy = eu[1]; source.uz = eu[2];
+            source.vx = ev[0]; source.vy = ev[1]; source.vz = ev[2];
+        }
         found = true;
         break;
     }
@@ -569,6 +587,9 @@ py::dict trace_source(py::dict project_dict, std::string source_name, int seed) 
 
 PYBIND11_MODULE(blu_tracer, m) {
     m.doc() = "BluOpticalSim C++ Monte Carlo ray tracer core (pybind11)";
+    // Feature flag: Python routes area-emitter sources here only when set,
+    // so an older prebuilt module falls back to the Python path instead.
+    m.attr("SUPPORTS_AREA_EMITTER") = true;
     m.def("trace_source", &trace_source,
           py::arg("project_dict"),
           py::arg("source_name"),

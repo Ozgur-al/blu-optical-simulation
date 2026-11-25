@@ -218,6 +218,19 @@ class GeometryBuilderDialog(QDialog):
         led_size_row.addWidget(QLabel("×"))
         led_size_row.addWidget(self._led_wid)
         lf.addRow("LED size X × Y:", led_size_row)
+        self._emit_mode = QComboBox()
+        self._emit_mode.addItems(["Whole top face", "Custom emitting area", "Point"])
+        self._emit_mode.setToolTip(
+            "Surface the light leaves from. Rays start uniformly over it and the "
+            "angular distribution is applied about its normal (+Z).")
+        lf.addRow("Emitting surface:", self._emit_mode)
+        self._emit_x = _dspin(1.5, 0.01, 100.0, 2, 0.1)
+        self._emit_y = _dspin(1.5, 0.01, 100.0, 2, 0.1)
+        emit_row = QHBoxLayout()
+        emit_row.addWidget(self._emit_x)
+        emit_row.addWidget(QLabel("×"))
+        emit_row.addWidget(self._emit_y)
+        lf.addRow("Emitter X × Y:", emit_row)
         self._led_flux = _dspin(100.0, 0.0, 1e7, 1, 10.0)
         self._flux_mode = QComboBox()
         self._flux_mode.addItems(["Per LED", "Total (split evenly)"])
@@ -259,8 +272,9 @@ class GeometryBuilderDialog(QDialog):
         # Everything shown in the readout / preview refreshes live.
         for w in (self._cav_w, self._cav_h, self._cav_d, self._wall_angle_x, self._wall_angle_y,
                   self._diff_dist, self._film1_z, self._film2_z, self._led_flux, self._led_z,
-                  self._led_len, self._led_wid):
+                  self._led_len, self._led_wid, self._emit_x, self._emit_y):
             w.valueChanged.connect(self._schedule_preview)
+        self._emit_mode.currentIndexChanged.connect(self._sync_count_mode)
         for w in (self._aa_w, self._aa_h, self._margin_x, self._margin_y):
             w.valueChanged.connect(self._sync_size_mode)
         self._size_mode.currentIndexChanged.connect(self._sync_size_mode)
@@ -444,6 +458,18 @@ class GeometryBuilderDialog(QDialog):
             w.setEnabled(use_count)
         for w in (self._pitch_x, self._pitch_y):
             w.setEnabled(not use_count)
+        custom = self._emit_mode.currentIndex() == 1
+        self._emit_x.setEnabled(custom)
+        self._emit_y.setEnabled(custom)
+        self._schedule_preview()
+
+    def _emitter_size(self) -> tuple[float, float]:
+        mode = self._emit_mode.currentIndex()
+        if mode == 0:
+            return (self._led_len.value(), self._led_wid.value())
+        if mode == 1:
+            return (self._emit_x.value(), self._emit_y.value())
+        return (0.0, 0.0)
 
     def _led_positions(self) -> tuple[list[float], list[float]]:
         """LED X/Y positions exactly as build_led_grid() will place them."""
@@ -465,6 +491,9 @@ class GeometryBuilderDialog(QDialog):
                 msgs.append(f"LEDs overlap in {axis}: pitch is smaller than the LED size.")
             if takeoff < size / 2.0:
                 msgs.append(f"Takeoff {axis} is less than half the LED size: LEDs hang over the plate edge.")
+        ex, ey = self._emitter_size()
+        if ex > self._led_len.value() or ey > self._led_wid.value():
+            msgs.append("Emitting area is larger than the LED package.")
         if self._diff_dist.value() > 0 and self._diff_dist.value() <= self._led_z.value():
             msgs.append("OD is not above the LED height: the diffuser cuts through the LEDs.")
         stack = self._stack_block_warning()
@@ -651,6 +680,7 @@ class GeometryBuilderDialog(QDialog):
             replace_existing=True,
             count_x=count_x,
             count_y=count_y,
+            emitter_size=self._emitter_size(),
         )
 
         QMessageBox.information(

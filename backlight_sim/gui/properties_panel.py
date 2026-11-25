@@ -374,6 +374,16 @@ class SourceForm(QWidget):
         self._dist = QComboBox()
         self._dist.addItems(["isotropic", "lambertian"])
         fl_emission.addRow("Distribution:", self._dist)
+        self._emit_x = _dspin(0, 1000, 2, 0.0, 0.1)
+        self._emit_y = _dspin(0, 1000, 2, 0.0, 0.1)
+        for w in (self._emit_x, self._emit_y):
+            w.setToolTip("Emitting surface size, centred on the position and facing the "
+                         "source direction. Rays start uniformly over it; 0 × 0 = point.")
+        emit_row = QHBoxLayout()
+        emit_row.addWidget(self._emit_x)
+        emit_row.addWidget(QLabel("×"))
+        emit_row.addWidget(self._emit_y)
+        fl_emission.addRow("Emitter X × Y:", emit_row)
         sec_emission.addLayout(fl_emission)
         vbox.addWidget(sec_emission)
 
@@ -441,7 +451,8 @@ class SourceForm(QWidget):
         self._loading = False
         for w in (self._px, self._py, self._pz, self._flux, self._tolerance,
                   self._current, self._flux_per_mA, self._thermal,
-                  self._cr, self._cg, self._cb, self._pos_sigma):
+                  self._cr, self._cg, self._cb, self._pos_sigma,
+                  self._emit_x, self._emit_y):
             w.valueChanged.connect(self._apply)
         self._dist.currentIndexChanged.connect(self._apply)
         self._spd.currentTextChanged.connect(self._apply)
@@ -480,8 +491,12 @@ class SourceForm(QWidget):
             QSignalBlocker(self._cb),
             QSignalBlocker(self._spd),
             QSignalBlocker(self._pos_sigma),
+            QSignalBlocker(self._emit_x),
+            QSignalBlocker(self._emit_y),
         ]
         self._name.setText(src.name)
+        self._emit_x.setValue(src.emitter_size[0])
+        self._emit_y.setValue(src.emitter_size[1])
         self._enabled.setChecked(src.enabled)
         self._px.setValue(src.position[0])
         self._py.setValue(src.position[1])
@@ -565,6 +580,7 @@ class SourceForm(QWidget):
             ('thermal_derate', self._thermal.value()),
             ('color_rgb', (self._cr.value(), self._cg.value(), self._cb.value())),
             ('spd', self._spd.currentText()),
+            ('emitter_size', (self._emit_x.value(), self._emit_y.value())),
         ]
         _push_or_apply_changes(self._src, changes,
                                getattr(self, '_push_command', None),

@@ -22,6 +22,28 @@ class PointSource:
     color_rgb: tuple[float, float, float] = (1.0, 1.0, 1.0)  # LED color as (R, G, B) weights 0-1
     # Spectral power distribution: "white" | "warm_white" | "cool_white" | "mono_<nm>" | custom key
     spd: str = "white"
+    # Emitting surface: a rectangle (X, Y) centred on `position`, facing
+    # `direction`. Rays start uniformly over it and the angular distribution
+    # is taken about its normal. (0, 0) = point emitter.
+    emitter_size: tuple[float, float] = (0.0, 0.0)
+
+    def emitter_axes(self) -> tuple[np.ndarray, np.ndarray]:
+        """In-plane (u, v) axes of the emitting surface; (X, Y) when facing +Z."""
+        d = self.direction
+        ref = np.array([0.0, 1.0, 0.0]) if abs(d[1]) < 0.99 else np.array([0.0, 0.0, 1.0])
+        u = np.cross(ref, d)
+        u /= np.linalg.norm(u)
+        return u, np.cross(d, u)
+
+    def sample_origins(self, n: int, rng) -> np.ndarray:
+        """(n, 3) ray start points, uniform over the emitting surface."""
+        sx, sy = (float(v) for v in self.emitter_size)
+        origins = np.tile(self.position, (n, 1))
+        if sx > 0 or sy > 0:
+            u, v = self.emitter_axes()
+            r = rng.uniform(-0.5, 0.5, size=(n, 2))
+            origins = origins + np.outer(r[:, 0] * sx, u) + np.outer(r[:, 1] * sy, v)
+        return origins
 
     @property
     def effective_flux(self) -> float:
@@ -33,6 +55,7 @@ class PointSource:
 
     def __post_init__(self):
         self.position = np.asarray(self.position, dtype=float)
+        self.emitter_size = (float(self.emitter_size[0]), float(self.emitter_size[1]))
         if self.direction is None:
             self.direction = np.array([0.0, 0.0, 1.0])
         else:

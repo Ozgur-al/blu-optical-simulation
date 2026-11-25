@@ -294,3 +294,21 @@ Use each `Session ID` like a lightweight commit message reference.
 ### Validation
 - Linux build of `blu_tracer` (py3.13): `pytest backlight_sim/tests` → 341 passed, 3 skipped; `pytest backlight_sim/tests/golden` → 21 passed.
 - Offscreen screenshot of the Direct-Lit tab checked by eye.
+
+## Session ID: S2026-11-25-04
+**Title:** LED emitting surface (area emitter)
+**Status:** Completed
+
+### What was done
+- `PointSource.emitter_size` (X, Y): rectangle centred on `position`, facing `direction`; rays start uniformly over it and the angular distribution is sampled about its normal. (0, 0) = point emitter (unchanged behaviour, no extra RNG draws). `emitter_axes()` gives (X, Y) for a +Z-facing LED.
+- Python tracer and C++ `trace_source` both sample origins over the surface; recorded ray paths start at the sampled origin. The C++ module exports `SUPPORTS_AREA_EMITTER`; without it (older prebuilt .pyd) area-emitter scenes route to the Python path.
+- Project JSON: `emitter_size` (defaults to point on older files).
+- Geometry Builder: "Emitting surface" = whole top face (LED size) / custom area / point; warns when the area exceeds the package. Properties panel: per-source Emitter X × Y.
+
+### Files touched
+- `backlight_sim/core/sources.py`, `backlight_sim/sim/tracer.py`, `backlight_sim/sim/_blu_tracer/src/{types.hpp,blu_tracer.cpp}`, `backlight_sim/io/{project_io,geometry_builder}.py`, `backlight_sim/gui/{geometry_builder,properties_panel}.py`
+- Tests: new `test_area_emitter.py`; `test_geometry_builder.py` extended
+
+### Validation
+- Linux py3.13 build of `blu_tracer`: `pytest backlight_sim/tests` → 347 passed, 3 skipped; golden → 21 passed. Footprint test passes on both the C++ and forced-Python paths.
+- **The bundled Windows .pyd must be rebuilt** to get the C++ fast path for area emitters.
