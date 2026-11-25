@@ -31,7 +31,14 @@ class _DraggableLED(pg.TargetItem):
         )
         self.led_name = name
         from backlight_sim.gui.theme import TEXT_PRIMARY
-        self.setLabel(name, {"color": TEXT_PRIMARY, "size": "8pt"})
+        # TargetLabel forwards opts to TextItem, which has no "size" kwarg —
+        # set the font on the label item instead.
+        self.setLabel(name, {"color": TEXT_PRIMARY})
+        lbl = self.label()
+        if lbl is not None:
+            font = lbl.textItem.font()
+            font.setPointSize(8)
+            lbl.setFont(font)
         self.sigPositionChanged.connect(self._on_moved)
 
     def _on_moved(self):
@@ -45,15 +52,15 @@ class LEDLayoutEditor(QDialog):
     def __init__(self, project: Project, parent=None):
         super().__init__(parent)
         self.setWindowTitle("LED Layout Editor (Top View)")
-        self.setMinimumWidth(600)
-        self.setMinimumHeight(500)
+        self.setMinimumSize(480, 380)
+        self.resize(820, 640)
         self._project = project
         self._markers: dict[str, _DraggableLED] = {}
 
         layout = QVBoxLayout(self)
 
         info = QLabel("Drag LEDs to reposition. Changes apply immediately to the project.")
-        info.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
+        info.setStyleSheet(f"color: {TEXT_MUTED};")
         layout.addWidget(info)
 
         # 2D plot

@@ -7,7 +7,7 @@ import datetime
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtWidgets import (
-    QMainWindow,
+    QApplication, QMainWindow,
     QProgressBar, QStatusBar, QMessageBox, QFileDialog, QPushButton,
     QTextEdit, QLabel, QToolBar, QSplitter, QTabWidget, QWidget,
     QHBoxLayout, QFrame,
@@ -47,6 +47,7 @@ from backlight_sim.gui.convergence_tab import ConvergenceTab
 from backlight_sim.gui.receiver_3d import Receiver3DWidget
 from backlight_sim.gui.spectral_data_panel import SpectralDataPanel
 from backlight_sim.io.angular_distributions import merge_default_profiles
+from backlight_sim.gui.widgets.screen_fit import install_screen_fit, fit_to_screen, ensure_on_screen
 
 
 def _cpp_active() -> bool:
@@ -105,7 +106,12 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Blu Optical Simulation")
-        self.resize(1440, 920)
+        app = QApplication.instance()
+        if app is not None:
+            install_screen_fit(app)
+        # Preferred 1440x920, clamped to the available screen (laptops at
+        # 125-150 % scaling only offer ~1500x800 logical pixels).
+        fit_to_screen(self, (1440, 920))
 
 
         self._project = Project()
@@ -142,7 +148,6 @@ class MainWindow(QMainWindow):
 
         self._setup_ui()
         self._setup_menu()
-        self._setup_quick_actions_bar()
         self._setup_toolbar()
         self._setup_shortcuts()
         self._connect_signals()
@@ -435,123 +440,100 @@ class MainWindow(QMainWindow):
         act.setStatusTip("Open a 2D top-view editor to drag and reposition LEDs")
 
     def _setup_toolbar(self):
-        """Raydient branding toolbar: brand identity · view mode · camera presets."""
-        toolbar = QToolBar("Brand Toolbar")
-        toolbar.setObjectName("brand_toolbar")
+        """Single compact top bar: brand · file actions · command echo · camera · Redo/Run."""
+        toolbar = QToolBar("Main Toolbar")
+        toolbar.setObjectName("main_toolbar")
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
 
         container = QWidget()
-        container.setStyleSheet("background: transparent;")
+        container.setObjectName("main_toolbar_row")
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(12, 4, 12, 4)
-        layout.setSpacing(0)
+        layout.setContentsMargins(6, 0, 6, 0)
+        layout.setSpacing(6)
 
-        # ── LEFT: brand identity ──────────────────────────────────────────
+        def _vsep():
+            sep = QFrame()
+            sep.setFrameShape(QFrame.Shape.VLine)
+            sep.setFixedWidth(1)
+            sep.setFixedHeight(18)
+            sep.setStyleSheet(f"background: {LINE_COLOR}; border: none;")
+            return sep
+
+        # ── brand ─────────────────────────────────────────────────────────
         brand_dot = QLabel()
-        brand_dot.setFixedSize(20, 20)
+        brand_dot.setFixedSize(14, 14)
         brand_dot.setStyleSheet(
             "background: qradialgradient(cx:0.4, cy:0.35, radius:0.65,"
             " fx:0.4, fy:0.35, stop:0 #f4c265, stop:0.55 #e8b04a, stop:1 #b07820);"
-            "border-radius: 10px;"
+            "border-radius: 7px;"
         )
         layout.addWidget(brand_dot)
-        layout.addSpacing(9)
-
         brand_name = QLabel("Raydient")
         brand_name.setStyleSheet(
-            "font-family: 'Inter', 'Segoe UI', sans-serif;"
-            f"font-size: 13pt; font-weight: 700; color: {TEXT_PRIMARY};"
-            "letter-spacing: -0.3px; background: transparent;"
+            f"font-size: 11pt; font-weight: 700; color: {TEXT_PRIMARY}; background: transparent;"
         )
         layout.addWidget(brand_name)
-        layout.addSpacing(10)
+        layout.addSpacing(6)
+        layout.addWidget(_vsep())
 
-        subtitle = QLabel("Automotive cluster backlight · iteration 04")
-        subtitle.setStyleSheet(
+        # ── file actions ──────────────────────────────────────────────────
+        for label, slot, tip in (
+            ("New",  self._new_project,  "New project (Ctrl+N)"),
+            ("Open", self._open_project, "Open project (Ctrl+O)"),
+            ("Save", self._save_project, "Save project (Ctrl+S)"),
+        ):
+            btn = QPushButton(label)
+            btn.setProperty("toolbar_btn", True)
+            btn.setToolTip(tip)
+            btn.clicked.connect(slot)
+            layout.addWidget(btn)
+        layout.addWidget(_vsep())
+
+        # ── last command echo (fills spare width) ────────────────────────
+        self._cmd_echo = QLabel("Ready")
+        self._cmd_echo.setStyleSheet(
             "font-family: 'JetBrains Mono', 'Consolas', monospace;"
-            f"font-size: 8pt; color: {TEXT_MUTED}; background: transparent;"
+            f"font-size: 9pt; color: {TEXT_MUTED}; padding: 0 4px; background: transparent;"
         )
-        layout.addWidget(subtitle)
+        self._cmd_echo.setMinimumWidth(60)
+        layout.addWidget(self._cmd_echo, 1)
 
-        layout.addStretch(1)
-
-        # ── RIGHT: camera presets ─────────────────────────────────────────
+        # ── camera presets (segmented) ────────────────────────────────────
         cam_seg = QFrame()
+        cam_seg.setObjectName("cam_seg")
         cam_seg.setStyleSheet(
-            f"QFrame {{ background: {BG_INPUT}; border: 1px solid {LINE_COLOR}; border-radius: 5px; }}"
+            f"QFrame#cam_seg {{ background: {BG_INPUT}; border: 1px solid {LINE_COLOR}; border-radius: 5px; }}"
         )
         cam_seg_layout = QHBoxLayout(cam_seg)
         cam_seg_layout.setContentsMargins(2, 2, 2, 2)
         cam_seg_layout.setSpacing(1)
-
         for label, preset in (("ISO", "xy+"), ("Top", "xz+"), ("Side", "yz+"), ("Front", "yz-")):
             btn = QPushButton(label)
             btn.setProperty("seg_btn", True)
+            btn.setToolTip(f"Camera: {label} view")
             btn.clicked.connect(lambda _=False, p=preset: self._set_view_preset(p))
             cam_seg_layout.addWidget(btn)
-
         layout.addWidget(cam_seg)
-        toolbar.addWidget(container)
+        layout.addWidget(_vsep())
 
-    def _setup_quick_actions_bar(self):
-        """QuickActions bar: New / Open / Save · command echo · Redo · Run."""
-        qa_bar = QToolBar("Quick Actions")
-        qa_bar.setObjectName("quick_actions_bar")
-        qa_bar.setMovable(False)
-        qa_bar.setFloatable(False)
-
-        container = QWidget()
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(8, 3, 8, 3)
-        layout.setSpacing(4)
-
-        for label, slot, tip in (
-            ("New Project", self._new_project,  "New Project (Ctrl+N)"),
-            ("Open",        self._open_project,  "Open project (Ctrl+O)"),
-            ("Save",        self._save_project,  "Save project (Ctrl+S)"),
-        ):
-            btn = QPushButton(label)
-            btn.setToolTip(tip)
-            btn.setFixedHeight(26)
-            btn.clicked.connect(slot)
-            layout.addWidget(btn)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setFixedWidth(1)
-        sep.setStyleSheet("background: #48433e; margin: 4px 2px;")
-        layout.addWidget(sep)
-
-        self._cmd_echo = QLabel("Ready")
-        self._cmd_echo.setStyleSheet(
-            "font-family: 'JetBrains Mono', 'Consolas', monospace;"
-            "font-size: 9pt; color: #807c74; padding: 0 6px;"
-        )
-        self._cmd_echo.setMaximumWidth(260)
-        layout.addWidget(self._cmd_echo, 1)
-
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.VLine)
-        sep2.setFixedWidth(1)
-        sep2.setStyleSheet("background: #48433e; margin: 4px 2px;")
-        layout.addWidget(sep2)
-
+        # ── undo/redo + primary action ────────────────────────────────────
+        undo_btn = QPushButton("Undo")
+        undo_btn.setProperty("toolbar_btn", True)
+        undo_btn.setToolTip("Undo (Ctrl+Z)")
+        undo_btn.clicked.connect(self._undo_stack.undo)
+        layout.addWidget(undo_btn)
         redo_btn = QPushButton("Redo")
+        redo_btn.setProperty("toolbar_btn", True)
         redo_btn.setToolTip("Redo (Ctrl+Y)")
-        redo_btn.setFixedHeight(26)
         redo_btn.clicked.connect(self._undo_stack.redo)
         layout.addWidget(redo_btn)
 
-        self._run_btn.setFixedHeight(26)
-        self._run_btn.setMinimumWidth(68)
+        self._run_btn.setMinimumWidth(76)
         layout.addWidget(self._run_btn)
 
-        qa_bar.addWidget(container)
-        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, qa_bar)
-        self.addToolBarBreak(Qt.ToolBarArea.TopToolBarArea)
-
+        toolbar.addWidget(container)
         self._undo_stack.indexChanged.connect(self._update_cmd_echo)
 
     def _update_cmd_echo(self, index: int) -> None:
@@ -680,6 +662,8 @@ class MainWindow(QMainWindow):
         geom = settings.value("geometry")
         if geom is not None:
             self.restoreGeometry(geom)
+            # Saved on a bigger monitor? Pull it back onto the current screen.
+            ensure_on_screen(self)
         # Restore tabs
         saved_tabs = settings.value("open_tabs")
         if isinstance(saved_tabs, str):

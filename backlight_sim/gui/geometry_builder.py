@@ -31,6 +31,7 @@ from backlight_sim.core.project_model import Project
 
 from backlight_sim.io.geometry_builder import build_cavity, build_led_grid, build_optical_stack, build_lgp_scene
 from backlight_sim.gui.theme import TEXT_MUTED, KPI_GREEN
+from backlight_sim.gui.widgets.screen_fit import fit_to_screen, scrollable
 
 
 def _dspin(val=0.0, lo=0.0, hi=9999.0, decimals=1, step=1.0):
@@ -55,7 +56,6 @@ class GeometryBuilderDialog(QDialog):
     def __init__(self, project: Project, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Geometry Builder")
-        self.setMinimumWidth(480)
         # Build into a working copy; the caller applies it only on accept so a
         # cancelled dialog (incl. after "Build LGP Scene") leaves the project untouched.
         self._project = copy.deepcopy(project)
@@ -70,8 +70,9 @@ class GeometryBuilderDialog(QDialog):
         root = QVBoxLayout(self)
 
         self._tabs = QTabWidget()
-        self._tabs.addTab(self._create_direct_lit_tab(), "Direct-Lit Cavity")
-        self._tabs.addTab(self._create_lgp_tab(), "LGP")
+        # Each tab scrolls on its own so the dialog never outgrows the screen.
+        self._tabs.addTab(scrollable(self._create_direct_lit_tab()), "Direct-Lit Cavity")
+        self._tabs.addTab(scrollable(self._create_lgp_tab()), "LGP")
         root.addWidget(self._tabs)
 
         bbox = QDialogButtonBox(
@@ -82,6 +83,7 @@ class GeometryBuilderDialog(QDialog):
         root.addWidget(bbox)
 
         self._preview_count()
+        fit_to_screen(self, (900, 700))
 
     # ------------------------------------------------------------------
     # Direct-Lit tab
@@ -89,7 +91,13 @@ class GeometryBuilderDialog(QDialog):
 
     def _create_direct_lit_tab(self) -> QWidget:
         container = QWidget()
-        root = QVBoxLayout(container)
+        cols = QHBoxLayout(container)
+        cols.setSpacing(12)
+        left_col = QVBoxLayout()
+        right_col = QVBoxLayout()
+        cols.addLayout(left_col, 1)
+        cols.addLayout(right_col, 1)
+        root = left_col
 
         cav = QGroupBox("Cavity Dimensions")
         cf = QFormLayout(cav)
@@ -140,8 +148,9 @@ class GeometryBuilderDialog(QDialog):
         df.addRow("", self._add_det)
         df.addRow("Resolution X:", self._det_rx)
         df.addRow("Resolution Y:", self._det_ry)
-        root.addWidget(det)
+        root.addStretch()
 
+        root = right_col
         led = QGroupBox("LED Grid")
         lf = QFormLayout(led)
         self._use_count = QCheckBox("Specify number of LEDs (auto pitch)")
@@ -162,8 +171,9 @@ class GeometryBuilderDialog(QDialog):
         self._pitch_y.valueChanged.connect(self._schedule_preview)
         lf.addRow("Pitch X:", self._pitch_x)
         lf.addRow("Pitch Y:", self._pitch_y)
-        self._pitch_lbl = QLabel("(or set Count X/Y and check 'Specify number of LEDs' to auto-calculate)")
-        self._pitch_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 9px;")
+        self._pitch_lbl = QLabel("Or set Count X/Y and tick 'Specify number of LEDs' to auto-calculate pitch.")
+        self._pitch_lbl.setWordWrap(True)
+        self._pitch_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 8pt;")
         lf.addRow("", self._pitch_lbl)
 
         self._edge_x = _dspin(10.0, 0.0, 500.0, 1, 1.0)
@@ -186,6 +196,7 @@ class GeometryBuilderDialog(QDialog):
         self._btn_preview.clicked.connect(self._preview_count)
         lf.addRow("", self._btn_preview)
         root.addWidget(led)
+        root.addWidget(det)
 
         root.addStretch()
         return container

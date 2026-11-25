@@ -85,9 +85,14 @@ def apply_dark_theme(app: QApplication) -> None:
     """
     _register_application_fonts(app)
 
-    qss_path = os.path.join(os.path.dirname(__file__), "dark.qss")
+    theme_dir = os.path.dirname(os.path.abspath(__file__))
+    qss_path = os.path.join(theme_dir, "dark.qss")
     with open(qss_path, encoding="utf-8") as fh:
         qss_content = fh.read()
+    # Icon URLs in the QSS use an @ICONS@ placeholder; Qt needs an absolute,
+    # forward-slash path (works in dev and in the PyInstaller bundle).
+    icons_dir = os.path.join(theme_dir, "icons").replace("\\", "/")
+    qss_content = qss_content.replace("@ICONS@", icons_dir)
     app.setStyleSheet(qss_content)
 
     # pyqtgraph defaults — must precede any pg widget construction

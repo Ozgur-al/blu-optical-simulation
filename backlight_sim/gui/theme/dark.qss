@@ -127,8 +127,8 @@ QMenu::separator {
 QToolBar {
     background-color: #1c1a18;
     border-bottom: 1px solid #48433e;
-    spacing: 5px;
-    padding: 4px 8px;
+    spacing: 4px;
+    padding: 3px 4px;
 }
 
 QToolBar::separator {
@@ -160,6 +160,26 @@ QToolButton:checked {
     background-color: #36322e;
     border-color: #e8b04a;
     color: #f1ede4;
+}
+
+/* Collapsible section headers (CollapsibleSection) — quiet divider, not a box */
+QToolButton#section_header,
+QToolButton#section_header:checked {
+    background-color: transparent;
+    color: #c5c0b6;
+    border: none;
+    border-bottom: 1px solid #36322e;
+    border-radius: 0px;
+    padding: 6px 2px 4px 0px;
+    font-size: 9pt;
+    font-weight: 600;
+    text-align: left;
+}
+
+QToolButton#section_header:hover {
+    color: #f1ede4;
+    border-bottom-color: #7ec3d6;
+    background-color: transparent;
 }
 
 /* ---- Scene outliner header + search ---- */
@@ -304,8 +324,6 @@ QHeaderView::section {
     border-bottom: 1px solid #48433e;
     font-size: 9pt;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
 
 QHeaderView::section:hover {
@@ -341,10 +359,10 @@ QSpinBox {
     color: #f1ede4;
     border: 1px solid #48433e;
     border-radius: 5px;
-    padding: 4px 4px 4px 8px;
+    padding: 3px 20px 3px 8px;
     selection-background-color: #7ec3d6;
     selection-color: #161412;
-    min-height: 22px;
+    min-height: 20px;
 }
 
 QDoubleSpinBox:focus,
@@ -361,61 +379,68 @@ QSpinBox:disabled {
 
 QDoubleSpinBox::up-button,
 QSpinBox::up-button {
-    background-color: #36322e;
-    border: none;
-    border-left: 1px solid #48433e;
-    border-bottom: 1px solid #48433e;
-    width: 16px;
     subcontrol-origin: border;
     subcontrol-position: top right;
-}
-
-QDoubleSpinBox::up-button:hover,
-QSpinBox::up-button:hover {
-    background-color: #7ec3d6;
+    width: 18px;
+    background-color: transparent;
+    border: none;
+    border-left: 1px solid #36322e;
+    border-top-right-radius: 5px;
+    margin-top: 1px;
 }
 
 QDoubleSpinBox::down-button,
 QSpinBox::down-button {
-    background-color: #36322e;
-    border: none;
-    border-left: 1px solid #48433e;
     subcontrol-origin: border;
     subcontrol-position: bottom right;
-    width: 16px;
+    width: 18px;
+    background-color: transparent;
+    border: none;
+    border-left: 1px solid #36322e;
+    border-bottom-right-radius: 5px;
+    margin-bottom: 1px;
 }
 
+QDoubleSpinBox::up-button:hover,
+QSpinBox::up-button:hover,
 QDoubleSpinBox::down-button:hover,
 QSpinBox::down-button:hover {
-    background-color: #7ec3d6;
+    background-color: #36322e;
+}
+
+QDoubleSpinBox::up-button:pressed,
+QSpinBox::up-button:pressed,
+QDoubleSpinBox::down-button:pressed,
+QSpinBox::down-button:pressed {
+    background-color: #48433e;
 }
 
 QDoubleSpinBox::up-arrow,
 QSpinBox::up-arrow {
-    width: 0px;
-    height: 0px;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-bottom: 5px solid #f1ede4;
-}
-
-QDoubleSpinBox::up-arrow:hover,
-QSpinBox::up-arrow:hover {
-    border-bottom-color: #161412;
+    image: url(@ICONS@/chevron-up.svg);
+    width: 9px;
+    height: 6px;
 }
 
 QDoubleSpinBox::down-arrow,
 QSpinBox::down-arrow {
-    width: 0px;
-    height: 0px;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 5px solid #f1ede4;
+    image: url(@ICONS@/chevron-down.svg);
+    width: 9px;
+    height: 6px;
 }
 
-QDoubleSpinBox::down-arrow:hover,
-QSpinBox::down-arrow:hover {
-    border-top-color: #161412;
+QDoubleSpinBox::up-arrow:disabled,
+QSpinBox::up-arrow:disabled,
+QDoubleSpinBox::up-arrow:off,
+QSpinBox::up-arrow:off {
+    image: url(@ICONS@/chevron-up-disabled.svg);
+}
+
+QDoubleSpinBox::down-arrow:disabled,
+QSpinBox::down-arrow:disabled,
+QDoubleSpinBox::down-arrow:off,
+QSpinBox::down-arrow:off {
+    image: url(@ICONS@/chevron-down-disabled.svg);
 }
 
 QComboBox {
@@ -423,10 +448,10 @@ QComboBox {
     color: #f1ede4;
     border: 1px solid #48433e;
     border-radius: 5px;
-    padding: 4px 24px 4px 8px;
+    padding: 3px 24px 3px 8px;
     selection-background-color: #7ec3d6;
     selection-color: #161412;
-    min-height: 22px;
+    min-height: 20px;
 }
 
 QComboBox:focus {
@@ -438,20 +463,29 @@ QComboBox:disabled {
     color: #5a554f;
 }
 
+QComboBox:hover {
+    border-color: #5a554f;
+}
+
 QComboBox::drop-down {
-    border: none;
-    border-left: 1px solid #48433e;
-    width: 22px;
     subcontrol-origin: padding;
-    subcontrol-position: top right;
+    subcontrol-position: center right;
+    width: 22px;
+    border: none;
 }
 
 QComboBox::down-arrow {
-    width: 0px;
-    height: 0px;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 5px solid #f1ede4;
+    image: url(@ICONS@/chevron-down.svg);
+    width: 9px;
+    height: 6px;
+}
+
+QComboBox::down-arrow:disabled {
+    image: url(@ICONS@/chevron-down-disabled.svg);
+}
+
+QComboBox::down-arrow:on {
+    image: url(@ICONS@/chevron-up.svg);
 }
 
 QComboBox QAbstractItemView {
@@ -469,9 +503,32 @@ QPushButton {
     color: #f1ede4;
     border: 1px solid #48433e;
     border-radius: 6px;
-    padding: 5px 14px;
-    min-height: 22px;
+    padding: 4px 12px;
+    min-height: 20px;
     font-size: 10pt;
+}
+
+QPushButton:focus {
+    border-color: #7ec3d6;
+}
+
+QPushButton:checked {
+    background-color: #2d3d44;
+    border-color: #7ec3d6;
+    color: #f1ede4;
+}
+
+/* Compact flat buttons in the main toolbar (toolbar_btn="true") */
+QPushButton[toolbar_btn="true"] {
+    background-color: transparent;
+    border: 1px solid transparent;
+    padding: 3px 10px;
+    min-height: 18px;
+}
+
+QPushButton[toolbar_btn="true"]:hover {
+    background-color: #36322e;
+    border-color: #48433e;
 }
 
 QPushButton:hover {
@@ -575,7 +632,12 @@ QCheckBox::indicator:hover {
 QCheckBox::indicator:checked {
     background-color: #7ec3d6;
     border-color: #7ec3d6;
-    image: none;
+    image: url(@ICONS@/check.svg);
+}
+
+QCheckBox::indicator:disabled {
+    background-color: #221f1c;
+    border-color: #36322e;
 }
 
 QCheckBox::indicator:checked:hover {
@@ -691,6 +753,16 @@ QScrollBar::add-line:horizontal,
 QScrollBar::sub-line:horizontal {
     width: 0;
     background: none;
+}
+
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical,
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: none;
+}
+
+QAbstractScrollArea::corner {
+    background-color: #1c1a18;
+    border: none;
 }
 
 /* ---- Status bar ---- */

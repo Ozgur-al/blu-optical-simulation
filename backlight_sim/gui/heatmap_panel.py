@@ -9,7 +9,9 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout as _QVL,  # used in spectrum popup
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QComboBox, QDoubleSpinBox, QLabel, QGroupBox, QPushButton, QFileDialog,
+    QSplitter, QScrollArea, QFrame,
 )
+from PySide6.QtCore import Qt
 
 from backlight_sim.core.detectors import DetectorResult, SimulationResult
 from backlight_sim.core.kpi import (
@@ -128,6 +130,32 @@ class HeatmapPanel(QWidget):
         top.addStretch()
         layout.addLayout(top)
 
+        # ---- body: heatmap (left, stretches) | KPI sidebar (right, scrolls) ----
+        body = QSplitter(Qt.Orientation.Horizontal)
+        body.setChildrenCollapsible(False)
+        plot_col = QWidget()
+        plot_layout = QVBoxLayout(plot_col)
+        plot_layout.setContentsMargins(0, 0, 0, 0)
+        plot_layout.setSpacing(4)
+
+        side_content = QWidget()
+        side = QVBoxLayout(side_content)
+        side.setContentsMargins(4, 0, 8, 4)
+        side.setSpacing(6)
+        side_scroll = QScrollArea()
+        side_scroll.setWidgetResizable(True)
+        side_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        side_scroll.setWidget(side_content)
+        self._side_scroll = side_scroll
+
+        body.addWidget(plot_col)
+        body.addWidget(side_scroll)
+        body.setStretchFactor(0, 1)
+        body.setStretchFactor(1, 0)
+        body.setSizes([700, 380])
+        layout.addWidget(body, stretch=1)
+
         # ---- heatmap ----
         self._plot = pg.PlotWidget()
         self._plot.setAspectLocked(True)
@@ -162,37 +190,38 @@ class HeatmapPanel(QWidget):
         # Connect mouse move on plot scene
         self._plot.scene().sigMouseMoved.connect(self._on_mouse_moved)
 
-        layout.addWidget(self._plot, stretch=3)
+        self._plot.setMinimumSize(240, 200)
+        plot_layout.addWidget(self._plot, stretch=1)
 
         # ---- spectral mode status ----
         self._spectral_status = QLabel()
+        self._spectral_status.setWordWrap(True)
         self._spectral_status.setStyleSheet(
             f"color: {KPI_ORANGE}; font-style: italic; padding: 2px 4px;"
         )
         self._spectral_status.hide()
-        layout.addWidget(self._spectral_status)
+        plot_layout.addWidget(self._spectral_status)
 
-        # ---- cursor label ----
-        self._cursor_lbl = QLabel("Cursor: --")
-        self._cursor_lbl.setStyleSheet(f"font-family: monospace; color: {TEXT_MUTED};")
-        layout.addWidget(self._cursor_lbl)
-
-        # ---- ROI stats ----
-        roi_row = QHBoxLayout()
+        # ---- cursor + ROI readouts under the plot ----
+        readout_row = QHBoxLayout()
+        readout_row.setSpacing(10)
         self._roi_toggle = QPushButton("Show ROI")
         self._roi_toggle.setAccessibleName("Toggle region of interest")
         self._roi_toggle.setToolTip("Show/hide a draggable region-of-interest rectangle with live statistics")
         self._roi_toggle.setCheckable(True)
         self._roi_toggle.toggled.connect(self._toggle_roi)
-        roi_row.addWidget(self._roi_toggle)
+        readout_row.addWidget(self._roi_toggle)
+        self._cursor_lbl = QLabel("Cursor: --")
+        self._cursor_lbl.setStyleSheet(f"font-family: monospace; color: {TEXT_MUTED};")
+        readout_row.addWidget(self._cursor_lbl)
         self._roi_lbl = QLabel("ROI: --")
         self._roi_lbl.setStyleSheet(f"font-family: monospace; color: {ACCENT};")
-        roi_row.addWidget(self._roi_lbl, 1)
-        layout.addLayout(roi_row)
+        readout_row.addWidget(self._roi_lbl, 1)
+        plot_layout.addLayout(readout_row)
 
-        # ---- confidence-level dropdown (Phase 4 UQ) ----
-        conf_row = QHBoxLayout()
-        conf_row.addWidget(QLabel("CI level:"))
+        # ---- confidence-level dropdown (Phase 4 UQ) — in the top bar ----
+        conf_row = top
+        conf_row.insertWidget(conf_row.count() - 1, QLabel("CI:"))
         self._conf_combo = QComboBox()
         self._conf_combo.setAccessibleName("Confidence level")
         self._conf_combo.setToolTip(
@@ -207,9 +236,7 @@ class HeatmapPanel(QWidget):
             self._conf_combo.addItem(text)
         self._conf_combo.setCurrentIndex(1)  # default 95%
         self._conf_combo.currentIndexChanged.connect(self._on_conf_changed)
-        conf_row.addWidget(self._conf_combo)
-        conf_row.addStretch()
-        layout.addLayout(conf_row)
+        conf_row.insertWidget(conf_row.count() - 1, self._conf_combo)
 
         # ---- grid statistics (collapsible) ----
         stats_section = CollapsibleSection("Grid Statistics")
@@ -235,21 +262,30 @@ class HeatmapPanel(QWidget):
             l.setToolTip(tip)
             return l
 
-        sg.addWidget(_tlbl("Avg:",      "Mean flux across all grid pixels"),           0, 0); sg.addWidget(self._lbl_avg,    0, 1)
-        sg.addWidget(_tlbl("Peak:",     "Maximum flux value in the grid"),             0, 2); sg.addWidget(self._lbl_peak,   0, 3)
-        sg.addWidget(_tlbl("Min:",      "Minimum flux value in the grid"),             0, 4); sg.addWidget(self._lbl_min,    0, 5)
-        sg.addWidget(_tlbl("Hits:",     "Total number of ray hits on this detector"),  0, 6); sg.addWidget(self._lbl_hits,   0, 7)
-        sg.addWidget(_tlbl("Std Dev:",  "Standard deviation of flux values"),          1, 0); sg.addWidget(self._lbl_std,    1, 1)
-        sg.addWidget(_tlbl("CV:",       "Coefficient of variation (std/avg) — lower is more uniform"),  1, 2); sg.addWidget(self._lbl_cv,     1, 3)
-        sg.addWidget(_tlbl("Hotspot:",  "Peak-to-average ratio — closer to 1.0 is better"),             1, 4); sg.addWidget(self._lbl_hot,    1, 5)
-        sg.addWidget(_tlbl("Edge/Ctr:", "Edge avg / center avg — closer to 1.0 is more uniform"),       1, 6); sg.addWidget(self._lbl_ecr,    1, 7)
-        sg.addWidget(_tlbl("RMSE/avg:", "Normalized root-mean-square error vs ideal uniform field"),     2, 0); sg.addWidget(self._lbl_rmse,   2, 1)
-        sg.addWidget(_tlbl("MAD/avg:",  "Normalized mean absolute deviation vs ideal uniform field"),    2, 2); sg.addWidget(self._lbl_mad,    2, 3)
         corner_lbl = QLabel("Corner/avg:")
         corner_lbl.setToolTip("Average of the 4 corner patches (10 % of grid size each) / full avg")
-        sg.addWidget(corner_lbl,             2, 4); sg.addWidget(self._lbl_corner, 2, 5)
+        _stat_items = [
+            (_tlbl("Avg:",      "Mean flux across all grid pixels"),           self._lbl_avg),
+            (_tlbl("Peak:",     "Maximum flux value in the grid"),             self._lbl_peak),
+            (_tlbl("Min:",      "Minimum flux value in the grid"),             self._lbl_min),
+            (_tlbl("Hits:",     "Total number of ray hits on this detector"),  self._lbl_hits),
+            (_tlbl("Std Dev:",  "Standard deviation of flux values"),          self._lbl_std),
+            (_tlbl("CV:",       "Coefficient of variation (std/avg) — lower is more uniform"),  self._lbl_cv),
+            (_tlbl("Hotspot:",  "Peak-to-average ratio — closer to 1.0 is better"),             self._lbl_hot),
+            (_tlbl("Edge/Ctr:", "Edge avg / center avg — closer to 1.0 is more uniform"),       self._lbl_ecr),
+            (_tlbl("RMSE/avg:", "Normalized root-mean-square error vs ideal uniform field"),     self._lbl_rmse),
+            (_tlbl("MAD/avg:",  "Normalized mean absolute deviation vs ideal uniform field"),    self._lbl_mad),
+            (corner_lbl,                                                       self._lbl_corner),
+        ]
+        # Two label/value pairs per row so the block fits the sidebar width.
+        for i, (key, val) in enumerate(_stat_items):
+            r, c = divmod(i, 2)
+            sg.addWidget(key, r, c * 2)
+            sg.addWidget(val, r, c * 2 + 1)
+        sg.setColumnStretch(1, 1)
+        sg.setColumnStretch(3, 1)
         stats_section.addWidget(_stats_widget)
-        layout.addWidget(stats_section, stretch=0)
+        side.addWidget(stats_section)
 
         # ---- uniformity (collapsible) ----
         uni_section = CollapsibleSection("Uniformity")
@@ -265,7 +301,7 @@ class HeatmapPanel(QWidget):
             lm = _lbl(); ug.addWidget(lm, row_i, 3)
             self._uni_labels[label] = (la, lm)
         uni_section.addWidget(_uni_widget)
-        layout.addWidget(uni_section, stretch=0)
+        side.addWidget(uni_section)
 
         # ---- color uniformity (spectral only, collapsible) ----
         self._color_uni_section = CollapsibleSection("Color Uniformity")
@@ -292,7 +328,7 @@ class HeatmapPanel(QWidget):
 
         self._color_uni_section.addWidget(_color_uni_widget)
         self._color_uni_section.hide()
-        layout.addWidget(self._color_uni_section, stretch=0)
+        side.addWidget(self._color_uni_section)
 
         # ---- energy balance (collapsible) ----
         energy_section = CollapsibleSection("Energy Balance")
@@ -335,7 +371,7 @@ class HeatmapPanel(QWidget):
             w.hide()
 
         energy_section.addWidget(_energy_widget)
-        layout.addWidget(energy_section, stretch=0)
+        side.addWidget(energy_section)
 
         # ---- weighted design score (collapsible) ----
         score_section = CollapsibleSection("Design Score")
@@ -362,13 +398,14 @@ class HeatmapPanel(QWidget):
             w.valueChanged.connect(self._update_score)
         sg2.addWidget(QLabel("w_eff:"),   0, 0); sg2.addWidget(self._w_eff,    0, 1)
         sg2.addWidget(QLabel("w_uni:"),   0, 2); sg2.addWidget(self._w_uni,    0, 3)
-        sg2.addWidget(QLabel("w_hot:"),   0, 4); sg2.addWidget(self._w_hot,    0, 5)
-        sg2.addWidget(QLabel("Score:"),   0, 6); sg2.addWidget(self._lbl_score, 0, 7)
+        sg2.addWidget(QLabel("w_hot:"),   1, 0); sg2.addWidget(self._w_hot,    1, 1)
+        sg2.addWidget(QLabel("Score:"),   1, 2); sg2.addWidget(self._lbl_score, 1, 3)
         score_section.addWidget(_score_widget)
-        layout.addWidget(score_section, stretch=0)
+        side.addWidget(score_section)
 
         # ---- export buttons ----
-        btn_row = QHBoxLayout()
+        btn_row = QGridLayout()
+        btn_row.setSpacing(6)
         btn_png  = QPushButton("Export PNG")
         btn_png.setToolTip("Save the heatmap plot as a PNG image")
         btn_kpi  = QPushButton("Export KPI CSV")
@@ -384,13 +421,14 @@ class HeatmapPanel(QWidget):
         btn_grid.clicked.connect(self._export_grid_csv)
         btn_html.clicked.connect(self._export_html)
         btn_zip.clicked.connect(self._export_batch_zip)
-        btn_row.addWidget(btn_png)
-        btn_row.addWidget(btn_kpi)
-        btn_row.addWidget(btn_grid)
-        btn_row.addWidget(btn_html)
-        btn_row.addWidget(btn_zip)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
+        for i, b in enumerate((btn_png, btn_kpi, btn_grid, btn_html, btn_zip)):
+            btn_row.addWidget(b, i // 2, i % 2)
+        side.addSpacing(4)
+        side.addWidget(QLabel("Export"))
+        side.addLayout(btn_row)
+        side.addStretch(1)
+        # Sidebar never narrower than its content (+ room for the v-scrollbar).
+        self._side_scroll.setMinimumWidth(side_content.minimumSizeHint().width() + 14)
 
         self._project = None  # set externally for HTML report
         self._sim_result: SimulationResult | None = None

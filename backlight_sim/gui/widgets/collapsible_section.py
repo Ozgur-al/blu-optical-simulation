@@ -47,7 +47,7 @@ class CollapsibleSection(QWidget):
         )
         self._toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._toggle.setStyleSheet("font-weight: bold; text-align: left; padding: 4px 8px;")
+        self._toggle.setObjectName("section_header")  # styled in dark.qss
         self._toggle.toggled.connect(self._on_toggle)
         layout.addWidget(self._toggle)
 
@@ -55,7 +55,7 @@ class CollapsibleSection(QWidget):
         self._content = QFrame()
         self._content.setVisible(not collapsed)
         self._content_layout = QVBoxLayout(self._content)
-        self._content_layout.setContentsMargins(4, 4, 0, 4)
+        self._content_layout.setContentsMargins(4, 6, 2, 8)
         self._content_layout.setSpacing(2)
         layout.addWidget(self._content)
 

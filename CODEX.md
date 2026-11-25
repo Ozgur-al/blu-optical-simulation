@@ -259,3 +259,22 @@ Use each `Session ID` like a lightweight commit message reference.
 - `python -m backlight_sim.golden --report` -> 13/13 cases pass.
 - GUI: offscreen smoke script 21/21.
 - Result values shift vs. older runs (no detector double-counting, residual -> escaped, more bounces traced).
+
+## Session ID: S2026-11-25-02
+**Title:** UI overhaul — screen fitting, broken widget styling, crushed layouts
+**Status:** Completed
+
+### What was done
+- **Screen fitting:** new `gui/widgets/screen_fit.py` — app-wide event filter clamps every window/dialog to its screen's available area on first show; `fit_to_screen()` for preferred sizes; `scrollable()` wrapper. Main window sizes to min(1440x920, 94 % of screen) and pulls restored geometry back on-screen. (Laptop at 125 % = 1536x816 usable: main window min height was 817, Geometry Builder was 1347 px tall.)
+- **QSS:** spin/combo arrows were CSS border-triangles (unsupported in Qt -> rendered as white bars); replaced with SVG chevrons in `theme/icons/` via an `@ICONS@` placeholder substituted in `apply_dark_theme()`. Checked checkboxes get a checkmark. Table headers no longer uppercase (columns were sized before the transform -> clipped text). Hatched scrollbar tracks removed. Collapsible section headers are quiet dividers instead of amber boxes. Compact `toolbar_btn` button variant.
+- **Main window:** two toolbar rows merged into one compact bar (brand · New/Open/Save · command echo · camera presets · Undo/Redo/Run); dropped the hard-coded "iteration 04" subtitle.
+- **Heatmap tab:** plot | KPI sidebar in a splitter; sidebar scrolls; KPI grids reflowed to 2 pairs per row; CI selector moved to the top bar. The plot was squeezed to ~70 px before.
+- **Geometry Builder:** two columns, each tab scrollable. **Parameter Sweep:** aligned 2-row parameter grid, run/cancel/progress on one row, table columns size to contents. **Ensemble:** empty histogram no longer shows ±500 axis and stacked P-labels. **LED Layout Editor:** crash on open fixed (`TextItem` has no `size` kwarg). Properties "→ Flux" button no longer clipped.
+
+### Files touched
+- `backlight_sim/gui/widgets/screen_fit.py` (new), `backlight_sim/gui/theme/{__init__.py,dark.qss,icons/*.svg}` (new icons)
+- `backlight_sim/gui/{main_window,heatmap_panel,geometry_builder,parameter_sweep_dialog,ensemble_dialog,led_layout_editor,properties_panel}.py`, `backlight_sim/gui/widgets/collapsible_section.py`
+
+### Validation
+- Screenshot harness on the 1536x816 laptop screen: main window + all 5 menu dialogs fit on screen (before: 3 overflowed/clipped, 1 crashed).
+- `test_main_window.py`, `test_uq_ui.py`, `test_uq_exports.py`, `test_kpi.py` (tracer stubbed): 46 passed; only failure is the end-to-end sim smoke that needs the compiled `blu_tracer`.

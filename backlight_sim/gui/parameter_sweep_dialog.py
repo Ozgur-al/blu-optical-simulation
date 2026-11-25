@@ -8,7 +8,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QSplitter,
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QSplitter,
     QComboBox, QDoubleSpinBox, QSpinBox, QLabel, QWidget,
     QPushButton, QProgressBar, QTableWidget, QTableWidgetItem,
     QHeaderView, QMessageBox, QLineEdit, QCheckBox,
@@ -193,87 +193,82 @@ class ParameterSweepDialog(QDialog):
     def __init__(self, project: Project, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Parameter Sweep")
-        self.setMinimumWidth(660)
-        self.setMinimumHeight(480)
+        self.setMinimumSize(640, 460)
+        self.resize(1100, 720)
         self._project = project
         self._thread: _SweepThread | None = None
 
         layout = QVBoxLayout(self)
 
-        # ── Parameter & range ───────────────────────────────────────────
-        fl = QFormLayout()
+        # ── Parameters & ranges (aligned grid: one row per parameter) ────
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+
+        def _range_spin():
+            sp = QDoubleSpinBox()
+            sp.setRange(-1e9, 1e9)
+            sp.setDecimals(4)
+            sp.setMinimumWidth(110)
+            return sp
+
         self._param_cb = QComboBox()
         self._param_cb.addItems(list(_PARAMS.keys()))
         self._param_cb.currentIndexChanged.connect(self._on_param_changed)
-        fl.addRow("Parameter:", self._param_cb)
-
-        range_row = QHBoxLayout()
-        self._start_spin = QDoubleSpinBox()
-        self._start_spin.setRange(-1e9, 1e9)
-        self._start_spin.setDecimals(4)
-        self._end_spin = QDoubleSpinBox()
-        self._end_spin.setRange(-1e9, 1e9)
-        self._end_spin.setDecimals(4)
+        self._start_spin = _range_spin()
+        self._end_spin = _range_spin()
         self._steps_spin = QSpinBox()
         self._steps_spin.setRange(2, 100)
         self._steps_spin.setValue(10)
-        range_row.addWidget(QLabel("Start:"))
-        range_row.addWidget(self._start_spin)
-        range_row.addWidget(QLabel("End:"))
-        range_row.addWidget(self._end_spin)
-        range_row.addWidget(QLabel("Steps:"))
-        range_row.addWidget(self._steps_spin)
-        fl.addRow("Range:", range_row)
-        layout.addLayout(fl)
 
-        # ── Run / Cancel ─────────────────────────────────────────────────
-        btn_row = QHBoxLayout()
-        self._run_btn = QPushButton("Run Sweep")
-        self._run_btn.clicked.connect(self._run_sweep)
-        self._cancel_btn = QPushButton("Cancel Sweep")
-        self._cancel_btn.clicked.connect(self._cancel_sweep)
-        self._cancel_btn.setEnabled(False)
-        btn_row.addWidget(self._run_btn)
-        btn_row.addWidget(self._cancel_btn)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-        # ── Progress ─────────────────────────────────────────────────────
-        self._progress = QProgressBar()
-        self._progress.setValue(0)
-        layout.addWidget(self._progress)
-
-        # ── Multi-parameter sweep option ──────────────────────────────────
-        multi_row = QHBoxLayout()
-        self._multi_check = QCheckBox("2-parameter sweep")
+        self._multi_check = QCheckBox("Parameter 2:")
         self._multi_check.setToolTip("Sweep two parameters simultaneously (grid)")
         self._multi_check.toggled.connect(self._on_multi_toggled)
-        multi_row.addWidget(self._multi_check)
         self._param2_cb = QComboBox()
         self._param2_cb.addItems(list(_PARAMS.keys()))
         self._param2_cb.setCurrentIndex(1)
         self._param2_cb.setEnabled(False)
-        multi_row.addWidget(QLabel("Param 2:"))
-        multi_row.addWidget(self._param2_cb)
-        self._start2_spin = QDoubleSpinBox()
-        self._start2_spin.setRange(-1e9, 1e9)
-        self._start2_spin.setDecimals(4)
+        self._start2_spin = _range_spin()
         self._start2_spin.setEnabled(False)
-        self._end2_spin = QDoubleSpinBox()
-        self._end2_spin.setRange(-1e9, 1e9)
-        self._end2_spin.setDecimals(4)
+        self._end2_spin = _range_spin()
         self._end2_spin.setEnabled(False)
         self._steps2_spin = QSpinBox()
         self._steps2_spin.setRange(2, 20)
         self._steps2_spin.setValue(5)
         self._steps2_spin.setEnabled(False)
-        multi_row.addWidget(QLabel("Start:"))
-        multi_row.addWidget(self._start2_spin)
-        multi_row.addWidget(QLabel("End:"))
-        multi_row.addWidget(self._end2_spin)
-        multi_row.addWidget(QLabel("Steps:"))
-        multi_row.addWidget(self._steps2_spin)
-        layout.addLayout(multi_row)
+
+        rows = (
+            (QLabel("Parameter 1:"), self._param_cb, self._start_spin, self._end_spin, self._steps_spin),
+            (self._multi_check, self._param2_cb, self._start2_spin, self._end2_spin, self._steps2_spin),
+        )
+        for r, (lead, combo, start, end, steps) in enumerate(rows):
+            grid.addWidget(lead, r, 0)
+            grid.addWidget(combo, r, 1)
+            grid.addWidget(QLabel("Start"), r, 2)
+            grid.addWidget(start, r, 3)
+            grid.addWidget(QLabel("End"), r, 4)
+            grid.addWidget(end, r, 5)
+            grid.addWidget(QLabel("Steps"), r, 6)
+            grid.addWidget(steps, r, 7)
+        grid.setColumnStretch(1, 2)
+        grid.setColumnStretch(3, 1)
+        grid.setColumnStretch(5, 1)
+        layout.addLayout(grid)
+
+        # ── Run / Cancel / progress on one row ───────────────────────────
+        btn_row = QHBoxLayout()
+        self._run_btn = QPushButton("Run Sweep")
+        self._run_btn.setProperty("accent", True)
+        self._run_btn.clicked.connect(self._run_sweep)
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.clicked.connect(self._cancel_sweep)
+        self._cancel_btn.setEnabled(False)
+        self._progress = QProgressBar()
+        self._progress.setValue(0)
+        btn_row.addWidget(self._run_btn)
+        btn_row.addWidget(self._cancel_btn)
+        btn_row.addWidget(self._progress, 1)
+        layout.addLayout(btn_row)
 
         # ── Filter row ────────────────────────────────────────────────────
         filter_row = QHBoxLayout()
@@ -303,8 +298,10 @@ class ParameterSweepDialog(QDialog):
                 "hot ± Δ",
             ]
         )
-        self._table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch)
+        hdr = self._table.horizontalHeader()
+        hdr.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setStretchLastSection(True)
+        self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
         self._table.setSortingEnabled(True)
@@ -330,6 +327,9 @@ class ParameterSweepDialog(QDialog):
         pvl.addLayout(kpi_row)
         pvl.addWidget(pw)
         splitter.addWidget(plot_container)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([560, 480])
         layout.addWidget(splitter, stretch=1)
 
         # Accumulated sweep data for plot refresh

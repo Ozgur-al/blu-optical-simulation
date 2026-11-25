@@ -152,7 +152,7 @@ class EnsembleDialog(QDialog):
         self._sens_run_mode: str | None = None   # mode of the data in _sens_kpis_by_idx
 
         self.setWindowTitle("Tolerance Ensemble")
-        self.resize(950, 650)
+        self.resize(1000, 680)
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -221,6 +221,11 @@ class EnsembleDialog(QDialog):
         self._dist_plot.addItem(self._p5_line)
         self._dist_plot.addItem(self._p50_line)
         self._dist_plot.addItem(self._p95_line)
+        # Hidden until real percentiles exist; empty plot gets a sane 0..1 range.
+        for line in (self._p5_line, self._p50_line, self._p95_line):
+            line.hide()
+        self._dist_plot.setXRange(0.0, 1.0)
+        self._dist_plot.setYRange(0.0, 10.0)
         layout.addWidget(self._dist_plot)
 
         self._percentile_label = QLabel("P5: -- | P50: -- | P95: --")
@@ -434,11 +439,14 @@ class EnsembleDialog(QDialog):
         centers = (edges[:-1] + edges[1:]) / 2
         width = float(edges[1] - edges[0]) if len(edges) > 1 else 0.05
         self._hist_item.setOpts(x=centers, height=counts.astype(float), width=width)
+        self._dist_plot.enableAutoRange()
         if len(kpi_values) >= 5:
             p5, p50, p95 = np.percentile(kpi_values, [5, 50, 95])
             self._p5_line.setValue(p5)
             self._p50_line.setValue(p50)
             self._p95_line.setValue(p95)
+            for line in (self._p5_line, self._p50_line, self._p95_line):
+                line.show()
             self._percentile_label.setText(f"P5: {p5:.4f} | P50: {p50:.4f} | P95: {p95:.4f}")
 
     # ------------------------------------------------------------------

@@ -363,7 +363,7 @@ class SourceForm(QWidget):
         )
         self._peak_set_btn = QPushButton("→ Flux")
         self._peak_set_btn.setToolTip("Apply peak cd value and update Flux")
-        self._peak_set_btn.setFixedWidth(56)
+        self._peak_set_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._peak_set_btn.clicked.connect(self._apply_peak)
         peak_row.addWidget(self._peak_spin)
         peak_row.addWidget(self._peak_set_btn)
