@@ -24,8 +24,12 @@ def build_cavity(
     wall_material: str = "default_reflector",
     replace_existing: bool = True,
     record_recipe: bool = False,
+    walls: bool = True,
 ) -> None:
-    """Generate floor + 4 walls and add them to *project.surfaces*.
+    """Generate floor (the LED plate) + 4 walls and add them to *project.surfaces*.
+
+    `walls=False` builds only the floor, for a bare LED plate with no metal
+    cavity around it.
 
     `wall_angle_x_deg` controls left/right wall tilt.
     `wall_angle_y_deg` controls front/back wall tilt.
@@ -53,10 +57,10 @@ def build_cavity(
         Rectangle.axis_aligned("Floor", [0.0, 0.0, 0.0], (w, h), 2, -1.0, floor_material)
     )
 
-    if abs(wall_angle_x_deg) < 1e-9 and abs(wall_angle_y_deg) < 1e-9:
+    if not walls or (abs(wall_angle_x_deg) < 1e-9 and abs(wall_angle_y_deg) < 1e-9):
         # Left/Right walls: normal ±X, u=Y v=Z → size (extent Y, extent Z) = (h, d)
         # Back/Front walls: normal ±Y, u=Z v=X → size (extent Z, extent X) = (d, w)
-        project.surfaces += [
+        project.surfaces += [] if not walls else [
             Rectangle.axis_aligned("Wall Right", [half_w, 0.0, d / 2], (h, d), 0, 1.0, wall_material),
             Rectangle.axis_aligned("Wall Left", [-half_w, 0.0, d / 2], (h, d), 0, -1.0, wall_material),
             Rectangle.axis_aligned("Wall Back", [0.0, half_h, d / 2], (d, w), 1, 1.0, wall_material),
@@ -71,6 +75,7 @@ def build_cavity(
                 "wall_angle_y_deg": float(wall_angle_y_deg),
                 "floor_material": floor_material,
                 "wall_material": wall_material,
+                "walls": walls,
             }
         return
 
@@ -139,6 +144,7 @@ def build_cavity(
             "wall_angle_y_deg": float(wall_angle_y_deg),
             "floor_material": floor_material,
             "wall_material": wall_material,
+            "walls": walls,
         }
 
 
@@ -150,7 +156,7 @@ def build_optical_stack(
     diffuser_distance: float = 0.0,
     film_distances: list[float] | None = None,
     diffuser_material: str = "diffuser",
-    film_material: str = "default_reflector",
+    film_material: str | None = None,
     wall_angle_x_deg: float = 0.0,
     wall_angle_y_deg: float = 0.0,
 ) -> int:
@@ -158,9 +164,13 @@ def build_optical_stack(
 
     diffuser_distance: Z height for the diffuser (0 = skip).
     film_distances: list of Z heights for additional film placeholders.
+    film_material: material for the films; defaults to *diffuser_material*
+        (films must transmit, an opaque reflector would block the cavity).
 
     Returns the number of surfaces added.
     """
+    if film_material is None:
+        film_material = diffuser_material
     count = 0
     tan_x = float(np.tan(np.radians(wall_angle_x_deg)))
     tan_y = float(np.tan(np.radians(wall_angle_y_deg)))
@@ -210,8 +220,14 @@ def build_led_grid(
     replace_existing: bool = True,
     count_x: int | None = None,
     count_y: int | None = None,
+    emitter_size: tuple[float, float] = (0.0, 0.0),
+    emitter_side_height: float = 0.0,
 ) -> int:
     """Create a uniform LED grid and add PointSources to *project*.
+
+    *emitter_size* is each LED's emitting surface (X, Y), centred at the LED
+    position and facing +Z; (0, 0) gives point emitters. *emitter_side_height*
+    > 0 makes the four side faces below it emit as well (clear package).
 
     Per axis: if count_x / count_y is given (>= 1) the pitch on that axis is
     ignored and exactly that many LEDs are spread evenly between the edge
@@ -229,8 +245,6 @@ def build_led_grid(
     for row, y in enumerate(ys):
         for col, x in enumerate(xs):
             count += 1
-            from backlight_sim.core.sources import PointSource
-
             project.sources.append(
                 PointSource(
                     name=f"LED_r{row+1}_c{col+1}",
@@ -238,6 +252,8 @@ def build_led_grid(
                     flux=led_flux,
                     direction=np.array([0.0, 0.0, 1.0]),
                     distribution=distribution,
+                    emitter_size=emitter_size,
+                    emitter_side_height=emitter_side_height,
                 )
             )
     return count
@@ -263,14 +279,19 @@ def _axis_positions(
 
 
 def _grid_positions(lo: float, hi: float, pitch: float, edge_offset: float) -> list[float]:
+    """Pitch-mode positions, centred in [lo + edge_offset, hi - edge_offset].
+
+    As many LEDs as fit at *pitch* are placed; the leftover span is split
+    equally between both ends so the grid stays symmetric about the centre.
+    """
     if pitch <= 0:
         return []
-    positions = []
-    x = lo + edge_offset
-    while x <= hi - edge_offset + 1e-9:
-        positions.append(x)
-        x += pitch
-    return positions
+    span = (hi - edge_offset) - (lo + edge_offset)
+    if span < -1e-9:
+        return []
+    n = int(np.floor(max(span, 0.0) / pitch + 1e-9)) + 1
+    start = (lo + hi) / 2.0 - (n - 1) * pitch / 2.0
+    return [float(start + i * pitch) for i in range(n)]
 
 
 def build_lgp_scene(

@@ -183,6 +183,16 @@ static py::dict run_bounce_loop(
     batch.ox.assign(n_rays, source.px);
     batch.oy.assign(n_rays, source.py);
     batch.oz.assign(n_rays, source.pz);
+    if (source.ex > 0.0 || source.ey > 0.0) {
+        // Area emitter: uniform start points over the emitting rectangle.
+        std::uniform_real_distribution<double> half(-0.5, 0.5);
+        for (int i = 0; i < n_rays; ++i) {
+            const double a = half(rng) * source.ex, b = half(rng) * source.ey;
+            batch.ox[i] += a * source.ux + b * source.vx;
+            batch.oy[i] += a * source.uy + b * source.vy;
+            batch.oz[i] += a * source.uz + b * source.vz;
+        }
+    }
     batch.dx.assign(n_rays, 0.0);
     batch.dy.assign(n_rays, 0.0);
     batch.dz.assign(n_rays, 0.0);
@@ -208,6 +218,43 @@ static py::dict run_bounce_loop(
             // Unknown profile — fall back to isotropic (matches tracer.py
             // _run_single / _trace_single_source and CLAUDE.md).
             sample_isotropic(n_rays, rng, batch);
+        }
+    }
+
+    // --- Side-face emission (mirrors PointSource.sample_emission) ---
+    if (source.side_h > 0.0 && (source.ex > 0.0 || source.ey > 0.0)) {
+        const double h = source.side_h, sx = source.ex, sy = source.ey;
+        const double d[3] = {source.dir_x, source.dir_y, source.dir_z};
+        const double u[3] = {source.ux, source.uy, source.uz};
+        const double v[3] = {source.vx, source.vy, source.vz};
+        // Faces 1..4: +u, -u, +v, -v (normal, along, offset, span)
+        struct Face { double n[3], a[3]; double off, span; };
+        const Face faces[4] = {
+            {{ u[0], u[1], u[2]}, {v[0], v[1], v[2]}, sx / 2.0, sy},
+            {{-u[0],-u[1],-u[2]}, {v[0], v[1], v[2]}, sx / 2.0, sy},
+            {{ v[0], v[1], v[2]}, {u[0], u[1], u[2]}, sy / 2.0, sx},
+            {{-v[0],-v[1],-v[2]}, {u[0], u[1], u[2]}, sy / 2.0, sx},
+        };
+        const double areas[5] = {sx * sy, sy * h, sy * h, sx * h, sx * h};
+        std::discrete_distribution<int> pick(areas, areas + 5);
+        std::uniform_real_distribution<double> half(-0.5, 0.5), unit(0.0, 1.0);
+        for (int i = 0; i < n_rays; ++i) {
+            const int k = pick(rng);
+            if (k == 0) continue;
+            const Face& f = faces[k - 1];
+            const double r = half(rng) * f.span, depth = unit(rng) * h;
+            batch.ox[i] = source.px + f.n[0] * f.off + r * f.a[0] - depth * d[0];
+            batch.oy[i] = source.py + f.n[1] * f.off + r * f.a[1] - depth * d[1];
+            batch.oz[i] = source.pz + f.n[2] * f.off + r * f.a[2] - depth * d[2];
+            // 90 deg rotation about a = d x n maps d -> n: v' = (a.v)a + a x v
+            const double ax = d[1]*f.n[2] - d[2]*f.n[1];
+            const double ay = d[2]*f.n[0] - d[0]*f.n[2];
+            const double az = d[0]*f.n[1] - d[1]*f.n[0];
+            const double x = batch.dx[i], y = batch.dy[i], z = batch.dz[i];
+            const double dot = ax*x + ay*y + az*z;
+            batch.dx[i] = dot*ax + (ay*z - az*y);
+            batch.dy[i] = dot*ay + (az*x - ax*z);
+            batch.dz[i] = dot*az + (ax*y - ay*x);
         }
     }
 
@@ -434,6 +481,16 @@ py::dict trace_source(py::dict project_dict, std::string source_name, int seed) 
         source.effective_flux = src["effective_flux"].cast<double>();
         source.distribution = src["distribution"].cast<std::string>();
         source.enabled = true;
+        if (src.contains("emitter_size")) {
+            auto es = src["emitter_size"].cast<py::list>();
+            auto eu = list_to_arr3(src["emitter_u"]);
+            auto ev = list_to_arr3(src["emitter_v"]);
+            source.ex = es[0].cast<double>(); source.ey = es[1].cast<double>();
+            if (src.contains("emitter_side_height"))
+                source.side_h = src["emitter_side_height"].cast<double>();
+            source.ux = eu[0]; source.uy = eu[1]; source.uz = eu[2];
+            source.vx = ev[0]; source.vy = ev[1]; source.vz = ev[2];
+        }
         found = true;
         break;
     }
@@ -569,6 +626,9 @@ py::dict trace_source(py::dict project_dict, std::string source_name, int seed) 
 
 PYBIND11_MODULE(blu_tracer, m) {
     m.doc() = "BluOpticalSim C++ Monte Carlo ray tracer core (pybind11)";
+    // Feature flag: Python routes area-emitter sources here only when set,
+    // so an older prebuilt module falls back to the Python path instead.
+    m.attr("SUPPORTS_AREA_EMITTER") = true;
     m.def("trace_source", &trace_source,
           py::arg("project_dict"),
           py::arg("source_name"),

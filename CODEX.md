@@ -278,3 +278,48 @@ Use each `Session ID` like a lightweight commit message reference.
 ### Validation
 - Screenshot harness on the 1536x816 laptop screen: main window + all 5 menu dialogs fit on screen (before: 3 overflowed/clipped, 1 crashed).
 - `test_main_window.py`, `test_uq_ui.py`, `test_uq_exports.py`, `test_kpi.py` (tracer stubbed): 46 passed; only failure is the end-to-end sim smoke that needs the compiled `blu_tracer`.
+
+## Session ID: S2026-11-25-03
+**Title:** Direct-lit geometry builder — layout bugs, active-area mode, live DLED readout
+**Status:** Completed
+
+### What was done
+- **Bugs:** pitch-mode LED grid is now centred (leftover span split between both ends; was left-anchored). Dialog LED-count preview uses the same `_axis_positions()` as the builder (count=1 showed 2). Film placeholders use a transmissive `film_stack` diffuser material (were the opaque wall reflector); `build_optical_stack(film_material=None)` defaults to the diffuser material. Ensemble cavity jitter rebuilds only the shell (Floor/Wall*), keeps diffuser/films/other surfaces, and moves an output plane sitting on the old opening to the jittered depth. Accept is blocked with a warning when a diffuser/film is at or above the output detector.
+- **Features:** optional cavity walls (`build_cavity(walls=False)` → bare LED plate, stored in `cavity_recipe["walls"]`). "From active area" size mode: plate = active area + per-side margin, count mode forced, detector covers the active area. LED takeoff (LED centre → plate edge), LED package size X×Y, LED height (emitter Z). OD is the LED-plate-top → diffuser distance. Live readout: LED count, total flux, LED density, pitch, OD, OD/pitch; flux entry per LED or total (split evenly). Live warnings: overlapping LEDs, LEDs past the plate edge, diffuser below LED top, stack above detector. Top-view preview of plate, opening, active area and LED footprints.
+
+### Files touched
+- `backlight_sim/io/geometry_builder.py`, `backlight_sim/sim/ensemble.py`, `backlight_sim/gui/geometry_builder.py`
+- Tests: new `test_geometry_builder.py`; updated `test_ensemble.py::test_oat_cavity_perturbation_isolates_single_parameter` (non-cavity surfaces now survive the rebuild)
+
+### Validation
+- Linux build of `blu_tracer` (py3.13): `pytest backlight_sim/tests` → 341 passed, 3 skipped; `pytest backlight_sim/tests/golden` → 21 passed.
+- Offscreen screenshot of the Direct-Lit tab checked by eye.
+
+## Session ID: S2026-11-25-04
+**Title:** LED emitting surface (area emitter)
+**Status:** Completed
+
+### What was done
+- `PointSource.emitter_size` (X, Y): rectangle centred on `position`, facing `direction`; rays start uniformly over it and the angular distribution is sampled about its normal. (0, 0) = point emitter (unchanged behaviour, no extra RNG draws). `emitter_axes()` gives (X, Y) for a +Z-facing LED.
+- Python tracer and C++ `trace_source` both sample origins over the surface; recorded ray paths start at the sampled origin. The C++ module exports `SUPPORTS_AREA_EMITTER`; without it (older prebuilt .pyd) area-emitter scenes route to the Python path.
+- Project JSON: `emitter_size` (defaults to point on older files).
+- Geometry Builder: "Emitting surface" = whole top face (LED size) / custom area / point; warns when the area exceeds the package. Properties panel: per-source Emitter X × Y.
+
+### Files touched
+- `backlight_sim/core/sources.py`, `backlight_sim/sim/tracer.py`, `backlight_sim/sim/_blu_tracer/src/{types.hpp,blu_tracer.cpp}`, `backlight_sim/io/{project_io,geometry_builder}.py`, `backlight_sim/gui/{geometry_builder,properties_panel}.py`
+- Tests: new `test_area_emitter.py`; `test_geometry_builder.py` extended
+
+### Validation
+- Linux py3.13 build of `blu_tracer`: `pytest backlight_sim/tests` → 347 passed, 3 skipped; golden → 21 passed. Footprint test passes on both the C++ and forced-Python paths.
+- **The bundled Windows .pyd must be rebuilt** to get the C++ fast path for area emitters.
+
+## Session ID: S2026-11-25-05
+**Title:** Optional side-face emission (clear LED package)
+**Status:** Completed
+
+### What was done
+- `PointSource.emitter_side_height`: the four side faces of the emitting rectangle, this tall below it, emit too. Rays are split over top + sides by area (equal radiance); side rays use the same angular distribution rotated onto each face's outward normal. The package is optically clear (not modelled as a body). Implemented in `PointSource.sample_emission` and mirrored in C++ `run_bounce_loop`.
+- Geometry Builder: "Side faces also emit (clear package)" → side height = LED height − 1 µm (keeps origins off the floor plane). Properties panel: "Side emit height". JSON field `emitter_side_height`.
+
+### Validation
+- Linux py3.13 `blu_tracer`: `pytest backlight_sim/tests` → 351 passed, 3 skipped; golden 21 passed. Side-emission flux below the LED ≈ 1/3 on both C++ and Python paths.

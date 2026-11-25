@@ -126,6 +126,11 @@ struct SceneSource {
     double effective_flux;
     std::string distribution;   // "isotropic", "lambertian", or profile name
     bool enabled;
+    // Emitting surface: rectangle (ex, ey) centred on p, spanned by u/v.
+    double ex = 0.0, ey = 0.0;
+    double side_h = 0.0;        // clear-package side-face height (0 = top only)
+    double ux = 1.0, uy = 0.0, uz = 0.0;
+    double vx = 0.0, vy = 1.0, vz = 0.0;
 };
 
 // BVH flat node (ported from accel.py)

@@ -15,6 +15,8 @@ from backlight_sim.io.geometry_builder import build_cavity
 
 
 _STANDARD_NORMAL = NormalDist()
+# Names build_cavity() gives the shell surfaces it creates.
+_CAVITY_SURFACE_NAMES = frozenset({"Floor", "Wall Right", "Wall Left", "Wall Back", "Wall Front"})
 _CAVITY_SIGMA_KEYS = (
     "depth_sigma_mm",
     "wall_angle_x_sigma_deg",
@@ -105,6 +107,10 @@ def _jitter_cavity(
             if sigma > 0:
                 recipe[key_val] = recipe.get(key_val, 0.0) + _draw(sigma, dist_angle)
 
+    # Rebuild only the cavity shell: keep diffuser/films/other surfaces, and
+    # move an output plane that sat on the cavity opening to the new depth.
+    old_depth = float(p.cavity_recipe.get("depth", 0.0))
+    kept = [s for s in p.surfaces if s.name not in _CAVITY_SURFACE_NAMES]
     build_cavity(
         p,
         width=recipe["width"],
@@ -115,7 +121,20 @@ def _jitter_cavity(
         floor_material=recipe.get("floor_material", "default_reflector"),
         wall_material=recipe.get("wall_material", "default_reflector"),
         replace_existing=True,
+        walls=bool(recipe.get("walls", True)),
     )
+    p.surfaces.extend(kept)
+
+    new_depth = float(recipe["depth"])
+    tan_x = float(np.tan(np.radians(recipe.get("wall_angle_x_deg", 0.0))))
+    tan_y = float(np.tan(np.radians(recipe.get("wall_angle_y_deg", 0.0))))
+    # shortcut: a detector on the old opening keeps its size offset from the
+    # wall flare; wall-angle jitter itself does not resize it.
+    for det in p.detectors:
+        if abs(abs(float(det.normal[2])) - 1.0) < 1e-9 and abs(float(det.center[2]) - old_depth) < 1e-6:
+            det.center = np.array([det.center[0], det.center[1], new_depth], dtype=float)
+            grow = 2.0 * (new_depth - old_depth)
+            det.size = (float(det.size[0]) + grow * tan_x, float(det.size[1]) + grow * tan_y)
 
 
 def _apply_prescribed_offsets(p: Project, offsets: dict[str, float]) -> None:

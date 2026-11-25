@@ -175,6 +175,8 @@ def test_oat_cavity_perturbation_isolates_single_parameter():
         wall_angle_x_deg=0.0, wall_angle_y_deg=0.0,
         floor_material="wall", wall_material="wall", replace_existing=True,
     )
+    # Non-cavity surfaces of the scene survive the rebuild, after the shell.
+    expected.surfaces += _make_tolerance_scene().surfaces
     assert len(depth_proj.surfaces) == len(expected.surfaces)
     for got, want in zip(depth_proj.surfaces, expected.surfaces):
         np.testing.assert_allclose(got.center, want.center, atol=1e-12)

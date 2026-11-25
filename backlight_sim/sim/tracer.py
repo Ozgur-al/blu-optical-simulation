@@ -380,6 +380,12 @@ def _project_uses_cpp_unsupported_features(project) -> bool:
     # Spectral SPDs on any enabled source
     if any(s.spd != "white" for s in project.sources if s.enabled):
         return True
+    # Area emitters need a blu_tracer built with SUPPORTS_AREA_EMITTER
+    if not getattr(_blu_tracer, "SUPPORTS_AREA_EMITTER", False) and any(
+        max(s.emitter_size) > 0 or s.emitter_side_height > 0
+        for s in project.sources if s.enabled
+    ):
+        return True
     # Solid bodies (box / cylinder / prism) — C++ has no Fresnel/TIR dispatch yet
     if getattr(project, "solid_bodies", None):
         return True
@@ -511,6 +517,10 @@ def _serialize_project(project) -> dict:
             "enabled": bool(s.enabled),
             "flux_tolerance": float(s.flux_tolerance),
             "spd": str(getattr(s, "spd", "white") or "white"),
+            "emitter_size": [float(v) for v in s.emitter_size],
+            "emitter_side_height": float(s.emitter_side_height),
+            "emitter_u": arr3(s.emitter_axes()[0]),
+            "emitter_v": arr3(s.emitter_axes()[1]),
         })
 
     settings = project.settings
@@ -1410,7 +1420,7 @@ class RayTracer:
                     else:
                         directions = sample_isotropic(n, self.rng)
 
-                origins = np.tile(source.position, (n, 1)).copy()
+                origins = source.sample_emission(n, self.rng, directions)
                 weights = np.full(n, eff_flux / n_total)
                 kill_weight = settings.energy_threshold * (eff_flux / n_total)
                 alive = np.ones(n, dtype=bool)
@@ -1434,6 +1444,8 @@ class RayTracer:
                 else:
                     active_paths = []
                 n_rec_active = batch_n_rec
+                for i in range(min(n_rec_active, len(active_paths), n)):
+                    active_paths[i][0] = origins[i].copy()  # area emitters start off-centre
 
                 # ---- bounce loop ----
                 for _bounce in range(settings.max_bounces):
