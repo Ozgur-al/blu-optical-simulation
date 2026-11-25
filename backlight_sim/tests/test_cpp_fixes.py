@@ -93,7 +93,7 @@ def test_diffuser_reflect_honors_specular():
     det = [_det("below", (0, 0, -1), Z, X, Y, (4, 4))]
     mats = {"d": _mat("diffuser", R=1.0, T=0.0, diffuse=False)}
     res = blu_tracer.trace_source(
-        _project(surf, det, mats, distribution="pencil", n_rays=3000), "s", 5)
+        _project(surf, det, mats, distribution="pencil", n_rays=3000, ang=ang), "s", 5)
     # Specular return of a 0.5 deg pencil lands within ~0.2 mm of the source.
     assert res["grids"]["below"]["flux"] > 0.99
 
@@ -102,7 +102,7 @@ def test_unsorted_angular_profile():
     ang = {"cone": {"theta_deg": [10.0, 5.0, 0.0], "intensity": [0.0, 1.0, 1.0]}}
     det = [_det("top", (0, 0, 10), NZ, X, Y, (4, 4))]  # 10 deg -> r=1.76 mm
     res = blu_tracer.trace_source(
-        _project([], det, {}, distribution="cone", n_rays=3000), "s", 9)
+        _project([], det, {}, distribution="cone", n_rays=3000, ang=ang), "s", 9)
     assert res["grids"]["top"]["flux"] == pytest.approx(1.0, rel=1e-9)
 
 
@@ -116,7 +116,7 @@ def test_haze_grazing_reflection_stays_above_surface():
     res = blu_tracer.trace_source(
         _project(surf, [], mats, distribution="pencil",
                  direction=(np.cos(g), 0.0, -np.sin(g)), position=(0, 0, 1),
-                 n_rays=4000, max_bounces=10), "s", 11)
+                 n_rays=4000, max_bounces=10, ang=ang), "s", 11)
     assert res["escaped"] == pytest.approx(0.5, rel=1e-9)
 
 

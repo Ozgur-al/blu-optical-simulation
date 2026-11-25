@@ -1774,6 +1774,7 @@ def _make_farfield_mp_scene() -> Project:
         random_seed=42,
         record_ray_paths=0,
         use_multiprocessing=True,
+        adaptive_sampling=False,  # MP disables adaptive anyway; avoids the warning
     )
     proj = Project(name="farfield_mp_test", sources=sources, surfaces=surfaces,
                    materials=materials, detectors=[], settings=settings)
@@ -1829,6 +1830,7 @@ def _make_cylinder_mp_scene() -> Project:
         random_seed=42,
         record_ray_paths=0,
         use_multiprocessing=True,
+        adaptive_sampling=False,
     )
     proj = Project(name="cyl_mp_test", sources=sources, surfaces=[],
                    materials=materials, detectors=detectors, settings=settings)
@@ -1872,6 +1874,7 @@ def _make_prism_mp_scene() -> Project:
         random_seed=42,
         record_ray_paths=0,
         use_multiprocessing=True,
+        adaptive_sampling=False,
     )
     proj = Project(name="prism_mp_test", sources=sources, surfaces=[],
                    materials=materials, detectors=detectors, settings=settings)
